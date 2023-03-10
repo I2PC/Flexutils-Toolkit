@@ -2,7 +2,7 @@
 Flexutils Tensorflow Toolkit
 =======================
 
-This package provides a Tensorflow environment integrating the deep learning algorithms needed by [scipion-em-flexutils](https://github.com/scipion-em/scipion-em-flexutils) plugin
+This package provides a Tensorflow environment integrating the deep learning algorithms needed by `scipion-em-flexutils <https://github.com/scipion-em/scipion-em-flexutils>`_ plugin
 
 ==========================
 Included Networks
