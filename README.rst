@@ -18,6 +18,6 @@ Installation
 
 The Flexutils-Tensorflow toolkit relies on Conda and Pip for its correct installation.
 
-Before installing, Conda must be set in the PATH variable so it can be discovered during the installation. Once this requirement is met, the package can be either installed with `pip install tensorflow-toolkit` or with `pip install -e path/to/cloned/tensorflow-toolkit` after cloning this repository.
+Before installing, Conda must be set in the PATH variable so it can be discovered during the installation. Once this requirement is met, the package can be either installed with ``pip install tensorflow-toolkit`` or with ``pip install -e path/to/cloned/tensorflow-toolkit`` after cloning this repository.
 
 We recommend adding the flag `-v` to pip installation command to have a better tracking of the installation.
