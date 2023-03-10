@@ -1,0 +1,9 @@
+# Python compilation files
+*.pyc
+
+# Ignore temporary packaging folder
+*.egg-info
+toolkit/*.egg-info
+
+# IDE files
+.idea
