@@ -102,7 +102,7 @@ class Installation(install):
         self.print_flush("...done")
 
         self.print_flush("Getting env pip...")
-        path = subprocess.check_output(conda_path_command, shell=True).decode("utf-8").replace('\n', '')
+        path = subprocess.check_output(conda_path_command, shell=True).decode("utf-8").replace('\n', '').replace("*", "")
         install_toolkit_command = "%s/bin/pip install -r %s && %s/bin/pip install -e toolkit" % (path, req_file, path)
         self.print_flush("...done")
 
