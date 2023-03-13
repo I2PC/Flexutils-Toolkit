@@ -64,6 +64,9 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
         elif os.path.isfile(structure):
             # Read structure data
             self.readStructureData(structure)
+        elif os.path.isfile(mask):
+            # Read default volume data
+            self.readDefaultVolumeData(mask)
 
         # Get train dataset
         if splitTrain < 1.0:
@@ -108,6 +111,7 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
 
     def readMetadata(self, filename):
         filename = Path(filename)
+        self.filename = filename
         self.metadata = XmippMetaData(file_name=filename)
         mask = Path(filename.parent, 'mask.mrc')
         volume = Path(filename.parent, 'volume.mrc')
@@ -164,6 +168,19 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
 
         # Flag (reference is structure)
         self.ref_is_struct = True
+
+    def readDefaultVolumeData(self, mask):
+        with mrcfile.open(mask) as mrc:
+            coords = np.asarray(np.where(mrc.data == 1))
+            coords = np.transpose(np.asarray([coords[2, :], coords[1, :], coords[0, :]]))
+            self.coords = coords - self.xmipp_origin
+
+        # Apply step to coords and values
+        self.coords = self.coords[::self.step]
+        self.values = np.zeros(self.coords.shape[0], dtype=np.float32)
+
+        # Flag (reference is map)
+        self.ref_is_struct = False
 
     def getTrainDataset(self, splitTrain):
         indexes = np.arange(self.file_idx.size)

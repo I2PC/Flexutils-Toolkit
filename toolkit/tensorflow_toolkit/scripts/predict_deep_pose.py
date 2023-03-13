@@ -41,12 +41,10 @@ from toolkit.tensorflow_toolkit.networks.deep_pose import AutoEncoder
 #     tf.config.experimental.set_memory_growth(gpu_instance, True)
 
 
-def predict(md_file, weigths_file, refinePose, cost, radius_mask, smooth_mask,
-            architecture, ctfType, pad=2, sr=1.0, applyCTF=1):
+def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=1.0, applyCTF=1):
     # Create data generator
     generator = Generator(md_file=md_file, shuffle=False, batch_size=16,
-                          step=1, splitTrain=1.0, refinePose=refinePose, cost=cost,
-                          radius_mask=radius_mask, smooth_mask=smooth_mask,
+                          step=1, splitTrain=1.0, refinePose=refinePose,
                           pad_factor=pad, sr=sr, applyCTF=applyCTF)
 
     # Load model
@@ -97,9 +95,6 @@ if __name__ == '__main__':
     parser.add_argument('--architecture', type=str, required=True)
     parser.add_argument('--ctf_type', type=str, required=True)
     parser.add_argument('--pad', type=int, required=False, default=2)
-    parser.add_argument('--cost', type=str, required=True)
-    parser.add_argument('--radius_mask', type=float, required=False, default=2)
-    parser.add_argument('--smooth_mask', action='store_true')
     parser.add_argument('--sr', type=float, required=True)
     parser.add_argument('--apply_ctf', type=int, required=True)
     parser.add_argument('--gpu', type=str)
