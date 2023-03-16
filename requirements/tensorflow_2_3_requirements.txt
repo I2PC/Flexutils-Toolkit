@@ -14,3 +14,4 @@ scikit-learn==1.1.3
 protobuf==3.19.*
 xmipp-metadata
 prody
+tf_siren
