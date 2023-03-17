@@ -49,7 +49,7 @@ def predict(weigths_file, het_file, out_path, allCoords=False, filter=False, **k
     if len(x_het.shape) == 1:
         x_het = x_het.reshape((1, -1))
     md_file = Path(Path(weigths_file).parent.parent, "input_particles.xmd")
-    generator = Generator(md_file=md_file, step=kwargs.pop("step"))
+    generator = Generator(md_file=md_file, step=kwargs.pop("step"), shuffle=False)
     autoencoder = AutoEncoder(generator, het_dim=x_het.shape[1], **kwargs)
     autoencoder.load_weights(weigths_file).expect_partial()
     decoded_maps = autoencoder.eval_volume_het(x_het, allCoords=allCoords, filter=filter)

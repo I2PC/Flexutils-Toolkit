@@ -43,7 +43,7 @@ from toolkit.tensorflow_toolkit.networks.zernike3deep import AutoEncoder
 def predict(md_file, weigths_file, L1, L2, refinePose, architecture, ctfType, pad=2,
             sr=1.0, applyCTF=1):
     # Create data generator
-    generator = Generator(L1, L2, md_file=md_file, shuffle=True, batch_size=32,
+    generator = Generator(L1, L2, md_file=md_file, shuffle=False, batch_size=32,
                           step=1, splitTrain=1.0, refinePose=refinePose, pad_factor=pad,
                           sr=sr, applyCTF=applyCTF)
 
