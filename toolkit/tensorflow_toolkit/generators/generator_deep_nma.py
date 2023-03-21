@@ -54,7 +54,7 @@ class Generator(DataGeneratorBase):
 
         # Precompute Zernike3D basis
         if basis_file is None:
-            basis_file = Path(Path(kwargs.pop("md_file")).parent, "nma_basis")
+            basis_file = Path(Path(kwargs.pop("md_file")).parent, "nma_basis.anm.npz")
         self.U = self.computeBasis(self.coords, n_modes=n_modes, filename=basis_file)
 
         # Initialize pose information

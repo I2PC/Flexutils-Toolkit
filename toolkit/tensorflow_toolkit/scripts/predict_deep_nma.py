@@ -43,7 +43,7 @@ from toolkit.tensorflow_toolkit.networks.deep_nma import AutoEncoder
 
 def predict(md_file, weigths_file, n_modes, refinePose, architecture, ctfType, pad=2,
             sr=1.0, applyCTF=1):
-    basis_file = Path(Path(weigths_file).parent.parent, "nma_basis")
+    basis_file = Path(Path(weigths_file).parent.parent, "nma_basis.anm.npz")
 
     # Create data generator
     generator = Generator(n_modes=n_modes, md_file=md_file, shuffle=False, batch_size=32,

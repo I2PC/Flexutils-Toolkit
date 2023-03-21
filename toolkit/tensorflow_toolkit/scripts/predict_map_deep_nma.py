@@ -48,7 +48,7 @@ def predict(weigths_file, nma_file, out_path, sr=1.0):
     if len(c_nma.shape) == 1:
         c_nma = c_nma.reshape((1, -1))
     md_file = Path(Path(weigths_file).parent.parent, "input_particles.xmd")
-    basis_file = Path(Path(weigths_file).parent.parent, "nma_basis")
+    basis_file = Path(Path(weigths_file).parent.parent, "nma_basis.anm.npz")
 
     # Create data generator
     generator = Generator(n_modes=c_nma.shape[1], md_file=md_file, shuffle=False, basis_file=basis_file)
