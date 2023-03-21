@@ -28,6 +28,7 @@
 
 import os
 import numpy as np
+from pathlib import Path
 
 import tensorflow as tf
 
@@ -42,10 +43,12 @@ from toolkit.tensorflow_toolkit.networks.deep_nma import AutoEncoder
 
 def predict(md_file, weigths_file, n_modes, refinePose, architecture, ctfType, pad=2,
             sr=1.0, applyCTF=1):
+    basis_file = Path(Path(weigths_file).parent.parent, "nma_basis")
+
     # Create data generator
     generator = Generator(n_modes=n_modes, md_file=md_file, shuffle=False, batch_size=32,
                           step=1, splitTrain=1.0, refinePose=refinePose, pad_factor=pad,
-                          sr=sr, applyCTF=applyCTF)
+                          sr=sr, applyCTF=applyCTF, basis_file=basis_file)
 
     # Load model
     autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType)
