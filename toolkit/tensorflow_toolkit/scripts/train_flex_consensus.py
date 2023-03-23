@@ -100,7 +100,7 @@ def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs):
                 if best_mean[0] is None or mean_error < best_mean[0]:
                     best_mean[0] = mean_error
                     best_mean[1] = error
-                if best_entropy[0] is None or entropy_error < best_entropy[0]:
+                if best_entropy[0] is None or entropy_error > best_entropy[0]:
                     best_entropy[0] = entropy_error
                     best_entropy[1] = error
 
