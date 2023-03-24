@@ -108,10 +108,9 @@ if __name__ == '__main__':
         tf.config.experimental.set_memory_growth(gpu_instance, True)
 
     inputs = {"md_file": args.md_file, "weigths_file": args.weigths_file,
-              "refinePose": args.refine_pose, "cost": args.cost,
-              "radius_mask": args.radius_mask, "smooth_mask": args.smooth_mask,
-              "architecture": args.architecture, "ctfType": args.ctf_type,
-              "pad": args.pad, "sr": args.sr, "applyCTF": args.apply_ctf}
+              "refinePose": args.refine_pose, "architecture": args.architecture,
+              "ctfType": args.ctf_type, "pad": args.pad, "sr": args.sr,
+              "applyCTF": args.apply_ctf}
 
     # Initialize volume slicer
     predict(**inputs)
