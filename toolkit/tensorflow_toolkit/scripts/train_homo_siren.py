@@ -44,27 +44,34 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
           radius_mask, smooth_mask, refinePose, architecture="convnn", weigths_file=None,
           ctfType="apply", pad=2, sr=1.0, applyCTF=1, superConv=False, l1Reg=0.1):
 
-    # Create data generator
-    generator = Generator(md_file=md_file, shuffle=shuffle, batch_size=batch_size,
-                          step=step, splitTrain=splitTrain, cost=cost, radius_mask=radius_mask,
-                          smooth_mask=smooth_mask, pad_factor=pad, sr=sr,
-                          applyCTF=applyCTF)
+    try:
+        # Create data generator
+        generator = Generator(md_file=md_file, shuffle=shuffle, batch_size=batch_size,
+                              step=step, splitTrain=splitTrain, cost=cost, radius_mask=radius_mask,
+                              smooth_mask=smooth_mask, pad_factor=pad, sr=sr,
+                              applyCTF=applyCTF)
 
-    # Train model
-    autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
-                              l1_lambda=l1Reg)
+        # Train model
+        autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
+                                  l1_lambda=l1Reg)
 
-    # Fine tune a previous model
-    if weigths_file:
-        autoencoder.load_weights(weigths_file)
+        # Fine tune a previous model
+        if weigths_file:
+            autoencoder.load_weights(weigths_file)
 
-    if superConv:
-        optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
-    else:
-        optimizer = tf.keras.optimizers.Adam(learning_rate=1e-5)
+        if superConv:
+            optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
+        else:
+            optimizer = tf.keras.optimizers.Adam(learning_rate=1e-5)
 
-    autoencoder.compile(optimizer=optimizer)
-    autoencoder.fit(generator, epochs=epochs)
+        autoencoder.compile(optimizer=optimizer)
+        autoencoder.fit(generator, epochs=epochs)
+    except tf.errors.ResourceExhaustedError as error:
+        msg = "GPU memory has been exhausted. Usually this can be solved by " \
+              "downsampling further your particles or by decreasing the batch size. " \
+              "Please, modify any of these two options in the form and try again."
+        print(msg)
+        raise error
 
     # Save model
     autoencoder.save_weights(os.path.join(outPath, "homo_siren_model"))

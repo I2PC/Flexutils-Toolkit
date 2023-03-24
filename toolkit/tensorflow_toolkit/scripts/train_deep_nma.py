@@ -42,19 +42,27 @@ from toolkit.tensorflow_toolkit.networks.deep_nma import AutoEncoder
 def train(outPath, md_file, n_modes, batch_size, shuffle, splitTrain, epochs, cost,
           radius_mask, smooth_mask, refinePose, architecture="convnn", ctfType="apply", pad=2,
           sr=1.0, applyCTF=1):
-    # Create data generator
-    generator = Generator(n_modes=n_modes, md_file=md_file, shuffle=shuffle, batch_size=batch_size,
-                          step=1, splitTrain=splitTrain, cost=cost, radius_mask=radius_mask,
-                          smooth_mask=smooth_mask, refinePose=refinePose, pad_factor=pad,
-                          sr=sr, applyCTF=applyCTF)
 
-    # Train model
-    strategy = tf.distribute.MirroredStrategy()
-    with strategy.scope():
-        autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType)
-    optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4)
-    autoencoder.compile(optimizer=optimizer)
-    autoencoder.fit(generator, epochs=epochs)
+    try:
+        # Create data generator
+        generator = Generator(n_modes=n_modes, md_file=md_file, shuffle=shuffle, batch_size=batch_size,
+                              step=1, splitTrain=splitTrain, cost=cost, radius_mask=radius_mask,
+                              smooth_mask=smooth_mask, refinePose=refinePose, pad_factor=pad,
+                              sr=sr, applyCTF=applyCTF)
+
+        # Train model
+        strategy = tf.distribute.MirroredStrategy()
+        with strategy.scope():
+            autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType)
+        optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4)
+        autoencoder.compile(optimizer=optimizer)
+        autoencoder.fit(generator, epochs=epochs)
+    except tf.errors.ResourceExhaustedError as error:
+        msg = "GPU memory has been exhausted. Usually this can be solved by " \
+              "downsampling further your particles or by decreasing the batch size. " \
+              "Please, modify any of these two options in the form and try again."
+        print(msg)
+        raise error
 
     # Save model
     autoencoder.save_weights(os.path.join(outPath, "deep_nma_model"))
