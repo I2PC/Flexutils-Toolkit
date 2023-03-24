@@ -63,23 +63,33 @@ def sort_nicely(l):
 
 
 def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs):
-    # Read data
-    data_files = glob(os.path.join(dataPath, "*.txt"))
-    sort_nicely(data_files)
-    spaces = [np.loadtxt(file) for file in data_files]
 
-    # Create data generator
-    generator = Generator(spaces, latent_dim=latDim, batch_size=batch_size,
-                          shuffle=shuffle, splitTrain=splitTrain)
+    try:
+        # Read data
+        data_files = glob(os.path.join(dataPath, "*.txt"))
+        sort_nicely(data_files)
+        spaces = [np.loadtxt(file) for file in data_files]
 
-    # Train model
-    strategy = tf.distribute.MirroredStrategy()
-    with strategy.scope():
-        autoencoder = AutoEncoder(generator)
-    optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
-    autoencoder.compile(optimizer=optimizer)
-    optimizer.build(autoencoder.trainable_variables)
-    autoencoder.fit(generator, epochs=epochs)
+        # Create data generator
+        generator = Generator(spaces, latent_dim=latDim, batch_size=batch_size,
+                              shuffle=shuffle, splitTrain=splitTrain)
+
+        # Train model
+        strategy = tf.distribute.MirroredStrategy()
+        with strategy.scope():
+            autoencoder = AutoEncoder(generator)
+
+        optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
+
+        autoencoder.compile(optimizer=optimizer)
+        optimizer.build(autoencoder.trainable_variables)
+        autoencoder.fit(generator, epochs=epochs)
+    except tf.errors.ResourceExhaustedError as error:
+        msg = "GPU memory has been exhausted. Usually this can be solved by " \
+              "by decreasing the batch size. Please, modify these " \
+              "option in the form and try again."
+        print(msg)
+        raise error
 
     # Save model
     autoencoder.save_weights(os.path.join(outPath, "network", "flex_consensus_model"))
