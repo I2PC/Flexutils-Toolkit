@@ -128,6 +128,7 @@ scripts = [os.path.join("toolkit/tensorflow_toolkit", "scripts", script)
 setup(name='scipionn-toolkit',
       version=__version__,  # Required
       description='Xmipp neural network utilities for flexibility',
+      long_description=long_description,  # Optional
       author='David Herreros',
       author_email='dherreros@cnb.csic.es',
       keywords='scipion continuous-heterogeneity imageprocessing xmipp',
