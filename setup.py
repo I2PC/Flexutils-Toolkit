@@ -17,6 +17,8 @@ import atexit
 # To use a consistent encoding
 from codecs import open
 
+from tensorflow_toolkit import __version__
+
 
 class Installation(install):
     # Installation assumes conda is in the PATH
@@ -124,7 +126,7 @@ scripts = [os.path.join("toolkit/tensorflow_toolkit", "scripts", script)
            for script in scripts if ".py" in script]
 
 setup(name='setup_env',
-      version="1.0.0",  # Required
+      version=__version__,  # Required
       description='Xmipp tensorflow utilities for flexibility',
       author='David Herreros',
       author_email='dherreros@cnb.csic.es',
