@@ -125,9 +125,9 @@ scripts.remove("__init__.py")
 scripts = [os.path.join("toolkit/tensorflow_toolkit", "scripts", script)
            for script in scripts if ".py" in script]
 
-setup(name='setup_env',
+setup(name='scipionn-toolkit',
       version=__version__,  # Required
-      description='Xmipp tensorflow utilities for flexibility',
+      description='Xmipp neural network utilities for flexibility',
       author='David Herreros',
       author_email='dherreros@cnb.csic.es',
       keywords='scipion continuous-heterogeneity imageprocessing xmipp',
