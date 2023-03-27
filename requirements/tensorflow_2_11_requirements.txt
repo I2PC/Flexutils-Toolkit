@@ -20,3 +20,5 @@ prody
 tf_siren
 cupy-cuda11x
 scikit-cuda
+yellowbrick
+seaborn
