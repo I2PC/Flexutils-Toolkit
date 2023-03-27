@@ -17,7 +17,7 @@ import atexit
 # To use a consistent encoding
 from codecs import open
 
-from tensorflow_toolkit import __version__
+from setup_env import __version__
 
 
 class Installation(install):
