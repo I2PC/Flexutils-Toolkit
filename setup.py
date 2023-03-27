@@ -65,21 +65,22 @@ class Installation(install):
         # Command: Get path to new conda env
         conda_path_command = r"conda info --envs | grep -Po 'flexutils-tensorflow\K.*' | sed 's: ::g'"
 
+        # Command: Get condabin/conda
+        condabin_path_command = r"which conda | sed 's: ::g'"
+
         # Command: Get installation of new conda env with Cuda, Cudnn, and Tensorflow dependencies
         if cuda_version == "11" or version.parse("450.80.02") <= version.parse(driver):
             req_file = os.path.join("requirements", "tensorflow_2_11_requirements.txt")
             command = "if ! { conda env list | grep 'flexutils-tensorflow'; } >/dev/null 2>&1; then " \
                       "conda create -y -n flexutils-tensorflow " \
                       "-c conda-forge python=3.8 cudatoolkit=11.2 cudnn=8.1.0 cudatoolkit-dev -y; fi"
-            # "conda create -y -n test -c conda-forge python=3.8 -y; fi"
         else:
             req_file = os.path.join("requirements", "tensorflow_2_3_requirements.txt")
-            command = "if ! { conda env list | grep 'test'; } >/dev/null 2>&1; then " \
-                      "conda create -y -n flexutils-tensorflow -c conda-forge python=3.8 cudatoolkit=10.1 cudnn=7 -y && " \
-                      "conda activate flexutils-tensorflow && pip install -r %s && pip install -e toolkit; else " \
-                      "pip install -e toolkit; fi" % req_file
+            command = "if ! { conda env list | grep 'flexutils-tensorflow'; } >/dev/null 2>&1; then " \
+                      "conda create -y -n flexutils-tensorflow -c conda-forge python=3.8 cudatoolkit=10.1 cudnn=7" \
+                      "cudatoolkit-dev -y; fi"
 
-        return req_file, conda_path_command, command
+        return req_file, conda_path_command, condabin_path_command, command
 
     def runCondaInstallation(self):
         # Check conda is in PATH
@@ -97,15 +98,16 @@ class Installation(install):
         self.installMissingPackages()
         self.print_flush("...done")
 
-        req_file, conda_path_command, install_conda_command = self.condaInstallationCommands()
+        req_file, _, condabin_path_command, install_conda_command = self.condaInstallationCommands()
 
         self.print_flush("Installing Tensorflow conda env...")
         subprocess.check_call(install_conda_command, shell=True)
         self.print_flush("...done")
 
         self.print_flush("Getting env pip...")
-        path = subprocess.check_output(conda_path_command, shell=True).decode("utf-8").replace('\n', '').replace("*", "")
-        install_toolkit_command = "%s/bin/pip install -r %s && %s/bin/pip install -e toolkit" % (path, req_file, path)
+        path = subprocess.check_output(condabin_path_command, shell=True).decode("utf-8").replace('\n', '').replace("*", "")
+        install_toolkit_command = 'eval "$(%s shell.bash hook)" && conda activate flexutils-tensorflow && ' \
+                                  'pip install -r %s && pip install -e toolkit' % (path, req_file)
         self.print_flush("...done")
 
         self.print_flush("Installing Flexutils-Tensorflow toolkit in conda env...")
