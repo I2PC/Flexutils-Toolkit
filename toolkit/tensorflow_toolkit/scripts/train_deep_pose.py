@@ -30,8 +30,8 @@ import os
 
 import tensorflow as tf
 
-from toolkit.tensorflow_toolkit.generators.generator_deep_pose import Generator
-from toolkit.tensorflow_toolkit.networks.deep_pose import AutoEncoder
+from tensorflow_toolkit.generators.generator_deep_pose import Generator
+from tensorflow_toolkit.networks.deep_pose import AutoEncoder
 
 
 # # os.environ["CUDA_VISIBLE_DEVICES"]="0,2,3,4"

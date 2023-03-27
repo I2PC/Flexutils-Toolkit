@@ -30,7 +30,7 @@ import tensorflow as tf
 from tensorflow.keras import layers
 import tensorflow_addons as tfa
 
-from toolkit.tensorflow_toolkit.utils import computeCTF, euler_matrix_batch, gramSchmidt
+from tensorflow_toolkit.utils import computeCTF, euler_matrix_batch, gramSchmidt
 
 
 def log_normal_pdf(sample, mean, logvar, raxis=1):

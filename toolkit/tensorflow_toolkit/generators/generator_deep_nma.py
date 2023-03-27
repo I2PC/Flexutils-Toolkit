@@ -33,8 +33,8 @@ import prody as pd
 
 import tensorflow as tf
 
-from toolkit.tensorflow_toolkit.generators.generator_template import DataGeneratorBase
-from toolkit.tensorflow_toolkit.utils import euler_matrix_batch
+from tensorflow_toolkit.generators.generator_template import DataGeneratorBase
+from tensorflow_toolkit.utils import euler_matrix_batch
 
 
 class Generator(DataGeneratorBase):

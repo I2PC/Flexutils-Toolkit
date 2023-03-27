@@ -34,8 +34,8 @@ from sklearn.cluster import KMeans
 
 import tensorflow as tf
 
-from toolkit.tensorflow_toolkit.generators.generator_het_siren import Generator
-from toolkit.tensorflow_toolkit.networks.het_siren import AutoEncoder
+from tensorflow_toolkit.generators.generator_het_siren import Generator
+from tensorflow_toolkit.networks.het_siren import AutoEncoder
 
 
 # # os.environ["CUDA_VISIBLE_DEVICES"]="0,2,3,4"

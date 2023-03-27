@@ -29,8 +29,8 @@ import numpy as np
 
 import tensorflow as tf
 
-from toolkit.tensorflow_toolkit.generators.generator_template import DataGeneratorBase
-from toolkit.tensorflow_toolkit.utils import basisDegreeVectors, computeBasis, euler_matrix_batch
+from tensorflow_toolkit.generators.generator_template import DataGeneratorBase
+from tensorflow_toolkit.utils import basisDegreeVectors, computeBasis, euler_matrix_batch
 
 
 class Generator(DataGeneratorBase):

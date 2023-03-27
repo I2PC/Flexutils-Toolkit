@@ -30,8 +30,8 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.keras import backend as K
 
-from toolkit.tensorflow_toolkit.generators.generator_template import DataGeneratorBase
-from toolkit.tensorflow_toolkit.utils import euler_matrix_batch, gramSchmidt, \
+from tensorflow_toolkit.generators.generator_template import DataGeneratorBase
+from tensorflow_toolkit.utils import euler_matrix_batch, gramSchmidt, \
                                      fft_pad
 
 

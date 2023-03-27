@@ -30,8 +30,8 @@ import os
 
 import tensorflow as tf
 
-from toolkit.tensorflow_toolkit.generators.generator_deep_nma import Generator
-from toolkit.tensorflow_toolkit.networks.deep_nma import AutoEncoder
+from tensorflow_toolkit.generators.generator_deep_nma import Generator
+from tensorflow_toolkit.networks.deep_nma import AutoEncoder
 
 # # os.environ["CUDA_VISIBLE_DEVICES"]="0,2,3,4"
 # physical_devices = tf.config.list_physical_devices('GPU')

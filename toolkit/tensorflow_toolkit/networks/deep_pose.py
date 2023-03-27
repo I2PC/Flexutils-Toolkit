@@ -31,7 +31,7 @@ import tensorflow as tf
 from tensorflow.keras import layers
 # import tensorflow_addons as tfa
 
-from toolkit.tensorflow_toolkit.utils import computeCTF
+from tensorflow_toolkit.utils import computeCTF
 
 
 # from tensorflow_toolkit.layers.filter_stack import FilterStack

@@ -28,8 +28,8 @@
 import tensorflow as tf
 from tensorflow.keras import layers
 
-from toolkit.tensorflow_toolkit.utils import computeCTF, euler_matrix_batch
-from toolkit.tensorflow_toolkit.layers.residue_conv2d import ResidueConv2D
+from tensorflow_toolkit.utils import computeCTF, euler_matrix_batch
+from tensorflow_toolkit.layers.residue_conv2d import ResidueConv2D
 
 
 class Encoder(tf.keras.Model):

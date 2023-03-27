@@ -34,7 +34,7 @@ from scipy.ndimage import gaussian_filter
 
 import tensorflow as tf
 
-from toolkit.tensorflow_toolkit.generators.generator_deep_nma import Generator
+from tensorflow_toolkit.generators.generator_deep_nma import Generator
 
 
 # # os.environ["CUDA_VISIBLE_DEVICES"]="0,2,3,4"
