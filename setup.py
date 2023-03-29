@@ -108,6 +108,7 @@ class Installation(install):
         path = subprocess.check_output(condabin_path_command, shell=True).decode("utf-8").replace('\n', '').replace("*", "")
         install_toolkit_command = 'eval "$(%s shell.bash hook)" && conda activate flexutils-tensorflow && ' \
                                   'pip install -r %s && pip install -e toolkit' % (path, req_file)
+        self.print_flush(os.path.abspath(os.path.dirname(__file__)))
         self.print_flush("...done")
 
         self.print_flush("Installing Flexutils-Tensorflow toolkit in conda env...")
@@ -122,10 +123,10 @@ with open(os.path.join(here, 'README.rst'), encoding='utf-8') as f:
     long_description = f.read()
 
 
-scripts = os.listdir(os.path.join("toolkit/tensorflow_toolkit", "scripts"))
-scripts.remove("__init__.py")
-scripts = [os.path.join("toolkit/tensorflow_toolkit", "scripts", script)
-           for script in scripts if ".py" in script]
+# scripts = os.listdir(os.path.join("toolkit/tensorflow_toolkit", "scripts"))
+# scripts.remove("__init__.py")
+# scripts = [os.path.join("toolkit/tensorflow_toolkit", "scripts", script)
+#            for script in scripts if ".py" in script]
 
 setup(name='scipionn-toolkit',
       version=__version__,  # Required
