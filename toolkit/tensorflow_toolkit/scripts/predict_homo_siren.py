@@ -30,6 +30,7 @@ import os
 import numpy as np
 import mrcfile
 from pathlib import Path
+from xmipp_metadata.image_handler import ImageHandler
 
 import tensorflow as tf
 
@@ -76,8 +77,7 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
 
     # Save map
     decoded_path = Path(Path(md_file).parent, 'decoded_map.mrc')
-    with mrcfile.new(decoded_path, overwrite=True) as mrc:
-        mrc.set_data(decoded_map)
+    ImageHandler().write(decoded_map, decoded_path, overwrite=True)
 
 
 if __name__ == '__main__':

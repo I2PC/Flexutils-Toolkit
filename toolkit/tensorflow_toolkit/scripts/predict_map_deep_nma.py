@@ -31,6 +31,7 @@ import numpy as np
 import mrcfile
 from pathlib import Path
 from scipy.ndimage import gaussian_filter
+from xmipp_metadata.image_handler import ImageHandler
 
 import tensorflow as tf
 
@@ -74,10 +75,8 @@ def predict(weigths_file, nma_file, out_path, sr=1.0):
 
         # Filter map
         volume = gaussian_filter(volume, sigma=1.)
-
         decoded_path = Path(out_path, 'decoded_map_class_%d.mrc' % (idx + 1))
-        with mrcfile.new(decoded_path, overwrite=True) as mrc:
-            mrc.set_data(volume)
+        ImageHandler().write(volume, decoded_path, overwrite=True)
 
 
 if __name__ == '__main__':
