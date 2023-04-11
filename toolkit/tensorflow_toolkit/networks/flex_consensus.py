@@ -109,7 +109,7 @@ class AutoEncoder(tf.keras.Model):
                 encoder_loss_1 = self.generator.compute_encoder_loss(space_encoded)
 
                 # Encoder losses (keep distances)
-                encoder_loss_2 =  self.generator.compute_shannon_loss(inputs, space_encoded)
+                encoder_loss_2 = self.generator.compute_shannon_loss(inputs, space_encoded)
 
                 # Encoder loss
                 encoder_loss = encoder_loss_1 + encoder_loss_2
@@ -173,10 +173,12 @@ class AutoEncoder(tf.keras.Model):
 
     def predict(self, data, encoder_idx, decoder_idx):
         self.encoder_idx, self.decoder_idx = encoder_idx, decoder_idx
+        self.predict_function = None
         decoded = super().predict(data)
         return decoded
 
     def predict_step(self, data):
+        print(self.encoder_idx, self.decoder_idx)
         encoder, decoder = self.space_encoders[self.encoder_idx], self.space_decoders[self.decoder_idx]
         decoded = decoder(encoder(data))
         self.encoder_idx, self.decoder_idx = None, None
