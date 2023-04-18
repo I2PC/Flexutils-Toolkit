@@ -136,7 +136,7 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
         with mrcfile.open(mask) as mrc:
             # self.xsize = mrc.data.shape[0]
             # self.xmipp_origin = getXmippOrigin(self.xsize)
-            coords = np.asarray(np.where(mrc.data == 1))
+            coords = np.asarray(np.where(mrc.data > 0))
             coords = np.transpose(np.asarray([coords[2, :], coords[1, :], coords[0, :]]))
             self.coords = coords - self.xmipp_origin
 
@@ -171,7 +171,7 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
 
     def readDefaultVolumeData(self, mask):
         with mrcfile.open(mask) as mrc:
-            coords = np.asarray(np.where(mrc.data == 1))
+            coords = np.asarray(np.where(mrc.data > 0))
             coords = np.transpose(np.asarray([coords[2, :], coords[1, :], coords[0, :]]))
             self.coords = coords - self.xmipp_origin
 

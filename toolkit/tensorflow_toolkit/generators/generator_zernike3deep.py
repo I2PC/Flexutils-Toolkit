@@ -26,6 +26,8 @@
 
 
 import numpy as np
+import mrcfile
+from pathlib import Path
 
 import tensorflow as tf
 
@@ -34,22 +36,43 @@ from tensorflow_toolkit.utils import basisDegreeVectors, computeBasis, euler_mat
 
 
 class Generator(DataGeneratorBase):
-    def __init__(self, L1=3, L2=2, refinePose=True, **kwargs):
+    def __init__(self, L1=3, L2=2, refinePose=True, cap_def=False, **kwargs):
         super().__init__(**kwargs)
 
         self.refinePose = refinePose
+        self.cap_def = cap_def
+
+        # Get coords group
+        mask_file = Path(Path(kwargs.get("md_file")).parent, 'mask.mrc')
+        groups, centers = self.getCoordsGroup(mask_file)
 
         # Get Zernike3D vector size
         self.zernike_size = basisDegreeVectors(L1, L2)
 
         # Precompute Zernike3D basis
-        self.Z = computeBasis(self.coords, L1=L1, L2=L2, r=0.5 * self.xsize)
+        self.Z = computeBasis(self.coords, L1=L1, L2=L2, r=0.5 * self.xsize,
+                              groups=groups, centers=centers)
 
         # Initialize pose information
         if refinePose:
             self.rot_batch = np.zeros(self.batch_size)
             self.tilt_batch = np.zeros(self.batch_size)
             self.psi_batch = np.zeros(self.batch_size)
+
+
+    # ----- Initialization methods -----#
+    def getCoordsGroup(self, mask):
+        with mrcfile.open(mask) as mrc:
+            indices = self.coords + self.xmipp_origin
+            groups = mrc.data[indices[:, 2], indices[:, 1], indices[:, 0]]
+
+        centers = []
+        for group in np.unique(groups):
+            centers.append(np.mean(self.coords[groups == group], axis=0))
+        centers = np.asarray(centers)
+
+        return groups, centers
+    # ----- -------- -----#
 
 
     # ----- Utils -----#
@@ -147,10 +170,8 @@ class Generator(DataGeneratorBase):
         return cm
         # return tf.keras.activations.relu(cm, threshold=0.2)
 
-    def averageDeformation(self):
-        d_x = self.def_coords[0]
-        d_y = self.def_coords[1]
-        d_z = self.def_coords[2]
+    def averageDeformation(self, d_f):
+        d_x, d_y, d_z = d_f[0], d_f[1], d_f[2]
 
         rmsdef = tf.reduce_mean(tf.sqrt(tf.reduce_mean(d_x * d_x + d_y * d_y + d_z * d_z, axis=0)))
 
