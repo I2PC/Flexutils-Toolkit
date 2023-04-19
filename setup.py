@@ -62,6 +62,8 @@ class Installation(install):
                 cuda_version = "11"
                 break
 
+        self.print_flush("Cuda version to be installed: " + cuda_version)
+
         # Command: Get path to new conda env
         conda_path_command = r"conda info --envs | grep -Po 'flexutils-tensorflow\K.*' | sed 's: ::g'"
 
