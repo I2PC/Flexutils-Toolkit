@@ -121,7 +121,7 @@ here = os.path.abspath(os.path.dirname(__file__))
 with open(os.path.join(here, 'README.rst'), encoding='utf-8') as f:
     long_description = f.read()
 
-setup(name='scipionn-toolkit',
+setup(name='flexutils-toolkit',
       version=__version__,  # Required
       description='Xmipp neural network utilities for flexibility',
       long_description=long_description,  # Optional
