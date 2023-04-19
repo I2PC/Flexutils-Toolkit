@@ -66,10 +66,13 @@ class Generator(DataGeneratorBase):
             indices = self.coords + self.xmipp_origin
             groups = mrc.data[indices[:, 2], indices[:, 1], indices[:, 0]]
 
-        centers = []
-        for group in np.unique(groups):
-            centers.append(np.mean(self.coords[groups == group], axis=0))
-        centers = np.asarray(centers)
+        if np.unique(groups).size > 1:
+            centers = []
+            for group in np.unique(groups):
+                centers.append(np.mean(self.coords[groups == group], axis=0))
+            centers = np.asarray(centers)
+        else:
+            groups, centers = None, None
 
         return groups, centers
     # ----- -------- -----#
