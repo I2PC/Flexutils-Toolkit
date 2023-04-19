@@ -18,7 +18,7 @@ protobuf==3.19.*
 xmipp-metadata
 prody
 tf_siren
-cupy-cuda11x
+cupy==12.0.0
 scikit-cuda
 yellowbrick
 seaborn

@@ -31,6 +31,7 @@ import numpy as np
 import mrcfile
 from pathlib import Path
 from sklearn.cluster import KMeans
+from xmipp_metadata.image_handler import ImageHandler
 
 import tensorflow as tf
 
@@ -61,8 +62,7 @@ def predict(weigths_file, het_file, out_path, allCoords=False, filter=False, **k
     decoded_maps = autoencoder.eval_volume_het(x_het, allCoords=allCoords, filter=filter)
     for idx, decoded_map in enumerate(decoded_maps):
         decoded_path = Path(out_path, 'decoded_map_class_%d.mrc' % (idx + 1))
-        with mrcfile.new(decoded_path, overwrite=True) as mrc:
-            mrc.set_data(decoded_map)
+        ImageHandler().write(decoded_map, decoded_path, overwrite=True)
 
 
 if __name__ == '__main__':

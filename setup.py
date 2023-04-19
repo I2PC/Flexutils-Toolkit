@@ -73,12 +73,12 @@ class Installation(install):
             req_file = os.path.join("requirements", "tensorflow_2_11_requirements.txt")
             command = "if ! { conda env list | grep 'flexutils-tensorflow'; } >/dev/null 2>&1; then " \
                       "conda create -y -n flexutils-tensorflow " \
-                      "-c conda-forge python=3.8 cudatoolkit=11.2 cudnn=8.1.0 cudatoolkit-dev -y; fi"
+                      "-c conda-forge python=3.8 cudatoolkit=11.2 cudnn=8.1.0 cudatoolkit-dev pyyaml -y; fi"
         else:
             req_file = os.path.join("requirements", "tensorflow_2_3_requirements.txt")
             command = "if ! { conda env list | grep 'flexutils-tensorflow'; } >/dev/null 2>&1; then " \
                       "conda create -y -n flexutils-tensorflow -c conda-forge python=3.8 cudatoolkit=10.1 cudnn=7" \
-                      "cudatoolkit-dev -y; fi"
+                      "cudatoolkit-dev pyyaml -y; fi"
 
         return req_file, conda_path_command, condabin_path_command, command
 
@@ -120,12 +120,6 @@ here = os.path.abspath(os.path.dirname(__file__))
 # Get the long description from the README file
 with open(os.path.join(here, 'README.rst'), encoding='utf-8') as f:
     long_description = f.read()
-
-
-scripts = os.listdir(os.path.join("toolkit/tensorflow_toolkit", "scripts"))
-scripts.remove("__init__.py")
-scripts = [os.path.join("toolkit/tensorflow_toolkit", "scripts", script)
-           for script in scripts if ".py" in script]
 
 setup(name='scipionn-toolkit',
       version=__version__,  # Required

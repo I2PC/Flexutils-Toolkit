@@ -118,6 +118,12 @@ class Decoder(tf.keras.Model):
         d_y = layers.Lambda(self.generator.computeDeformationField, trainable=True)(decoder_inputs_y)
         d_z = layers.Lambda(self.generator.computeDeformationField, trainable=True)(decoder_inputs_z)
 
+        # Average deformation
+        if self.generator.cap_def:
+            avg_d = layers.Lambda(self.generator.averageDeformation)([d_x, d_y, d_z])
+        else:
+            avg_d = layers.Lambda(lambda d_f: 0.0)([[d_x, d_y, d_z]])
+
         # Apply deformation field
         c_x = layers.Lambda(lambda inp: self.generator.applyDeformationField(inp, 0), trainable=True)(d_x)
         c_y = layers.Lambda(lambda inp: self.generator.applyDeformationField(inp, 1), trainable=True)(d_y)
@@ -162,10 +168,10 @@ class Decoder(tf.keras.Model):
 
         if self.generator.refinePose:
             self.decoder = tf.keras.Model([decoder_inputs_x, decoder_inputs_y, decoder_inputs_z,
-                                           delta_euler, delta_shifts], decoded, name="decoder")
+                                           delta_euler, delta_shifts], [decoded, avg_d], name="decoder")
         else:
             self.decoder = tf.keras.Model([decoder_inputs_x, decoder_inputs_y, decoder_inputs_z],
-                                          decoded, name="decoder")
+                                          [decoded, avg_d], name="decoder")
 
     def call(self, x):
         decoded = self.decoder(x)
@@ -182,15 +188,15 @@ class AutoEncoder(tf.keras.Model):
                                generator.refinePose, architecture=architecture)
         self.decoder = Decoder(generator.zernike_size.shape[0], generator, CTF=CTF)
         self.total_loss_tracker = tf.keras.metrics.Mean(name="total_loss")
-        # self.img_loss_tracker = tf.keras.metrics.Mean(name="img_loss")
-        # self.cap_def_loss_tracker = tf.keras.metrics.Mean(name="cap_def_loss")
+        self.img_loss_tracker = tf.keras.metrics.Mean(name="img_loss")
+        self.avg_d_loss_tracker = tf.keras.metrics.Mean(name="avg_d_loss")
 
     @property
     def metrics(self):
         return [
             self.total_loss_tracker,
-            # self.cap_def_loss_tracker,
-            # self.img_loss_tracker,
+            self.avg_d_loss_tracker,
+            self.img_loss_tracker,
         ]
 
     def train_step(self, data):
@@ -234,7 +240,7 @@ class AutoEncoder(tf.keras.Model):
 
         with tf.GradientTape() as tape:
             encoded = self.encoder(images)
-            decoded = self.decoder(encoded)
+            decoded, avg_d = self.decoder(encoded)
 
             # ori_images = self.decoder.generator.applyFourierMask(data[0])
             # decoded = self.decoder.generator.applyFourierMask(decoded)
@@ -242,19 +248,19 @@ class AutoEncoder(tf.keras.Model):
             # cap_def_loss = self.decoder.generator.capDeformation(d_x, d_y, d_z)
             img_loss = self.decoder.generator.cost_function(images, decoded)
 
-            total_loss = img_loss
+            total_loss = img_loss + 0.005 * avg_d
             # 0.01 * self.decoder.generator.averageDeformation()  # Extra loss term to compensate large deformations
             # self.decoder.generator.centerMassShift()  # Extra loss term to center strucuture
 
         grads = tape.gradient(total_loss, self.trainable_weights)
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
         self.total_loss_tracker.update_state(total_loss)
-        # self.img_loss_tracker.update_state(img_loss)
-        # self.cap_def_loss_tracker.update_state(cap_def_loss)
+        self.img_loss_tracker.update_state(img_loss)
+        self.avg_d_loss_tracker.update_state(avg_d)
         return {
             "loss": self.total_loss_tracker.result(),
-            # "img_loss": self.img_loss_tracker.result(),
-            # "cap_def_loss": self.cap_def_loss_tracker.result()
+            "img_loss": self.img_loss_tracker.result(),
+            "avg_d_loss": self.avg_d_loss_tracker.result()
         }
 
     def predict_step(self, data):

@@ -31,6 +31,7 @@ import numpy as np
 import mrcfile
 from pathlib import Path
 from sklearn.cluster import KMeans
+from xmipp_metadata.image_handler import ImageHandler
 
 import tensorflow as tf
 
@@ -83,8 +84,7 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
     # Save map
     for idx, decoded_map in enumerate(decoded_maps):
         decoded_path = Path(Path(md_file).parent, 'decoded_map_class_%d.mrc' % (idx + 1))
-        with mrcfile.new(decoded_path, overwrite=True) as mrc:
-            mrc.set_data(decoded_map)
+        ImageHandler().write(decoded_map, decoded_path, overwrite=True)
 
 
 if __name__ == '__main__':
