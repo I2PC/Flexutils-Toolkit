@@ -27,10 +27,11 @@
 
 
 import os
+import sys
 import numpy as np
 import mrcfile
+import tqdm
 from pathlib import Path
-from sklearn.cluster import KMeans
 from xmipp_metadata.image_handler import ImageHandler
 
 import tensorflow as tf
@@ -45,8 +46,8 @@ from tensorflow_toolkit.networks.het_siren import AutoEncoder
 #     tf.config.experimental.set_memory_growth(gpu_instance, True)
 
 
-def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=1.0,
-            applyCTF=1, filter=False, hetDim=10, numVol=20):
+def predict(md_file, weigths_file, refinePose, architecture, ctfType,
+            pad=2, sr=1.0, applyCTF=1, hetDim=10):
     # Create data generator
     generator = Generator(md_file=md_file, shuffle=False, batch_size=16,
                           step=1, splitTrain=1.0, pad_factor=pad, sr=sr,
@@ -58,14 +59,24 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
     autoencoder.load_weights(weigths_file).expect_partial()
 
     # Get poses
-    print("------------------ Predicting particles... ------------------")
+    print("------------------ Predicting alignment and het info... ------------------")
     alignment, shifts, het = autoencoder.predict(generator, predict_mode="het")
 
-    # Get map
-    kmeans = KMeans(n_clusters=numVol).fit(het)
-    centers = kmeans.cluster_centers_
-    print("------------------ Decoding volume... ------------------")
-    decoded_maps = autoencoder.eval_volume_het(centers, filter=filter, allCoords=True)
+    print("------------------ Predicting particles... ------------------")
+    particles_path = str(Path(Path(md_file).parent, 'decoded_particles.mrcs'))
+    mrc = mrcfile.new_mmap(particles_path,
+                           shape=(len(generator.file_idx), generator.xsize, generator.xsize),
+                           mrc_mode=2, overwrite=True)
+    autoencoder.predict_mode = "particles"
+    autoencoder.applyCTF = 0
+    idx = 0
+    for data in tqdm.tqdm(generator, file=sys.stdout):
+        idx_init = idx * generator.batch_size
+        idx_end = idx_init + generator.batch_size
+        particles = np.squeeze(autoencoder.predict_step(data))
+        mrc.data[idx_init:idx_end] = np.squeeze(particles)
+        idx += 1
+    mrc.close()
 
     # Save space to metadata file
     alignment = np.vstack(alignment)
@@ -79,12 +90,15 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
     generator.metadata[:, 'delta_shift_x'] = shifts[:, 0]
     generator.metadata[:, 'delta_shift_y'] = shifts[:, 1]
 
-    generator.metadata.write(md_file, overwrite=True)
+    # Replace image paths
+    idx = 0
+    for image_path in generator.metadata[:, 'image']:
+        index, file = image_path.split("@")
+        file = str(Path(Path(file).parent, "decoded_particles.mrcs"))
+        generator.metadata[idx, 'image'] = index + "@" + file
+        idx += 1
 
-    # Save map
-    for idx, decoded_map in enumerate(decoded_maps):
-        decoded_path = Path(Path(md_file).parent, 'decoded_map_class_%d.mrc' % (idx + 1))
-        ImageHandler().write(decoded_map, decoded_path, overwrite=True)
+    generator.metadata.write(md_file, overwrite=True)
 
 
 if __name__ == '__main__':
@@ -101,8 +115,6 @@ if __name__ == '__main__':
     parser.add_argument('--pad', type=int, required=False, default=2)
     parser.add_argument('--sr', type=float, required=True)
     parser.add_argument('--apply_ctf', type=int, required=True)
-    parser.add_argument('--apply_filter', action='store_true')
-    parser.add_argument('--num_vol', type=int, required=True)
     parser.add_argument('--gpu', type=str)
 
     args = parser.parse_args()
@@ -116,8 +128,7 @@ if __name__ == '__main__':
     inputs = {"md_file": args.md_file, "weigths_file": args.weigths_file,
               "refinePose": args.refine_pose, "architecture": args.architecture,
               "ctfType": args.ctf_type, "pad": args.pad, "sr": args.sr,
-              "applyCTF": args.apply_ctf, "filter": args.apply_filter,
-              "hetDim": args.het_dim, "numVol": args.num_vol}
+              "applyCTF": args.apply_ctf, "hetDim": args.het_dim}
 
     # Initialize volume slicer
     predict(**inputs)
