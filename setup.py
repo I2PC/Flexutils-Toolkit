@@ -71,7 +71,7 @@ class Installation(install):
         condabin_path_command = r"which conda | sed 's: ::g'"
 
         # Command: Get installation of new conda env with Cuda, Cudnn, and Tensorflow dependencies
-        if cuda_version == "11" or version.parse("450.80.02") <= version.parse(driver):
+        if cuda_version == "11":
             req_file = os.path.join("requirements", "tensorflow_2_11_requirements.txt")
             command = "if ! { conda env list | grep 'flexutils-tensorflow'; } >/dev/null 2>&1; then " \
                       "conda create -y -n flexutils-tensorflow " \
