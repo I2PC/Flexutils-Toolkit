@@ -5,7 +5,6 @@ https://packaging.python.org/en/latest/distributing.html
 https://github.com/pypa/sampleproject
 """
 
-
 import os
 import sys
 import subprocess
@@ -58,8 +57,12 @@ class Installation(install):
 
         # If at least one GPU is series 3000 and above, change installation requirements
         for gpu_model in gpu_models:
-            if re.findall(r"30[0-9]+", gpu_model) or version.parse("450.80.02") <= version.parse(driver):
-                cuda_version = "11"
+            if re.findall(r"40[0-9]+", gpu_model) or re.findall(r"30[0-9]+", gpu_model) and \
+                    version.parse("520.56.06") <= version.parse(driver):
+                cuda_version = "11.8"
+                break
+            elif re.findall(r"30[0-9]+", gpu_model) or version.parse("450.80.02") <= version.parse(driver):
+                cuda_version = "11.2"
                 break
 
         self.print_flush("Cuda version to be installed: " + cuda_version)
@@ -71,7 +74,12 @@ class Installation(install):
         condabin_path_command = r"which conda | sed 's: ::g'"
 
         # Command: Get installation of new conda env with Cuda, Cudnn, and Tensorflow dependencies
-        if cuda_version == "11":
+        if cuda_version == "11.8":
+            req_file = os.path.join("requirements", "tensorflow_2_12_requirements.txt")
+            command = "if ! { conda env list | grep 'flexutils-tensorflow'; } >/dev/null 2>&1; then " \
+                      "conda create -y -n flexutils-tensorflow " \
+                      "-c conda-forge python=3.9 cudatoolkit=11.8 cudnn=8.6.0 cudatoolkit-dev pyyaml -y; fi"
+        elif cuda_version == "11.2":
             req_file = os.path.join("requirements", "tensorflow_2_11_requirements.txt")
             command = "if ! { conda env list | grep 'flexutils-tensorflow'; } >/dev/null 2>&1; then " \
                       "conda create -y -n flexutils-tensorflow " \
@@ -107,7 +115,8 @@ class Installation(install):
         self.print_flush("...done")
 
         self.print_flush("Getting env pip...")
-        path = subprocess.check_output(condabin_path_command, shell=True).decode("utf-8").replace('\n', '').replace("*", "")
+        path = subprocess.check_output(condabin_path_command, shell=True).decode("utf-8").replace('\n', '').replace("*",
+                                                                                                                    "")
         install_toolkit_command = 'eval "$(%s shell.bash hook)" && conda activate flexutils-tensorflow && ' \
                                   'pip install -r %s && pip install -e toolkit' % (path, req_file)
         self.print_flush("...done")
@@ -132,8 +141,8 @@ setup(name='flexutils-toolkit',
       keywords='scipion continuous-heterogeneity imageprocessing xmipp',
       packages=find_packages(),
       package_data={  # Optional
-         'requirements': ["*"],
-         'toolkit': ["*"]
+          'requirements': ["*"],
+          'toolkit': ["*"]
       },
       cmdclass={'install': Installation}
       )
