@@ -28,12 +28,13 @@
 import numpy as np
 import mrcfile
 from pathlib import Path
+from scipy.spatial.transform import Rotation as R
 
 import tensorflow as tf
 import tensorflow_addons as tfa
 
 from tensorflow_toolkit.generators.generator_template import DataGeneratorBase
-from tensorflow_toolkit.utils import euler_matrix_batch
+from tensorflow_toolkit.utils import euler_matrix_batch, gramSchmidt
 
 
 class Generator(DataGeneratorBase):
@@ -59,15 +60,17 @@ class Generator(DataGeneratorBase):
         self.total_voxels = self.coords.shape[0]
 
         # Initialize pose information
-        self.rot_batch = np.zeros(self.batch_size)
-        self.tilt_batch = np.zeros(self.batch_size)
-        self.psi_batch = np.zeros(self.batch_size)
+        self.rot_batch = np.zeros(self.batch_size, dtype=np.float32)
+        self.tilt_batch = np.zeros(self.batch_size, dtype=np.float32)
+        self.psi_batch = np.zeros(self.batch_size, dtype=np.float32)
         self.shifts_batch = [np.zeros(self.batch_size), np.zeros(self.batch_size)]
 
         # Cost functions
         cost = kwargs.get("cost")
         if cost == "mae":
             self.cost_function = tf.keras.metrics.mae
+        elif cost == "mse":
+            self.cost_function = tf.keras.metrics.mse
         elif cost == "corr":
             self.cost_function = self.correlation_coefficient_loss
         elif cost == "fpc":
@@ -97,6 +100,10 @@ class Generator(DataGeneratorBase):
         r = euler_matrix_batch(self.rot_batch + delta_angles[:, 0],
                                self.tilt_batch + delta_angles[:, 1],
                                self.psi_batch + delta_angles[:, 2])
+        # r = gramSchmidt(delta_angles)
+        # r_ori = euler_matrix_batch(self.rot_batch, self.tilt_batch, self.psi_batch)
+        # r = tf.matmul(tf.stack(r, axis=2), tf.stack(r_ori, axis=2))
+        # r = [r[:, 0], r[:, 1], r[:, 2]]
 
         # Apply alignment
         c_r_1 = tf.multiply(c_x[None, :], tf.cast(tf.gather(r[axis], 0, axis=1), dtype=tf.float32)[:, None])
@@ -119,7 +126,7 @@ class Generator(DataGeneratorBase):
         c_y_r = self.applyAlignment(c_x, c_y, c_z, angles, 1)
         c_z_r = self.applyAlignment(c_x, c_y, c_z, angles, 2)
 
-        return c_x_r, c_y_r, c_z_r
+        return (c_x_r, c_y_r, c_z_r), (c_x[None, :], c_y[None, :], c_z[None, :])
 
     def scatterImgByPass(self, c):
         # Get current batch size (function scope)
