@@ -62,7 +62,7 @@ class Installation(install):
                 cuda_version = "11.8"
                 break
             elif re.findall(r"30[0-9]+", gpu_model) or version.parse("450.80.02") <= version.parse(driver):
-                cuda_version = "11.2"
+                cuda_version = "11.8"
                 break
 
         self.print_flush("Cuda version to be installed: " + cuda_version)
@@ -78,7 +78,7 @@ class Installation(install):
             req_file = os.path.join("requirements", "tensorflow_2_12_requirements.txt")
             command = "if ! { conda env list | grep 'flexutils-tensorflow'; } >/dev/null 2>&1; then " \
                       "conda create -y -n flexutils-tensorflow " \
-                      "-c conda-forge python=3.9 cudatoolkit=11.8 cudnn=8.6.0 cudatoolkit-dev pyyaml -y; fi"
+                      "-c conda-forge python=3.9 cudatoolkit=11.8 cudatoolkit-dev pyyaml -y; fi"
         elif cuda_version == "11.2":
             req_file = os.path.join("requirements", "tensorflow_2_11_requirements.txt")
             command = "if ! { conda env list | grep 'flexutils-tensorflow'; } >/dev/null 2>&1; then " \
@@ -90,7 +90,7 @@ class Installation(install):
                       "conda create -y -n flexutils-tensorflow -c conda-forge python=3.8 cudatoolkit=10.1 cudnn=7" \
                       "cudatoolkit-dev pyyaml -y; fi"
 
-        return req_file, conda_path_command, condabin_path_command, command
+        return req_file, conda_path_command, condabin_path_command, command, cuda_version
 
     def runCondaInstallation(self):
         # Check conda is in PATH
@@ -108,21 +108,52 @@ class Installation(install):
         self.installMissingPackages()
         self.print_flush("...done")
 
-        req_file, _, condabin_path_command, install_conda_command = self.condaInstallationCommands()
+        req_file, _, condabin_path_command, install_conda_command, cuda_version = self.condaInstallationCommands()
 
         self.print_flush("Installing Tensorflow conda env...")
         subprocess.check_call(install_conda_command, shell=True)
         self.print_flush("...done")
 
         self.print_flush("Getting env pip...")
-        path = subprocess.check_output(condabin_path_command, shell=True).decode("utf-8").replace('\n', '').replace("*",
-                                                                                                                    "")
-        install_toolkit_command = 'eval "$(%s shell.bash hook)" && conda activate flexutils-tensorflow && ' \
-                                  'pip install -r %s && pip install -e toolkit' % (path, req_file)
+        path = subprocess.check_output(condabin_path_command, shell=True).decode("utf-8").replace('\n', '').replace("*", "")
+        if cuda_version == "11.8":
+            install_toolkit_command = 'eval "$(%s shell.bash hook)" && conda activate flexutils-tensorflow && ' \
+                                      'conda install -c nvidia cuda-nvcc=11.3.58 && ' \
+                                      'pip install nvidia-cudnn-cu11==8.6.0.163 && ' \
+                                      'pip install -r %s && pip install -e toolkit' % (path, req_file)
+
+        else:
+            install_toolkit_command = 'eval "$(%s shell.bash hook)" && conda activate flexutils-tensorflow && ' \
+                                      'pip install -r %s && pip install -e toolkit' % (path, req_file)
         self.print_flush("...done")
 
         self.print_flush("Installing Flexutils-Tensorflow toolkit in conda env...")
         subprocess.check_call(install_toolkit_command, shell=True)
+        self.print_flush("...done")
+
+        self.print_flush("Set environment variables in conda env...")
+        if cuda_version == "11.8":
+            commands = ['eval "$(%s shell.bash hook) "' % path,
+                        'conda activate flexutils-tensorflow ',
+                        'mkdir -p $CONDA_PREFIX/etc/conda/activate.d ',
+                        'echo \'CUDNN_PATH=$(dirname $(python -c "import nvidia.cudnn;print(nvidia.cudnn.__file__)"))\''
+                        ' >> $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh ',
+                        'echo \'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib/:$CUDNN_PATH/lib\' '
+                        '>> $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh ',
+                        'echo \'export XLA_FLAGS=--xla_gpu_cuda_data_dir=$CONDA_PREFIX/lib/\n\' >> '
+                        '$CONDA_PREFIX/etc/conda/activate.d/env_vars.sh ',
+                        'mkdir -p $CONDA_PREFIX/lib/nvvm/libdevice ',
+                        'cp $CONDA_PREFIX/lib/libdevice.10.bc $CONDA_PREFIX/lib/nvvm/libdevice/'
+                        ]
+        else:
+            commands = ['eval "$(%s shell.bash hook) "' % path,
+                        'conda activate flexutils-tensorflow ',
+                        'mkdir -p $CONDA_PREFIX/etc/conda/activate.d ',
+                        'echo \'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib/\' '
+                        '>> $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh'
+                        ]
+        commands = "&&".join(commands)
+        subprocess.check_call(commands, shell=True)
         self.print_flush("...done")
 
 
