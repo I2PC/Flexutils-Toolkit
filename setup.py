@@ -77,17 +77,17 @@ class Installation(install):
         if cuda_version == "11.8":
             req_file = os.path.join("requirements", "tensorflow_2_12_requirements.txt")
             command = "if ! { conda env list | grep 'flexutils-tensorflow'; } >/dev/null 2>&1; then " \
-                      "conda create -y -n flexutils-tensorflow " \
+                      "conda create -y -n flexutils-tensorflow-test " \
                       "-c conda-forge python=3.9 cudatoolkit=11.8 cudatoolkit-dev pyyaml -y; fi"
         elif cuda_version == "11.2":
             req_file = os.path.join("requirements", "tensorflow_2_11_requirements.txt")
             command = "if ! { conda env list | grep 'flexutils-tensorflow'; } >/dev/null 2>&1; then " \
-                      "conda create -y -n flexutils-tensorflow " \
+                      "conda create -y -n flexutils-tensorflow-test " \
                       "-c conda-forge python=3.8 cudatoolkit=11.2 cudnn=8.1.0 cudatoolkit-dev pyyaml -y; fi"
         else:
             req_file = os.path.join("requirements", "tensorflow_2_3_requirements.txt")
             command = "if ! { conda env list | grep 'flexutils-tensorflow'; } >/dev/null 2>&1; then " \
-                      "conda create -y -n flexutils-tensorflow -c conda-forge python=3.8 cudatoolkit=10.1 cudnn=7" \
+                      "conda create -y -n flexutils-tensorflow-test -c conda-forge python=3.8 cudatoolkit=10.1 cudnn=7" \
                       "cudatoolkit-dev pyyaml -y; fi"
 
         return req_file, conda_path_command, condabin_path_command, command, cuda_version
@@ -117,24 +117,24 @@ class Installation(install):
         self.print_flush("Getting env pip...")
         path = subprocess.check_output(condabin_path_command, shell=True).decode("utf-8").replace('\n', '').replace("*", "")
         if cuda_version == "11.8":
-            install_toolkit_command = 'eval "$(%s shell.bash hook)" && conda activate flexutils-tensorflow && ' \
+            install_toolkit_command = 'eval "$(%s shell.bash hook)" && conda activate flexutils-tensorflow-test && ' \
                                       'conda install -c nvidia cuda-nvcc=11.3.58 && ' \
                                       'pip install nvidia-cudnn-cu11==8.6.0.163 && ' \
                                       'pip install -r %s && pip install -e toolkit' % (path, req_file)
 
         else:
-            install_toolkit_command = 'eval "$(%s shell.bash hook)" && conda activate flexutils-tensorflow && ' \
+            install_toolkit_command = 'eval "$(%s shell.bash hook)" && conda activate flexutils-tensorflow-test && ' \
                                       'pip install -r %s && pip install -e toolkit' % (path, req_file)
         self.print_flush("...done")
 
-        self.print_flush("Installing Flexutils-Tensorflow toolkit in conda env...")
+        self.print_flush("Installing flexutils-tensorflow-test toolkit in conda env...")
         subprocess.check_call(install_toolkit_command, shell=True)
         self.print_flush("...done")
 
         self.print_flush("Set environment variables in conda env...")
         if cuda_version == "11.8":
             commands = ['eval "$(%s shell.bash hook) "' % path,
-                        'conda activate flexutils-tensorflow ',
+                        'conda activate flexutils-tensorflow-test ',
                         'mkdir -p $CONDA_PREFIX/etc/conda/activate.d ',
                         'echo \'CUDNN_PATH=$(dirname $(python -c "import nvidia.cudnn;print(nvidia.cudnn.__file__)"))\''
                         ' >> $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh ',
@@ -147,7 +147,7 @@ class Installation(install):
                         ]
         else:
             commands = ['eval "$(%s shell.bash hook) "' % path,
-                        'conda activate flexutils-tensorflow ',
+                        'conda activate flexutils-tensorflow-test ',
                         'mkdir -p $CONDA_PREFIX/etc/conda/activate.d ',
                         'echo \'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib/\' '
                         '>> $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh'
