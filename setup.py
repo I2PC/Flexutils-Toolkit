@@ -80,7 +80,7 @@ class Installation(install):
                       "conda create -y -n flexutils-tensorflow-test " \
                       "-c conda-forge python=3.9 cudatoolkit=11.8 cudatoolkit-dev pyyaml -y; fi"
         elif cuda_version == "11.2":
-            req_file = os.path.join("requirements", "tensorflow_2_11_requirements.txt")
+            req_file = os.path.join("requirements", "tensorflow_2_9_2_requirements.txt")
             command = "if ! { conda env list | grep 'flexutils-tensorflow-test '; } >/dev/null 2>&1; then " \
                       "conda create -y -n flexutils-tensorflow-test " \
                       "-c conda-forge python=3.8 cudatoolkit=11.2 cudnn=8.1.0 cudatoolkit-dev pyyaml -y; fi"
