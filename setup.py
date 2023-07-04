@@ -59,10 +59,10 @@ class Installation(install):
         for gpu_model in gpu_models:
             if re.findall(r"40[0-9]+", gpu_model) or re.findall(r"30[0-9]+", gpu_model) and \
                     version.parse("520.56.06") <= version.parse(driver):
-                cuda_version = "11.8"
+                cuda_version = "11.2"
                 break
             elif re.findall(r"30[0-9]+", gpu_model) or version.parse("450.80.02") <= version.parse(driver):
-                cuda_version = "11.8"
+                cuda_version = "11.2"
                 break
 
         self.print_flush("Cuda version to be installed: " + cuda_version)
