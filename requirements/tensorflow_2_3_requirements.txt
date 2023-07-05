@@ -21,3 +21,4 @@ cupy-cuda101
 scikit-cuda
 yellowbrick
 seaborn
+pathos
