@@ -75,7 +75,7 @@ def predict(weigths_file, nma_file, out_path, sr=1.0):
 
         # Filter map
         volume = gaussian_filter(volume, sigma=1.)
-        decoded_path = Path(out_path, 'decoded_map_class_%d.mrc' % (idx + 1))
+        decoded_path = Path(out_path, 'decoded_map_class_%02d.mrc' % (idx + 1))
         ImageHandler().write(volume, decoded_path, overwrite=True)
 
 
