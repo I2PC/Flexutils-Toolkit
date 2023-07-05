@@ -49,7 +49,8 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
 
     # Load model
     autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType)
-    autoencoder.load_weights(weigths_file).expect_partial()
+    autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
+    autoencoder.load_weights(weigths_file)
 
     # Get poses
     # alignment = []

@@ -52,7 +52,8 @@ def predict(md_file, weigths_file, n_modes, refinePose, architecture, ctfType, p
 
     # Load model
     autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType)
-    autoencoder.load_weights(weigths_file).expect_partial()
+    autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
+    autoencoder.load_weights(weigths_file)
 
     # Predict step
     print("------------------ Predicting NMA coefficients... ------------------")

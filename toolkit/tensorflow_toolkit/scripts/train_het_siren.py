@@ -57,6 +57,7 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
 
         # Fine tune a previous model
         if weigths_file:
+            autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
             autoencoder.load_weights(weigths_file)
 
         optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4)
@@ -71,7 +72,7 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
         raise error
 
     # Save model
-    autoencoder.save_weights(os.path.join(outPath, "het_siren_model"))
+    autoencoder.save_weights(os.path.join(outPath, "het_siren_model.h5"))
 
 
 if __name__ == '__main__':
