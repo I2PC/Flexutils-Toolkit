@@ -62,7 +62,7 @@ def predict(weigths_file, het_file, out_path, allCoords=False, filter=False, **k
     # Decode maps
     decoded_maps = autoencoder.eval_volume_het(x_het, allCoords=allCoords, filter=filter)
     for idx, decoded_map in enumerate(decoded_maps):
-        decoded_path = Path(out_path, 'decoded_map_class_%d.mrc' % (idx + 1))
+        decoded_path = Path(out_path, 'decoded_map_class_%02d.mrc' % (idx + 1))
         ImageHandler().write(decoded_map, decoded_path, overwrite=True)
 
 

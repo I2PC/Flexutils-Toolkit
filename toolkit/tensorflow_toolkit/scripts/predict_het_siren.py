@@ -84,7 +84,7 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
 
     # Save map
     for idx, decoded_map in enumerate(decoded_maps):
-        decoded_path = Path(Path(md_file).parent, 'decoded_map_class_%d.mrc' % (idx + 1))
+        decoded_path = Path(Path(md_file).parent, 'decoded_map_class_%02d.mrc' % (idx + 1))
         ImageHandler().write(decoded_map, decoded_path, overwrite=True)
 
 
