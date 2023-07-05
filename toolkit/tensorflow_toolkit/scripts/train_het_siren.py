@@ -32,6 +32,7 @@ import tensorflow as tf
 
 from tensorflow_toolkit.generators.generator_het_siren import Generator
 from tensorflow_toolkit.networks.het_siren import AutoEncoder
+from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
 
 
 # # os.environ["CUDA_VISIBLE_DEVICES"]="0,2,3,4"
@@ -51,6 +52,10 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
                               smooth_mask=smooth_mask, pad_factor=pad, sr=sr,
                               applyCTF=applyCTF)
 
+        # Tensorflow data pipeline
+        generator_dataset, generator = sequence_to_data_pipeline(generator)
+        dataset = create_dataset(generator_dataset, generator)
+
         # Train model
         autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
                                   het_dim=hetDim, l1_lambda=l1Reg)
@@ -63,7 +68,7 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
         optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4)
 
         autoencoder.compile(optimizer=optimizer)
-        autoencoder.fit(generator, epochs=epochs)
+        autoencoder.fit(dataset, epochs=epochs)
     except tf.errors.ResourceExhaustedError as error:
         msg = "GPU memory has been exhausted. Usually this can be solved by " \
               "downsampling further your particles or by decreasing the batch size. " \

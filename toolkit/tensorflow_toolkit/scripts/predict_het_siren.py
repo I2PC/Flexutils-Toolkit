@@ -37,6 +37,7 @@ import tensorflow as tf
 
 from tensorflow_toolkit.generators.generator_het_siren import Generator
 from tensorflow_toolkit.networks.het_siren import AutoEncoder
+from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
 
 
 # # os.environ["CUDA_VISIBLE_DEVICES"]="0,2,3,4"
@@ -52,6 +53,10 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
                           step=1, splitTrain=1.0, pad_factor=pad, sr=sr,
                           applyCTF=applyCTF)
 
+    # Tensorflow data pipeline
+    generator_dataset, generator = sequence_to_data_pipeline(generator)
+    dataset = create_dataset(generator_dataset, generator, shuffle=False)
+
     # Load model
     autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
                               het_dim=hetDim)
@@ -60,7 +65,7 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
 
     # Get poses
     print("------------------ Predicting particles... ------------------")
-    alignment, shifts, het = autoencoder.predict(generator, predict_mode="het")
+    alignment, shifts, het = autoencoder.predict(dataset, predict_mode="het")
 
     # Get map
     kmeans = KMeans(n_clusters=numVol).fit(het)

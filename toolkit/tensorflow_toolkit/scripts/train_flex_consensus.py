@@ -37,6 +37,7 @@ import tensorflow as tf
 
 from tensorflow_toolkit.generators.generator_flex_consensus import Generator
 from tensorflow_toolkit.networks.flex_consensus import AutoEncoder
+from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
 
 # # os.environ["CUDA_VISIBLE_DEVICES"]="0,2,3,4"
 # physical_devices = tf.config.list_physical_devices('GPU')
@@ -74,6 +75,10 @@ def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs):
         generator = Generator(spaces, latent_dim=latDim, batch_size=batch_size,
                               shuffle=shuffle, splitTrain=splitTrain)
 
+        # Tensorflow data pipeline
+        generator_dataset, generator = sequence_to_data_pipeline(generator)
+        dataset = create_dataset(generator_dataset, generator)
+
         # Train model
         strategy = tf.distribute.MirroredStrategy()
         with strategy.scope():
@@ -83,7 +88,7 @@ def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs):
 
         autoencoder.compile(optimizer=optimizer)
         optimizer.build(autoencoder.trainable_variables)
-        autoencoder.fit(generator, epochs=epochs)
+        autoencoder.fit(dataset, epochs=epochs)
     except tf.errors.ResourceExhaustedError as error:
         msg = "GPU memory has been exhausted. Usually this can be solved by " \
               "by decreasing the batch size. Please, modify these " \
