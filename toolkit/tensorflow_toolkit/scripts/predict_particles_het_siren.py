@@ -56,7 +56,8 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType,
     # Load model
     autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
                               het_dim=hetDim)
-    autoencoder.load_weights(weigths_file).expect_partial()
+    autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
+    autoencoder.load_weights(weigths_file)
 
     # Get poses
     print("------------------ Predicting alignment and het info... ------------------")
