@@ -120,7 +120,7 @@ class Decoder(tf.keras.Model):
 
         # Average deformation
         if self.generator.cap_def:
-            avg_d = layers.Lambda(self.generator.averageDeformation)([d_x, d_y, d_z])
+            avg_d = layers.Lambda(self.generator.fieldGrad)([d_x, d_y, d_z])
         else:
             avg_d = layers.Lambda(lambda d_f: 0.0)([[d_x, d_y, d_z]])
 
@@ -180,13 +180,14 @@ class Decoder(tf.keras.Model):
 
 
 class AutoEncoder(tf.keras.Model):
-    def __init__(self, generator, architecture="convnn", CTF="apply", **kwargs):
+    def __init__(self, generator, architecture="convnn", CTF="apply", l_grad=0.0, **kwargs):
         super(AutoEncoder, self).__init__(**kwargs)
         self.generator = generator
         self.CTF = CTF
         self.encoder = Encoder(generator.zernike_size.shape[0], generator.xsize,
                                generator.refinePose, architecture=architecture)
         self.decoder = Decoder(generator.zernike_size.shape[0], generator, CTF=CTF)
+        self.l_grad = l_grad
         self.total_loss_tracker = tf.keras.metrics.Mean(name="total_loss")
         self.img_loss_tracker = tf.keras.metrics.Mean(name="img_loss")
         self.avg_d_loss_tracker = tf.keras.metrics.Mean(name="avg_d_loss")
@@ -248,7 +249,7 @@ class AutoEncoder(tf.keras.Model):
             # cap_def_loss = self.decoder.generator.capDeformation(d_x, d_y, d_z)
             img_loss = self.decoder.generator.cost_function(images, decoded)
 
-            total_loss = img_loss + 0.005 * avg_d
+            total_loss = img_loss + self.l_grad * avg_d
             # 0.01 * self.decoder.generator.averageDeformation()  # Extra loss term to compensate large deformations
             # self.decoder.generator.centerMassShift()  # Extra loss term to center strucuture
 

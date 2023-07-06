@@ -53,6 +53,11 @@ class Generator(DataGeneratorBase):
         self.Z = computeBasis(self.coords, L1=L1, L2=L2, r=0.5 * self.xsize,
                               groups=groups, centers=centers)
 
+        # Index for finite differences
+        self.order_x = np.argsort(self.coords[:, 0])
+        self.order_y = np.argsort(self.coords[:, 1])
+        self.order_z = np.argsort(self.coords[:, 2])
+
         # Initialize pose information
         if refinePose:
             self.rot_batch = np.zeros(self.batch_size)
@@ -173,11 +178,35 @@ class Generator(DataGeneratorBase):
         return cm
         # return tf.keras.activations.relu(cm, threshold=0.2)
 
-    def averageDeformation(self, d_f):
+    def fieldGrad(self, d_f):
         d_x, d_y, d_z = d_f[0], d_f[1], d_f[2]
 
-        rmsdef = tf.reduce_mean(tf.sqrt(tf.reduce_mean(d_x * d_x + d_y * d_y + d_z * d_z, axis=0)))
+        # X gradient
+        d_x = tf.gather(d_x, self.order_x, axis=0)
+        d_y = tf.gather(d_y, self.order_x, axis=0)
+        d_z = tf.gather(d_z, self.order_x, axis=0)
+        grad_x = self.computeGrad(d_x, d_y, d_z)
 
-        return rmsdef
+        # Y gradient
+        d_x = tf.gather(d_x, self.order_y, axis=0)
+        d_y = tf.gather(d_y, self.order_y, axis=0)
+        d_z = tf.gather(d_z, self.order_y, axis=0)
+        grad_y = self.computeGrad(d_x, d_y, d_z)
+
+        # Z gradient
+        d_x = tf.gather(d_x, self.order_z, axis=0)
+        d_y = tf.gather(d_y, self.order_z, axis=0)
+        d_z = tf.gather(d_z, self.order_z, axis=0)
+        grad_z = self.computeGrad(d_x, d_y, d_z)
+
+        grad = (grad_x + grad_y + grad_z) / 3.0
+
+        return tf.reduce_mean(grad)
+
+    def computeGrad(self, d_x, d_y, d_z):
+        diff_x = tf.abs(d_x[1:] - d_x[:-1])
+        diff_y = tf.abs(d_y[1:] - d_y[:-1])
+        diff_z = tf.abs(d_z[1:] - d_z[:-1])
+        return tf.reduce_mean(diff_x * diff_x + diff_y * diff_y + diff_z * diff_z, axis=0)
 
     # ----- -------- -----#
