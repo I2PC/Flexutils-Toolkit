@@ -92,7 +92,7 @@ def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs):
         raise error
 
     # Save model
-    autoencoder.save_weights(os.path.join(outPath, "network", "flex_consensus_model"))
+    autoencoder.save_weights(os.path.join(outPath, "network", "flex_consensus_model.h5"))
 
     # Get templates for future matching
     best_mean = [None, None]

@@ -178,7 +178,6 @@ class AutoEncoder(tf.keras.Model):
         return decoded
 
     def predict_step(self, data):
-        print(self.encoder_idx, self.decoder_idx)
         encoder, decoder = self.space_encoders[self.encoder_idx], self.space_decoders[self.decoder_idx]
         decoded = decoder(encoder(data))
         self.encoder_idx, self.decoder_idx = None, None

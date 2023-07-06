@@ -67,7 +67,7 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
         raise error
 
     # Save model
-    autoencoder.save_weights(os.path.join(outPath, "zernike3deep_model"))
+    autoencoder.save_weights(os.path.join(outPath, "zernike3deep_model.h5"))
 
 
 if __name__ == '__main__':

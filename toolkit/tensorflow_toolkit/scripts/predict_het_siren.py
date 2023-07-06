@@ -55,11 +55,12 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
     # Load model
     autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
                               het_dim=hetDim)
-    autoencoder.load_weights(weigths_file).expect_partial()
+    autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
+    autoencoder.load_weights(weigths_file)
 
     # Get poses
     print("------------------ Predicting particles... ------------------")
-    alignment, shifts, het = autoencoder.predict(generator)
+    alignment, shifts, het = autoencoder.predict(generator, predict_mode="het")
 
     # Get map
     kmeans = KMeans(n_clusters=numVol).fit(het)
@@ -83,7 +84,7 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
 
     # Save map
     for idx, decoded_map in enumerate(decoded_maps):
-        decoded_path = Path(Path(md_file).parent, 'decoded_map_class_%d.mrc' % (idx + 1))
+        decoded_path = Path(Path(md_file).parent, 'decoded_map_class_%02d.mrc' % (idx + 1))
         ImageHandler().write(decoded_map, decoded_path, overwrite=True)
 
 

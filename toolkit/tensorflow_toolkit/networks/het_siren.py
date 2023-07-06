@@ -289,6 +289,11 @@ class AutoEncoder(Model):
             self.decoder.generator.coords = prev_coords
 
         return volume
+    def predict(self, data, predict_mode="het", applyCTF=False):
+        self.predict_mode, self.applyCTF = predict_mode, applyCTF
+        self.predict_function = None
+        decoded = super().predict(data)
+        return decoded
 
     def predict_step(self, data):
         self.decoder.generator.indexes = data[1]
@@ -324,7 +329,18 @@ class AutoEncoder(Model):
         if self.CTF == "wiener":
             images = self.decoder.generator.wiener2DFilter(images)
 
-        return self.encoder(images)
+        # Predict images with CTF applied?
+        if self.applyCTF == 1:
+            self.decoder.generator.CTF = "apply"
+        else:
+            self.decoder.generator.CTF = None
+
+        if self.predict_mode == "het":
+            return self.encoder(images)
+        elif self.predict_mode == "particles":
+            return self.decoder(self.encoder(images))
+        else:
+            raise ValueError("Prediction mode not understood!")
 
     def call(self, input_features):
         decoded = self.decoder(self.encoder(input_features))
