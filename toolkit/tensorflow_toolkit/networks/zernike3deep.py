@@ -121,8 +121,6 @@ class Decoder(tf.keras.Model):
         # Average deformation
         if self.generator.cap_def:
             avg_d = layers.Lambda(self.generator.fieldGrad)([d_x, d_y, d_z])
-        else:
-            avg_d = layers.Lambda(lambda d_f: 0.0)([[d_x, d_y, d_z]])
 
         # Apply deformation field
         c_x = layers.Lambda(lambda inp: self.generator.applyDeformationField(inp, 0), trainable=True)(d_x)
@@ -165,18 +163,26 @@ class Decoder(tf.keras.Model):
             if self.CTF == "apply":
                 # CTF filter image
                 decoded = layers.Lambda(self.generator.ctfFilterImage)(decoded)
-
+        
+        if self.generator.cap_def:
+            outputs = [decoded, avg_d]
+        else:
+            outputs = decoded
+        
         if self.generator.refinePose:
             self.decoder = tf.keras.Model([decoder_inputs_x, decoder_inputs_y, decoder_inputs_z,
-                                           delta_euler, delta_shifts], [decoded, avg_d], name="decoder")
+                                           delta_euler, delta_shifts], outputs, name="decoder")
         else:
             self.decoder = tf.keras.Model([decoder_inputs_x, decoder_inputs_y, decoder_inputs_z],
-                                          [decoded, avg_d], name="decoder")
+                                          outputs, name="decoder")
 
     def call(self, x):
         decoded = self.decoder(x)
         # self.generator.def_coords = [d_x, d_y, d_z]
-        return decoded
+        if self.generator.cap_def:
+            return decoded
+        else:
+            return decoded, 0.0
 
 
 class AutoEncoder(tf.keras.Model):
