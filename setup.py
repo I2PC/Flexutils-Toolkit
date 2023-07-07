@@ -76,17 +76,17 @@ class Installation(install):
         # Command: Get installation of new conda env with Cuda, Cudnn, and Tensorflow dependencies
         if cuda_version == "11.8":
             req_file = os.path.join("requirements", "tensorflow_2_12_requirements.txt")
-            command = "if ! { conda env list | grep 'flexutils-tensorflow'; } >/dev/null 2>&1; then " \
+            command = "if ! { conda env list | grep -w 'flexutils-tensorflow'; } >/dev/null 2>&1; then " \
                       "conda create -y -n flexutils-tensorflow " \
                       "-c conda-forge python=3.9 cudatoolkit=11.8 cudatoolkit-dev pyyaml -y; fi"
         elif cuda_version == "11.2":
             req_file = os.path.join("requirements", "tensorflow_2_11_requirements.txt")
-            command = "if ! { conda env list | grep 'flexutils-tensorflow'; } >/dev/null 2>&1; then " \
+            command = "if ! { conda env list | grep -w 'flexutils-tensorflow'; } >/dev/null 2>&1; then " \
                       "conda create -y -n flexutils-tensorflow " \
                       "-c conda-forge python=3.8 cudatoolkit=11.2 cudnn=8.1.0 cudatoolkit-dev pyyaml -y; fi"
         else:
             req_file = os.path.join("requirements", "tensorflow_2_3_requirements.txt")
-            command = "if ! { conda env list | grep 'flexutils-tensorflow'; } >/dev/null 2>&1; then " \
+            command = "if ! { conda env list | grep -w 'flexutils-tensorflow'; } >/dev/null 2>&1; then " \
                       "conda create -y -n flexutils-tensorflow -c conda-forge python=3.8 cudatoolkit=10.1 cudnn=7" \
                       "cudatoolkit-dev pyyaml -y; fi"
 
