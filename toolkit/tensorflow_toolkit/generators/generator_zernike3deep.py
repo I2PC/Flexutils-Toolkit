@@ -24,7 +24,6 @@
 # *
 # **************************************************************************
 
-
 import numpy as np
 import mrcfile
 from pathlib import Path
@@ -181,32 +180,70 @@ class Generator(DataGeneratorBase):
     def fieldGrad(self, d_f):
         d_x, d_y, d_z = d_f[0], d_f[1], d_f[2]
 
-        # X gradient
-        d_x = tf.gather(d_x, self.order_x, axis=0)
-        d_y = tf.gather(d_y, self.order_x, axis=0)
-        d_z = tf.gather(d_z, self.order_x, axis=0)
-        grad_x = self.computeGrad(d_x, d_y, d_z)
+        batch_size_scope = tf.shape(d_x)[1]
+        fn = lambda inp: tf.tensor_scatter_nd_add(inp[0], inp[1], inp[2])
+        Gx = tf.zeros([batch_size_scope, self.xsize, self.xsize, self.xsize], dtype=tf.float32)
+        Gy = tf.zeros([batch_size_scope, self.xsize, self.xsize, self.xsize], dtype=tf.float32)
+        Gz = tf.zeros([batch_size_scope, self.xsize, self.xsize, self.xsize], dtype=tf.float32)
 
-        # Y gradient
-        d_x = tf.gather(d_x, self.order_y, axis=0)
-        d_y = tf.gather(d_y, self.order_y, axis=0)
-        d_z = tf.gather(d_z, self.order_y, axis=0)
-        grad_y = self.computeGrad(d_x, d_y, d_z)
+        # XYZ gradients
+        coords = tf.constant(self.coords.astype(np.int32)[None, ...], dtype=tf.int32)
+        coords = tf.repeat(coords, batch_size_scope, axis=0)
+        Gx = tf.map_fn(fn, [Gx, coords, tf.transpose(d_x)], fn_output_signature=tf.float32)
+        Gy = tf.map_fn(fn, [Gy, coords, tf.transpose(d_y)], fn_output_signature=tf.float32)
+        Gz = tf.map_fn(fn, [Gz, coords, tf.transpose(d_z)], fn_output_signature=tf.float32)
+        Gx = tf.abs(self.sobel_edge_3d(Gx[..., None]))
+        Gy = tf.abs(self.sobel_edge_3d(Gy[..., None]))
+        Gz = tf.abs(self.sobel_edge_3d(Gz[..., None]))
+        Gx = tf.gather_nd(Gx, coords, batch_dims=1)
+        Gy = tf.gather_nd(Gy, coords, batch_dims=1)
+        Gz = tf.gather_nd(Gz, coords, batch_dims=1)
+        # G = tf.concat([Gx[..., None], Gy[..., None], Gz[..., None]], axis=4)
 
-        # Z gradient
-        d_x = tf.gather(d_x, self.order_z, axis=0)
-        d_y = tf.gather(d_y, self.order_z, axis=0)
-        d_z = tf.gather(d_z, self.order_z, axis=0)
-        grad_z = self.computeGrad(d_x, d_y, d_z)
+        Gx = tf.reduce_mean(Gx)
+        Gy = tf.reduce_mean(Gy)
+        Gz = tf.reduce_mean(Gz)
 
-        grad = (grad_x + grad_y + grad_z) / 3.0
+        return (Gx + Gy + Gz) / 3.0
 
-        return tf.reduce_mean(grad)
+    # def computeGrad(self, d_x, d_y, d_z):
+    #     diff_x = tf.abs(d_x[1:] - d_x[:-1])
+    #     diff_y = tf.abs(d_y[1:] - d_y[:-1])
+    #     diff_z = tf.abs(d_z[1:] - d_z[:-1])
+    #     return tf.reduce_mean(diff_x * diff_x + diff_y * diff_y + diff_z * diff_z, axis=0)
 
-    def computeGrad(self, d_x, d_y, d_z):
-        diff_x = tf.abs(d_x[1:] - d_x[:-1])
-        diff_y = tf.abs(d_y[1:] - d_y[:-1])
-        diff_z = tf.abs(d_z[1:] - d_z[:-1])
-        return tf.reduce_mean(diff_x * diff_x + diff_y * diff_y + diff_z * diff_z, axis=0)
+    def sobel_edge_3d(self, inputTensor):
+        # This function computes Sobel edge maps on 3D images
+        # inputTensor: input 3D images, with size of [batchsize,W,H,D,1]
+        # output: output 3D edge maps, with size of [batchsize,W-2,H-2,D-2,3], each channel represents edge map in one dimension
+        sobel1 = tf.constant([1, 0, -1], tf.float32)  # 1D edge filter
+        sobel2 = tf.constant([1, 2, 1], tf.float32)  # 1D blur weight
+
+        # generate sobel1 and sobel2 on x- y- and z-axis, saved in sobel1xyz and sobel2xyz
+        sobel1xyz = [sobel1, sobel1, sobel1]
+        sobel2xyz = [sobel2, sobel2, sobel2]
+        for xyz in range(3):
+            newShape = [1, 1, 1, 1, 1]
+            newShape[xyz] = 3
+            sobel1xyz[xyz] = tf.reshape(sobel1, newShape)
+            sobel2xyz[xyz] = tf.reshape(sobel2, newShape)
+
+        # outputTensor_x will be the Sobel edge map in x-axis
+        outputTensor_x = tf.nn.conv3d(inputTensor, sobel1xyz[0], strides=[1, 1, 1, 1, 1],
+                                      padding='VALID')  # edge filter in x-axis
+        outputTensor_x = tf.nn.conv3d(outputTensor_x, sobel2xyz[1], strides=[1, 1, 1, 1, 1],
+                                      padding='VALID')  # blur filter in y-axis
+        outputTensor_x = tf.nn.conv3d(outputTensor_x, sobel2xyz[2], strides=[1, 1, 1, 1, 1],
+                                      padding='VALID')  # blur filter in z-axis
+
+        outputTensor_y = tf.nn.conv3d(inputTensor, sobel1xyz[1], strides=[1, 1, 1, 1, 1], padding='VALID')
+        outputTensor_y = tf.nn.conv3d(outputTensor_y, sobel2xyz[0], strides=[1, 1, 1, 1, 1], padding='VALID')
+        outputTensor_y = tf.nn.conv3d(outputTensor_y, sobel2xyz[2], strides=[1, 1, 1, 1, 1], padding='VALID')
+
+        outputTensor_z = tf.nn.conv3d(inputTensor, sobel1xyz[2], strides=[1, 1, 1, 1, 1], padding='VALID')
+        outputTensor_z = tf.nn.conv3d(outputTensor_z, sobel2xyz[0], strides=[1, 1, 1, 1, 1], padding='VALID')
+        outputTensor_z = tf.nn.conv3d(outputTensor_z, sobel2xyz[1], strides=[1, 1, 1, 1, 1], padding='VALID')
+
+        return tf.concat([outputTensor_x, outputTensor_y, outputTensor_z], 4)
 
     # ----- -------- -----#
