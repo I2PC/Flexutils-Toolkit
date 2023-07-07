@@ -24,6 +24,7 @@
 # *
 # **************************************************************************
 
+
 import numpy as np
 import mrcfile
 from pathlib import Path
@@ -35,11 +36,12 @@ from tensorflow_toolkit.utils import basisDegreeVectors, computeBasis, euler_mat
 
 
 class Generator(DataGeneratorBase):
-    def __init__(self, L1=3, L2=2, refinePose=True, cap_def=False, **kwargs):
+    def __init__(self, L1=3, L2=2, refinePose=True, cap_def=False, strides=2, **kwargs):
         super().__init__(**kwargs)
 
         self.refinePose = refinePose
         self.cap_def = cap_def
+        self.strides = strides
 
         # Get coords group
         mask_file = Path(Path(kwargs.get("md_file")).parent, 'mask.mrc')
@@ -185,26 +187,47 @@ class Generator(DataGeneratorBase):
         Gx = tf.zeros([batch_size_scope, self.xsize, self.xsize, self.xsize], dtype=tf.float32)
         Gy = tf.zeros([batch_size_scope, self.xsize, self.xsize, self.xsize], dtype=tf.float32)
         Gz = tf.zeros([batch_size_scope, self.xsize, self.xsize, self.xsize], dtype=tf.float32)
-
+        
         # XYZ gradients
         coords = tf.constant(self.coords.astype(np.int32)[None, ...], dtype=tf.int32)
         coords = tf.repeat(coords, batch_size_scope, axis=0)
         Gx = tf.map_fn(fn, [Gx, coords, tf.transpose(d_x)], fn_output_signature=tf.float32)
         Gy = tf.map_fn(fn, [Gy, coords, tf.transpose(d_y)], fn_output_signature=tf.float32)
         Gz = tf.map_fn(fn, [Gz, coords, tf.transpose(d_z)], fn_output_signature=tf.float32)
-        Gx = tf.abs(self.sobel_edge_3d(Gx[..., None]))
-        Gy = tf.abs(self.sobel_edge_3d(Gy[..., None]))
-        Gz = tf.abs(self.sobel_edge_3d(Gz[..., None]))
-        Gx = tf.gather_nd(Gx, coords, batch_dims=1)
-        Gy = tf.gather_nd(Gy, coords, batch_dims=1)
-        Gz = tf.gather_nd(Gz, coords, batch_dims=1)
+        
+        # MaxPool3D (for speed up purposes)
+        Gx = tf.nn.max_pool3d(Gx[..., None], ksize=self.strides, strides=self.strides, padding="VALID")
+        Gy = tf.nn.max_pool3d(Gy[..., None], ksize=self.strides, strides=self.strides, padding="VALID")
+        Gz = tf.nn.max_pool3d(Gz[..., None], ksize=self.strides, strides=self.strides, padding="VALID")
+        
+        Gx = tf.abs(self.sobel_edge_3d(Gx))
+        Gy = tf.abs(self.sobel_edge_3d(Gy))
+        Gz = tf.abs(self.sobel_edge_3d(Gz))
+
+        # Divergence and rotational
+        divG = Gx[:, 0] + Gy[:, 1] + Gz[:, 2]
+        rotGx = Gz[:, 1] - Gy[:, 2]
+        rotGy = Gz[:, 2] - Gz[:, 0]
+        rotGz = Gy[:, 0] - Gx[:, 1]
+        
+        # Gradient divergence and rotational
+        G_divG = tf.abs(self.sobel_edge_3d(divG[..., None]))
+        G_rotGx = tf.abs(self.sobel_edge_3d(rotGx[..., None]))
+        G_rotGy = tf.abs(self.sobel_edge_3d(rotGy[..., None]))
+        G_rotGz = tf.abs(self.sobel_edge_3d(rotGz[..., None]))
+
+        # G_divG = tf.gather_nd(G_divG, coords, batch_dims=1)
+        # G_rotGx = tf.gather_nd(G_rotGx, coords, batch_dims=1)
+        # G_rotGy = tf.gather_nd(G_rotGy, coords, batch_dims=1)
+        # G_rotGz = tf.gather_nd(G_rotGz, coords, batch_dims=1)
         # G = tf.concat([Gx[..., None], Gy[..., None], Gz[..., None]], axis=4)
 
-        Gx = tf.reduce_mean(Gx)
-        Gy = tf.reduce_mean(Gy)
-        Gz = tf.reduce_mean(Gz)
+        G_divG = tf.reduce_mean(G_divG)
+        G_rotGx = tf.reduce_mean(G_rotGx)
+        G_rotGy = tf.reduce_mean(G_rotGy)
+        G_rotGz = tf.reduce_mean(G_rotGz)
 
-        return (Gx + Gy + Gz) / 3.0
+        return (G_divG + G_rotGx + G_rotGy + G_rotGz) / 4.0
 
     # def computeGrad(self, d_x, d_y, d_z):
     #     diff_x = tf.abs(d_x[1:] - d_x[:-1])
