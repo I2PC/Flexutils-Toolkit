@@ -40,7 +40,7 @@ def sequence_to_data_pipeline(sequence):
     sequence.shuffle = False
     sequence.getitem = types.MethodType(getitem, sequence)
     sequence.len = sequence.__len__()
-    sequence.batch_size = 1
+    # sequence.batch_size = 1
 
     def gen_data_generator():
         for i in range(sequence.len):
