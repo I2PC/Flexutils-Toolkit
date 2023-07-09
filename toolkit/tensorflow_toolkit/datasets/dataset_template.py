@@ -56,7 +56,7 @@ def create_dataset(data_generator, sequence, prefetch=True, batch_size=8,
         tf.TensorSpec(shape=(None,), dtype=tf.int32)))
 
     # Batch size
-    dataset = dataset.batch(batch_size=batch_size, num_parallel_calls=tf.data.AUTOTUNE)
+    # dataset = dataset.batch(batch_size=batch_size, num_parallel_calls=tf.data.AUTOTUNE)
 
     if prefetch:
         dataset = dataset.prefetch(tf.data.AUTOTUNE)
@@ -76,7 +76,7 @@ def create_dataset(data_generator, sequence, prefetch=True, batch_size=8,
     dataset = dataset.unbatch()
 
     # Assign cardinality beforehand for progress bar
-    dataset = tf.data.experimental.assert_cardinality(sequence.len)(dataset)
+    # dataset = tf.data.experimental.assert_cardinality(sequence.len)(dataset)
 
     return dataset
 
