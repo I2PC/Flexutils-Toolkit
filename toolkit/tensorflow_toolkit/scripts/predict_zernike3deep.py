@@ -50,7 +50,7 @@ def predict(md_file, weigths_file, L1, L2, refinePose, architecture, ctfType, pa
 
     # Tensorflow data pipeline
     generator_dataset, generator = sequence_to_data_pipeline(generator)
-    dataset = create_dataset(generator_dataset, generator, shuffle=False)
+    dataset = create_dataset(generator_dataset, generator, shuffle=False, batch_size=32)
 
     # Load model
     autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType)

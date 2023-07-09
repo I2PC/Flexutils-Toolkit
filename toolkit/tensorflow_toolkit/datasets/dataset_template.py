@@ -40,6 +40,7 @@ def sequence_to_data_pipeline(sequence):
     sequence.shuffle = False
     sequence.getitem = types.MethodType(getitem, sequence)
     sequence.len = sequence.__len__()
+    sequence.batch_size = 1
 
     def gen_data_generator():
         for i in range(sequence.len):
@@ -47,11 +48,15 @@ def sequence_to_data_pipeline(sequence):
     return gen_data_generator, sequence
 
 
-def create_dataset(data_generator, sequence, prefetch=True, shuffle=True, cache=True, interleave=False):
+def create_dataset(data_generator, sequence, prefetch=True, batch_size=8,
+                   shuffle=True, cache=True, interleave=False):
     ''' Create Dataset for tf.data pipeline '''
     dataset = tf.data.Dataset.from_generator(data_generator, output_signature=(
         tf.TensorSpec(shape=(None, sequence.xsize, sequence.xsize, 1), dtype=tf.float32),
         tf.TensorSpec(shape=(None,), dtype=tf.int32)))
+
+    # Batch size
+    dataset = dataset.batch(batch_size=batch_size, num_parallel_calls=tf.data.AUTOTUNE)
 
     if prefetch:
         dataset = dataset.prefetch(tf.data.AUTOTUNE)
@@ -67,6 +72,8 @@ def create_dataset(data_generator, sequence, prefetch=True, shuffle=True, cache=
 
     if cache:
         dataset = dataset.cache()
+
+    dataset = dataset.unbatch()
 
     # Assign cardinality beforehand for progress bar
     dataset = tf.data.experimental.assert_cardinality(sequence.len)(dataset)

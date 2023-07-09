@@ -77,7 +77,7 @@ def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs):
 
         # Tensorflow data pipeline
         generator_dataset, generator = sequence_to_data_pipeline(generator)
-        dataset = create_dataset(generator_dataset, generator)
+        dataset = create_dataset(generator_dataset, generator, batch_size=batch_size)
 
         # Train model
         strategy = tf.distribute.MirroredStrategy()

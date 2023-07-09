@@ -53,7 +53,7 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
 
         # Tensorflow data pipeline
         generator_dataset, generator = sequence_to_data_pipeline(generator)
-        dataset = create_dataset(generator_dataset, generator)
+        dataset = create_dataset(generator_dataset, generator, batch_size=batch_size)
 
         # Train model
         strategy = tf.distribute.MirroredStrategy()
