@@ -73,7 +73,7 @@ def create_dataset(data_generator, sequence, prefetch=True, batch_size=8,
     if cache:
         dataset = dataset.cache()
 
-    dataset = dataset.unbatch()
+    # dataset = dataset.unbatch()
 
     # Assign cardinality beforehand for progress bar
     # dataset = tf.data.experimental.assert_cardinality(sequence.len)(dataset)
