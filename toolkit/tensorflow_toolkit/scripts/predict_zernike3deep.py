@@ -49,8 +49,8 @@ def predict(md_file, weigths_file, L1, L2, refinePose, architecture, ctfType, pa
                           sr=sr, applyCTF=applyCTF)
 
     # Tensorflow data pipeline
-    generator_dataset, generator = sequence_to_data_pipeline(generator)
-    dataset = create_dataset(generator_dataset, generator, shuffle=False, batch_size=32)
+    # generator_dataset, generator = sequence_to_data_pipeline(generator)
+    # dataset = create_dataset(generator_dataset, generator, shuffle=False, batch_size=32)
 
     # Load model
     autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType)
@@ -64,7 +64,7 @@ def predict(md_file, weigths_file, L1, L2, refinePose, architecture, ctfType, pa
 
     # Predict step
     print("------------------ Predicting Zernike3D coefficients... ------------------")
-    encoded = autoencoder.predict(dataset)
+    encoded = autoencoder.predict(generator)
 
     # Get encoded data in right format
     zernike_space = np.hstack([encoded[0], encoded[1], encoded[2]])

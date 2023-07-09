@@ -49,8 +49,8 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
                           pad_factor=pad, sr=sr, applyCTF=applyCTF)
 
     # Tensorflow data pipeline
-    generator_dataset, generator = sequence_to_data_pipeline(generator)
-    dataset = create_dataset(generator_dataset, generator, shuffle=False, batch_size=16)
+    # generator_dataset, generator = sequence_to_data_pipeline(generator)
+    # dataset = create_dataset(generator_dataset, generator, shuffle=False, batch_size=16)
 
     # Load model
     autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType)
@@ -60,7 +60,7 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
     # Get poses
     # alignment = []
     print("------------------ Predicting particles... ------------------")
-    alignment, shifts = autoencoder.predict(dataset)
+    alignment, shifts = autoencoder.predict(generator)
 
     # pred_algn, pred_shifts, loss = autoencoder.predict(generator)
     #

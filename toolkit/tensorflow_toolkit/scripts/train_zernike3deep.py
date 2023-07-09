@@ -27,6 +27,7 @@
 
 
 import os
+from xmipp_metadata.metadata import XmippMetaData
 
 import tensorflow as tf
 
@@ -52,8 +53,8 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
                               sr=sr, applyCTF=applyCTF)
 
         # Tensorflow data pipeline
-        generator_dataset, generator = sequence_to_data_pipeline(generator)
-        dataset = create_dataset(generator_dataset, generator, batch_size=batch_size)
+        # generator_dataset, generator = sequence_to_data_pipeline(generator)
+        # dataset = create_dataset(generator_dataset, generator, batch_size=batch_size)
 
         # Train model
         strategy = tf.distribute.MirroredStrategy()
@@ -63,7 +64,7 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
         optimizer = tf.keras.optimizers.Adam(learning_rate=1e-5)
 
         autoencoder.compile(optimizer=optimizer)
-        autoencoder.fit(dataset, epochs=epochs)
+        autoencoder.fit(generator, epochs=epochs)
     except tf.errors.ResourceExhaustedError as error:
         msg = "GPU memory has been exhausted. Usually this can be solved by " \
               "downsampling further your particles or by decreasing the batch size. " \

@@ -55,8 +55,8 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType,
                           applyCTF=applyCTF)
 
     # Tensorflow data pipeline
-    generator_dataset, generator = sequence_to_data_pipeline(generator)
-    dataset = create_dataset(generator_dataset, generator, shuffle=False, batch_size=16)
+    # generator_dataset, generator = sequence_to_data_pipeline(generator)
+    # dataset = create_dataset(generator_dataset, generator, shuffle=False, batch_size=16)
 
     # Load model
     autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
@@ -66,7 +66,7 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType,
 
     # Get poses
     print("------------------ Predicting alignment and het info... ------------------")
-    alignment, shifts, het = autoencoder.predict(dataset, predict_mode="het")
+    alignment, shifts, het = autoencoder.predict(generator, predict_mode="het")
 
     print("------------------ Predicting particles... ------------------")
     particles_path = str(Path(Path(md_file).parent, 'decoded_particles.mrcs'))

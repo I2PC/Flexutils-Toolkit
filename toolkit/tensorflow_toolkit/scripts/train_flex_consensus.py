@@ -76,8 +76,8 @@ def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs):
                               shuffle=shuffle, splitTrain=splitTrain)
 
         # Tensorflow data pipeline
-        generator_dataset, generator = sequence_to_data_pipeline(generator)
-        dataset = create_dataset(generator_dataset, generator, batch_size=batch_size)
+        # generator_dataset, generator = sequence_to_data_pipeline(generator)
+        # dataset = create_dataset(generator_dataset, generator, batch_size=batch_size)
 
         # Train model
         strategy = tf.distribute.MirroredStrategy()
@@ -88,7 +88,7 @@ def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs):
 
         autoencoder.compile(optimizer=optimizer)
         optimizer.build(autoencoder.trainable_variables)
-        autoencoder.fit(dataset, epochs=epochs)
+        autoencoder.fit(generator, epochs=epochs)
     except tf.errors.ResourceExhaustedError as error:
         msg = "GPU memory has been exhausted. Usually this can be solved by " \
               "by decreasing the batch size. Please, modify these " \
