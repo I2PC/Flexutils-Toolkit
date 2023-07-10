@@ -89,7 +89,7 @@ def predict(outPath, dataPath, weigths_file, latDim):
 
     # Load model
     autoencoder = AutoEncoder(generator)
-    # autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
+    _ = autoencoder(generator[0][0])
     autoencoder.load_weights(weigths_file)
 
     # Predict step
