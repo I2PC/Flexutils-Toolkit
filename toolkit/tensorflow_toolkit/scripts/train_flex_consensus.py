@@ -154,7 +154,7 @@ if __name__ == '__main__':
         tf.config.experimental.set_memory_growth(gpu_instance, True)
 
     if args.max_samples_seen:
-        file = glob(os.path.join(args.dataPath, "*.txt"))[0]
+        file = glob(os.path.join(args.data_path, "*.txt"))[0]
         n_samples = len(np.loadtxt(file))
         epochs = epochs_from_iterations(args.max_samples_seen, n_samples, args.batch_size)
     elif args.epochs:
