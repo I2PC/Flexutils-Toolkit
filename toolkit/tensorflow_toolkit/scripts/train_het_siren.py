@@ -96,7 +96,6 @@ if __name__ == '__main__':
     parser.add_argument('--split_train', type=float, required=True)
     parser.add_argument('--epochs', type=int, required=False)
     parser.add_argument('--max_samples_seen', type=int, required=False)
-    parser.add_argument('--epochs', type=int, required=True)
     parser.add_argument('--cost', type=str, required=True)
     parser.add_argument('--l1_reg', type=float, required=True)
     parser.add_argument('--het_dim', type=int, required=True)
