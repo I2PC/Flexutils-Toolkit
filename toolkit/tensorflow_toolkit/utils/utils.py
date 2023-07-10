@@ -261,3 +261,14 @@ def gramSchmidt(r):
 
 def dot(a, b):
     return tf.reduce_sum(a * b, axis=-1, keepdims=True)
+
+def epochs_from_iterations(total_samples_seen, n_samples, batch_size):
+    # Get the total number of batch iterations needed
+    batch_iterations = np.ceil(total_samples_seen / batch_size)
+
+    # Get number of batches in one iteration
+    steps = np.ceil(n_samples / batch_size)
+
+    # Get number of epochs to reach batch_iterations
+    return int(batch_iterations / steps)
+

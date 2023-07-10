@@ -27,12 +27,14 @@
 
 
 import os
+from xmipp_metadata.metadata import XmippMetaData
 
 import tensorflow as tf
 
 from tensorflow_toolkit.generators.generator_het_siren import Generator
 from tensorflow_toolkit.networks.het_siren import AutoEncoder
-from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
+# from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
+from tensorflow_toolkit.utils import epochs_from_iterations
 
 
 # # os.environ["CUDA_VISIBLE_DEVICES"]="0,2,3,4"
@@ -43,7 +45,7 @@ from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeli
 
 def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
           radius_mask, smooth_mask, refinePose, architecture="convnn", weigths_file=None,
-          ctfType="apply", pad=2, sr=1.0, applyCTF=1, hetDim=10, l1Reg=0.5):
+          ctfType="apply", pad=2, sr=1.0, applyCTF=1, hetDim=10, l1Reg=0.5, lr=1e-5):
 
     try:
         # Create data generator
@@ -65,7 +67,7 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
             autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
             autoencoder.load_weights(weigths_file)
 
-        optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4)
+        optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
 
         autoencoder.compile(optimizer=optimizer)
         autoencoder.fit(generator, epochs=epochs)
@@ -88,9 +90,12 @@ if __name__ == '__main__':
     parser.add_argument('--md_file', type=str, required=True)
     parser.add_argument('--out_path', type=str, required=True)
     parser.add_argument('--batch_size', type=int, required=True)
+    parser.add_argument('--lr', type=float, required=True)
     parser.add_argument('--shuffle', action='store_true')
     parser.add_argument('--step', type=int, required=True)
     parser.add_argument('--split_train', type=float, required=True)
+    parser.add_argument('--epochs', type=int, required=False)
+    parser.add_argument('--max_samples_seen', type=int, required=False)
     parser.add_argument('--epochs', type=int, required=True)
     parser.add_argument('--cost', type=str, required=True)
     parser.add_argument('--l1_reg', type=float, required=True)
@@ -114,14 +119,23 @@ if __name__ == '__main__':
     for gpu_instance in physical_devices:
         tf.config.experimental.set_memory_growth(gpu_instance, True)
 
+    if args.max_samples_seen:
+        n_samples = len(XmippMetaData(args.md_file))
+        del XmippMetaData
+        epochs = epochs_from_iterations(args.max_samples_seen, n_samples, args.batch_size)
+    elif args.epochs:
+        epochs = args.epochs
+    else:
+        raise ValueError("Error: Either parameter --epochs or --max_samples_seen is needed")
+
     inputs = {"md_file": args.md_file, "outPath": args.out_path,
               "batch_size": args.batch_size, "shuffle": args.shuffle,
-              "step": args.step, "splitTrain": args.split_train, "epochs": args.epochs,
+              "step": args.step, "splitTrain": args.split_train, "epochs": epochs,
               "cost": args.cost, "radius_mask": args.radius_mask, "smooth_mask": args.smooth_mask,
               "refinePose": args.refine_pose, "architecture": args.architecture,
               "weigths_file": args.weigths_file, "ctfType": args.ctf_type, "pad": args.pad,
               "sr": args.sr, "applyCTF": args.apply_ctf, "hetDim": args.het_dim,
-              "l1Reg": args.l1_reg}
+              "l1Reg": args.l1_reg, "lr": args.lr}
 
     # Initialize volume slicer
     train(**inputs)

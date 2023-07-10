@@ -33,7 +33,7 @@ import tensorflow as tf
 
 from tensorflow_toolkit.generators.generator_deep_pose import Generator
 from tensorflow_toolkit.networks.deep_pose import AutoEncoder
-from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
+# from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
 
 
 # # os.environ["CUDA_VISIBLE_DEVICES"]="0,2,3,4"
