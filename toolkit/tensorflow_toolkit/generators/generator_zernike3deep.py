@@ -59,6 +59,11 @@ class Generator(DataGeneratorBase):
         self.order_y = np.argsort(self.coords[:, 1])
         self.order_z = np.argsort(self.coords[:, 2])
 
+        # Volume indices
+        self.indices = self.coords + self.xmipp_origin
+        self.indices = np.transpose(np.asarray([self.indices[:, 2], self.indices[:, 1], self.indices[:, 0]]))
+        self.indices = self.indices.astype(np.int32)
+
         # Initialize pose information
         if refinePose:
             self.rot_batch = np.zeros(self.batch_size)
@@ -189,16 +194,16 @@ class Generator(DataGeneratorBase):
         Gz = tf.zeros([batch_size_scope, self.xsize, self.xsize, self.xsize], dtype=tf.float32)
         
         # XYZ gradients
-        coords = tf.constant(self.coords.astype(np.int32)[None, ...], dtype=tf.int32)
+        coords = tf.constant(self.indices[None, ...], dtype=tf.int32)
         coords = tf.repeat(coords, batch_size_scope, axis=0)
         Gx = tf.map_fn(fn, [Gx, coords, tf.transpose(d_x)], fn_output_signature=tf.float32)
         Gy = tf.map_fn(fn, [Gy, coords, tf.transpose(d_y)], fn_output_signature=tf.float32)
         Gz = tf.map_fn(fn, [Gz, coords, tf.transpose(d_z)], fn_output_signature=tf.float32)
         
         # MaxPool3D (for speed up purposes)
-        Gx = tf.nn.max_pool3d(Gx[..., None], ksize=self.strides, strides=self.strides, padding="VALID")
-        Gy = tf.nn.max_pool3d(Gy[..., None], ksize=self.strides, strides=self.strides, padding="VALID")
-        Gz = tf.nn.max_pool3d(Gz[..., None], ksize=self.strides, strides=self.strides, padding="VALID")
+        Gx = tf.nn.avg_pool3d(Gx[..., None], ksize=self.strides, strides=self.strides, padding="VALID")
+        Gy = tf.nn.avg_pool3d(Gy[..., None], ksize=self.strides, strides=self.strides, padding="VALID")
+        Gz = tf.nn.avg_pool3d(Gz[..., None], ksize=self.strides, strides=self.strides, padding="VALID")
         
         Gx = tf.abs(self.sobel_edge_3d(Gx))
         Gy = tf.abs(self.sobel_edge_3d(Gy))
@@ -207,7 +212,7 @@ class Generator(DataGeneratorBase):
         # Divergence and rotational
         divG = Gx[:, 0] + Gy[:, 1] + Gz[:, 2]
         rotGx = Gz[:, 1] - Gy[:, 2]
-        rotGy = Gz[:, 2] - Gz[:, 0]
+        rotGy = Gx[:, 2] - Gz[:, 0]
         rotGz = Gy[:, 0] - Gx[:, 1]
         
         # Gradient divergence and rotational
@@ -222,10 +227,10 @@ class Generator(DataGeneratorBase):
         # G_rotGz = tf.gather_nd(G_rotGz, coords, batch_dims=1)
         # G = tf.concat([Gx[..., None], Gy[..., None], Gz[..., None]], axis=4)
 
-        G_divG = tf.reduce_mean(G_divG)
-        G_rotGx = tf.reduce_mean(G_rotGx)
-        G_rotGy = tf.reduce_mean(G_rotGy)
-        G_rotGz = tf.reduce_mean(G_rotGz)
+        G_divG = tf.reduce_sum(G_divG * G_divG)
+        G_rotGx = tf.reduce_sum(G_rotGx * G_rotGx)
+        G_rotGy = tf.reduce_sum(G_rotGy * G_rotGy)
+        G_rotGz = tf.reduce_sum(G_rotGz * G_rotGz)
 
         return (G_divG + G_rotGx + G_rotGy + G_rotGz) / 4.0
 
