@@ -34,7 +34,8 @@ import tensorflow as tf
 
 from tensorflow_toolkit.generators.generator_deep_nma import Generator
 from tensorflow_toolkit.networks.deep_nma import AutoEncoder
-from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
+# from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
+
 
 # # os.environ["CUDA_VISIBLE_DEVICES"]="0,2,3,4"
 # physical_devices = tf.config.list_physical_devices('GPU')
@@ -52,8 +53,8 @@ def predict(md_file, weigths_file, n_modes, refinePose, architecture, ctfType, p
                           sr=sr, applyCTF=applyCTF, basis_file=basis_file)
 
     # Tensorflow data pipeline
-    generator_dataset, generator = sequence_to_data_pipeline(generator)
-    dataset = create_dataset(generator_dataset, generator, shuffle=False)
+    # generator_dataset, generator = sequence_to_data_pipeline(generator)
+    # dataset = create_dataset(generator_dataset, generator, shuffle=False, batch_size=32)
 
     # Load model
     autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType)
@@ -62,7 +63,7 @@ def predict(md_file, weigths_file, n_modes, refinePose, architecture, ctfType, p
 
     # Predict step
     print("------------------ Predicting NMA coefficients... ------------------")
-    encoded = autoencoder.predict(dataset)
+    encoded = autoencoder.predict(generator)
 
     # Get encoded data in right format
     nma_space = encoded[0]

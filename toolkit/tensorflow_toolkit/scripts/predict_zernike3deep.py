@@ -33,7 +33,8 @@ import tensorflow as tf
 
 from tensorflow_toolkit.generators.generator_zernike3deep import Generator
 from tensorflow_toolkit.networks.zernike3deep import AutoEncoder
-from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
+# from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
+
 
 # # os.environ["CUDA_VISIBLE_DEVICES"]="0,2,3,4"
 # physical_devices = tf.config.list_physical_devices('GPU')
@@ -49,8 +50,8 @@ def predict(md_file, weigths_file, L1, L2, refinePose, architecture, ctfType, pa
                           sr=sr, applyCTF=applyCTF)
 
     # Tensorflow data pipeline
-    generator_dataset, generator = sequence_to_data_pipeline(generator)
-    dataset = create_dataset(generator_dataset, generator, shuffle=False)
+    # generator_dataset, generator = sequence_to_data_pipeline(generator)
+    # dataset = create_dataset(generator_dataset, generator, shuffle=False, batch_size=32)
 
     # Load model
     autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType)
@@ -64,7 +65,7 @@ def predict(md_file, weigths_file, L1, L2, refinePose, architecture, ctfType, pa
 
     # Predict step
     print("------------------ Predicting Zernike3D coefficients... ------------------")
-    encoded = autoencoder.predict(dataset)
+    encoded = autoencoder.predict(generator)
 
     # Get encoded data in right format
     zernike_space = np.hstack([encoded[0], encoded[1], encoded[2]])

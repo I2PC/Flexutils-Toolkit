@@ -27,12 +27,15 @@
 
 
 import os
+from xmipp_metadata.metadata import XmippMetaData
 
 import tensorflow as tf
 
 from tensorflow_toolkit.generators.generator_deep_nma import Generator
 from tensorflow_toolkit.networks.deep_nma import AutoEncoder
-from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
+# from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
+from tensorflow_toolkit.utils import epochs_from_iterations
+
 
 # # os.environ["CUDA_VISIBLE_DEVICES"]="0,2,3,4"
 # physical_devices = tf.config.list_physical_devices('GPU')
@@ -42,7 +45,7 @@ from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeli
 
 def train(outPath, md_file, n_modes, batch_size, shuffle, splitTrain, epochs, cost,
           radius_mask, smooth_mask, refinePose, architecture="convnn", ctfType="apply", pad=2,
-          sr=1.0, applyCTF=1):
+          sr=1.0, applyCTF=1, lr=1e-5):
 
     try:
         # Create data generator
@@ -52,16 +55,16 @@ def train(outPath, md_file, n_modes, batch_size, shuffle, splitTrain, epochs, co
                               sr=sr, applyCTF=applyCTF)
 
         # Tensorflow data pipeline
-        generator_dataset, generator = sequence_to_data_pipeline(generator)
-        dataset = create_dataset(generator_dataset, generator)
+        # generator_dataset, generator = sequence_to_data_pipeline(generator)
+        # dataset = create_dataset(generator_dataset, generator, batch_size=batch_size)
 
         # Train model
         strategy = tf.distribute.MirroredStrategy()
         with strategy.scope():
             autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType)
-        optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4)
+        optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
         autoencoder.compile(optimizer=optimizer)
-        autoencoder.fit(dataset, epochs=epochs)
+        autoencoder.fit(generator, epochs=epochs)
     except tf.errors.ResourceExhaustedError as error:
         msg = "GPU memory has been exhausted. Usually this can be solved by " \
               "downsampling further your particles or by decreasing the batch size. " \
@@ -82,8 +85,11 @@ if __name__ == '__main__':
     parser.add_argument('--out_path', type=str, required=True)
     parser.add_argument('--n_modes', type=int, required=True)
     parser.add_argument('--batch_size', type=int, required=True)
+    parser.add_argument('--lr', type=float, required=True)
     parser.add_argument('--shuffle', action='store_true')
     parser.add_argument('--split_train', type=float, required=True)
+    parser.add_argument('--epochs', type=int, required=False)
+    parser.add_argument('--max_samples_seen', type=int, required=False)
     parser.add_argument('--epochs', type=int, required=True)
     parser.add_argument('--cost', type=str, required=True)
     parser.add_argument('--architecture', type=str, required=True)
@@ -104,13 +110,22 @@ if __name__ == '__main__':
     for gpu_instance in physical_devices:
         tf.config.experimental.set_memory_growth(gpu_instance, True)
 
+    if args.max_samples_seen:
+        n_samples = len(XmippMetaData(args.md_file))
+        del XmippMetaData
+        epochs = epochs_from_iterations(args.max_samples_seen, n_samples, args.batch_size)
+    elif args.epochs:
+        epochs = args.epochs
+    else:
+        raise ValueError("Error: Either parameter --epochs or --max_samples_seen is needed")
+
     inputs = {"md_file": args.md_file, "outPath": args.out_path, "n_modes": args.n_modes,
               "batch_size": args.batch_size, "shuffle": args.shuffle,
-              "splitTrain": args.split_train, "epochs": args.epochs,
+              "splitTrain": args.split_train, "epochs": epochs,
               "cost": args.cost, "radius_mask": args.radius_mask, "smooth_mask": args.smooth_mask,
               "refinePose": args.refine_pose, "architecture": args.architecture,
               "ctfType": args.ctf_type, "pad": args.pad, "sr": args.sr,
-              "applyCTF": args.apply_ctf}
+              "applyCTF": args.apply_ctf, "lr": args.lr}
 
     # Initialize volume slicer
     train(**inputs)

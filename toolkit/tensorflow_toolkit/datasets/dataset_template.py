@@ -27,6 +27,7 @@
 
 import types
 import tensorflow as tf
+import numpy as np
 
 
 def sequence_to_data_pipeline(sequence):
@@ -39,6 +40,7 @@ def sequence_to_data_pipeline(sequence):
     # Prepare sequence
     sequence.shuffle = False
     sequence.getitem = types.MethodType(getitem, sequence)
+    sequence.batch_size = 1
     sequence.len = sequence.__len__()
 
     def gen_data_generator():
@@ -47,7 +49,8 @@ def sequence_to_data_pipeline(sequence):
     return gen_data_generator, sequence
 
 
-def create_dataset(data_generator, sequence, prefetch=True, shuffle=True, cache=True, interleave=False):
+def create_dataset(data_generator, sequence, prefetch=True, batch_size=8,
+                   shuffle=True, cache=True, interleave=False):
     ''' Create Dataset for tf.data pipeline '''
     dataset = tf.data.Dataset.from_generator(data_generator, output_signature=(
         tf.TensorSpec(shape=(None, sequence.xsize, sequence.xsize, 1), dtype=tf.float32),
@@ -68,8 +71,11 @@ def create_dataset(data_generator, sequence, prefetch=True, shuffle=True, cache=
     if cache:
         dataset = dataset.cache()
 
+    # Batch size
+    dataset = dataset.unbatch().batch(batch_size=batch_size, num_parallel_calls=tf.data.AUTOTUNE)
+
     # Assign cardinality beforehand for progress bar
-    dataset = tf.data.experimental.assert_cardinality(sequence.len)(dataset)
+    dataset = tf.data.experimental.assert_cardinality(np.ceil(sequence.len / batch_size))(dataset)
 
     return dataset
 

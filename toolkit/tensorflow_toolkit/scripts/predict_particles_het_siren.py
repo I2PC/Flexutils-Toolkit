@@ -38,7 +38,7 @@ import tensorflow as tf
 
 from tensorflow_toolkit.generators.generator_het_siren import Generator
 from tensorflow_toolkit.networks.het_siren import AutoEncoder
-from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
+# from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
 
 
 # # os.environ["CUDA_VISIBLE_DEVICES"]="0,2,3,4"
@@ -55,8 +55,8 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType,
                           applyCTF=applyCTF)
 
     # Tensorflow data pipeline
-    generator_dataset, generator = sequence_to_data_pipeline(generator)
-    dataset = create_dataset(generator_dataset, generator, shuffle=False)
+    # generator_dataset, generator = sequence_to_data_pipeline(generator)
+    # dataset = create_dataset(generator_dataset, generator, shuffle=False, batch_size=16)
 
     # Load model
     autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
@@ -66,7 +66,7 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType,
 
     # Get poses
     print("------------------ Predicting alignment and het info... ------------------")
-    alignment, shifts, het = autoencoder.predict(dataset, predict_mode="het")
+    alignment, shifts, het = autoencoder.predict(generator, predict_mode="het")
 
     print("------------------ Predicting particles... ------------------")
     particles_path = str(Path(Path(md_file).parent, 'decoded_particles.mrcs'))
