@@ -42,6 +42,7 @@ class Generator(DataGeneratorBase):
         self.refinePose = refinePose
         self.cap_def = cap_def
         self.strides = strides
+        self.xsize_multires = int(self.xsize / self.strides)
 
         # Get coords group
         mask_file = Path(Path(kwargs.get("md_file")).parent, 'mask.mrc')
@@ -62,7 +63,7 @@ class Generator(DataGeneratorBase):
         # Volume indices
         self.indices = self.coords + self.xmipp_origin
         self.indices = np.transpose(np.asarray([self.indices[:, 2], self.indices[:, 1], self.indices[:, 0]]))
-        self.indices = self.indices.astype(np.int32)
+        # self.indices = (self.indices[::self.strides, :] / self.strides).astype(np.int32)
 
         # Initialize pose information
         if refinePose:
@@ -184,8 +185,12 @@ class Generator(DataGeneratorBase):
         return cm
         # return tf.keras.activations.relu(cm, threshold=0.2)
 
+    @tf.function
     def fieldGrad(self, d_f):
         d_x, d_y, d_z = d_f[0], d_f[1], d_f[2]
+        # d_x = d_x[::self.strides]
+        # d_y = d_y[::self.strides]
+        # d_z = d_z[::self.strides]
 
         batch_size_scope = tf.shape(d_x)[1]
         fn = lambda inp: tf.tensor_scatter_nd_add(inp[0], inp[1], inp[2])
@@ -200,26 +205,26 @@ class Generator(DataGeneratorBase):
         Gy = tf.map_fn(fn, [Gy, coords, tf.transpose(d_y)], fn_output_signature=tf.float32)
         Gz = tf.map_fn(fn, [Gz, coords, tf.transpose(d_z)], fn_output_signature=tf.float32)
         
-        # MaxPool3D (for speed up purposes)
-        Gx = tf.nn.avg_pool3d(Gx[..., None], ksize=self.strides, strides=self.strides, padding="VALID")
-        Gy = tf.nn.avg_pool3d(Gy[..., None], ksize=self.strides, strides=self.strides, padding="VALID")
-        Gz = tf.nn.avg_pool3d(Gz[..., None], ksize=self.strides, strides=self.strides, padding="VALID")
+        # AvgPool3D (for speed up purposes)
+        Gx = tf.nn.avg_pool3d(Gx[..., None], ksize=2, strides=2, padding="VALID")
+        Gy = tf.nn.avg_pool3d(Gy[..., None], ksize=2, strides=2, padding="VALID")
+        Gz = tf.nn.avg_pool3d(Gz[..., None], ksize=2, strides=2, padding="VALID")
         
-        Gx = tf.abs(self.sobel_edge_3d(Gx))
-        Gy = tf.abs(self.sobel_edge_3d(Gy))
-        Gz = tf.abs(self.sobel_edge_3d(Gz))
+        Gx = self.sobel_edge_3d(Gx)
+        Gy = self.sobel_edge_3d(Gy)
+        Gz = self.sobel_edge_3d(Gz)
 
         # Divergence and rotational
-        divG = Gx[:, 0] + Gy[:, 1] + Gz[:, 2]
-        rotGx = Gz[:, 1] - Gy[:, 2]
-        rotGy = Gx[:, 2] - Gz[:, 0]
-        rotGz = Gy[:, 0] - Gx[:, 1]
+        divG = Gx[..., 0] + Gy[..., 1] + Gz[..., 2]
+        rotGx = Gz[..., 1] - Gy[..., 2]
+        rotGy = Gx[..., 2] - Gz[..., 0]
+        rotGz = Gy[..., 0] - Gx[..., 1]
         
         # Gradient divergence and rotational
-        G_divG = tf.abs(self.sobel_edge_3d(divG[..., None]))
-        G_rotGx = tf.abs(self.sobel_edge_3d(rotGx[..., None]))
-        G_rotGy = tf.abs(self.sobel_edge_3d(rotGy[..., None]))
-        G_rotGz = tf.abs(self.sobel_edge_3d(rotGz[..., None]))
+        G_divG = self.sobel_edge_3d(divG[..., None])
+        G_rotGx = self.sobel_edge_3d(rotGx[..., None])
+        G_rotGy = self.sobel_edge_3d(rotGy[..., None])
+        G_rotGz = self.sobel_edge_3d(rotGz[..., None])
 
         # G_divG = tf.gather_nd(G_divG, coords, batch_dims=1)
         # G_rotGx = tf.gather_nd(G_rotGx, coords, batch_dims=1)
@@ -227,12 +232,22 @@ class Generator(DataGeneratorBase):
         # G_rotGz = tf.gather_nd(G_rotGz, coords, batch_dims=1)
         # G = tf.concat([Gx[..., None], Gy[..., None], Gz[..., None]], axis=4)
 
-        G_divG = tf.reduce_sum(G_divG * G_divG)
-        G_rotGx = tf.reduce_sum(G_rotGx * G_rotGx)
-        G_rotGy = tf.reduce_sum(G_rotGy * G_rotGy)
-        G_rotGz = tf.reduce_sum(G_rotGz * G_rotGz)
+        # G_divG = tf.reduce_mean(G_divG * G_divG)
+        # G_rotGx = tf.reduce_mean(G_rotGx * G_rotGx)
+        # G_rotGy = tf.reduce_mean(G_rotGy * G_rotGy)
+        # G_rotGz = tf.reduce_mean(G_rotGz * G_rotGz)
 
-        return (G_divG + G_rotGx + G_rotGy + G_rotGz) / 4.0
+        G_divG = tf.reduce_mean(tf.abs(G_divG))
+        G_rotGx = tf.reduce_mean(tf.abs(G_rotGx))
+        G_rotGy = tf.reduce_mean(tf.abs(G_rotGy))
+        G_rotGz = tf.reduce_mean(tf.abs(G_rotGz))
+
+        # G_divG = tf.reduce_sum(G_divG)
+        # G_rotGx = tf.reduce_sum(G_rotGx)
+        # G_rotGy = tf.reduce_sum(G_rotGy)
+        # G_rotGz = tf.reduce_sum(G_rotGz)
+
+        return G_divG, (G_rotGx + G_rotGy + G_rotGz) / 3
 
     # def computeGrad(self, d_x, d_y, d_z):
     #     diff_x = tf.abs(d_x[1:] - d_x[:-1])
@@ -273,5 +288,8 @@ class Generator(DataGeneratorBase):
         outputTensor_z = tf.nn.conv3d(outputTensor_z, sobel2xyz[1], strides=[1, 1, 1, 1, 1], padding='VALID')
 
         return tf.concat([outputTensor_x, outputTensor_y, outputTensor_z], 4)
+
+    def downSampleImages(self, images, size):
+        return tf.image.resize(images, size=size, antialias=True)
 
     # ----- -------- -----#

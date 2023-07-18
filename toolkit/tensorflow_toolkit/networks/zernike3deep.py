@@ -23,7 +23,7 @@
 # *  e-mail address 'scipion@cnb.csic.es'
 # *
 # **************************************************************************
-
+import sys
 
 import tensorflow as tf
 from tensorflow.keras import layers
@@ -120,7 +120,7 @@ class Decoder(tf.keras.Model):
 
         # Average deformation
         if self.generator.cap_def:
-            avg_d = layers.Lambda(self.generator.fieldGrad)([d_x, d_y, d_z])
+            g_div, g_rot = layers.Lambda(self.generator.fieldGrad)([d_x, d_y, d_z])
 
         # Apply deformation field
         c_x = layers.Lambda(lambda inp: self.generator.applyDeformationField(inp, 0), trainable=True)(d_x)
@@ -165,7 +165,7 @@ class Decoder(tf.keras.Model):
                 decoded = layers.Lambda(self.generator.ctfFilterImage)(decoded)
         
         if self.generator.cap_def:
-            outputs = [decoded, avg_d]
+            outputs = [decoded, g_div, g_rot]
         else:
             outputs = decoded
         
@@ -182,27 +182,31 @@ class Decoder(tf.keras.Model):
         if self.generator.cap_def:
             return decoded
         else:
-            return decoded, 0.0
+            return decoded, 0.0, 0.0
 
 
 class AutoEncoder(tf.keras.Model):
-    def __init__(self, generator, architecture="convnn", CTF="apply", l_grad=0.0, **kwargs):
+    def __init__(self, generator, architecture="convnn", CTF="apply", l_div=0.0,  l_rot=0.0, multires=(2, 4), **kwargs):
         super(AutoEncoder, self).__init__(**kwargs)
         self.generator = generator
         self.CTF = CTF
         self.encoder = Encoder(generator.zernike_size.shape[0], generator.xsize,
                                generator.refinePose, architecture=architecture)
         self.decoder = Decoder(generator.zernike_size.shape[0], generator, CTF=CTF)
-        self.l_grad = l_grad
+        self.l_div = l_div
+        self.l_rot = l_rot
+        self.multires = [tf.constant([int(generator.xsize / mr), int(generator.xsize / mr)], dtype=tf.int32) for mr in multires]
         self.total_loss_tracker = tf.keras.metrics.Mean(name="total_loss")
         self.img_loss_tracker = tf.keras.metrics.Mean(name="img_loss")
-        self.avg_d_loss_tracker = tf.keras.metrics.Mean(name="avg_d_loss")
+        self.g_div_loss_tracker = tf.keras.metrics.Mean(name="g_div_loss")
+        self.g_rot_loss_tracker = tf.keras.metrics.Mean(name="g_rot_loss")
 
     @property
     def metrics(self):
         return [
             self.total_loss_tracker,
-            self.avg_d_loss_tracker,
+            self.g_div_loss_tracker,
+            self.g_rot_loss_tracker,
             self.img_loss_tracker,
         ]
 
@@ -247,7 +251,7 @@ class AutoEncoder(tf.keras.Model):
 
         with tf.GradientTape() as tape:
             encoded = self.encoder(images)
-            decoded, avg_d = self.decoder(encoded)
+            decoded, g_div, g_rot = self.decoder(encoded)
 
             # ori_images = self.decoder.generator.applyFourierMask(data[0])
             # decoded = self.decoder.generator.applyFourierMask(decoded)
@@ -255,19 +259,29 @@ class AutoEncoder(tf.keras.Model):
             # cap_def_loss = self.decoder.generator.capDeformation(d_x, d_y, d_z)
             img_loss = self.decoder.generator.cost_function(images, decoded)
 
-            total_loss = img_loss + self.l_grad * avg_d
+            # Multiresolution loss
+            multires_loss = 0.0
+            for mr in self.multires:
+                images_mr = self.decoder.generator.downSampleImages(images, mr)
+                decoded_mr = self.decoder.generator.downSampleImages(decoded, mr)
+                multires_loss += self.decoder.generator.cost_function(images_mr, decoded_mr)
+            multires_loss = multires_loss / len(self.multires)
+
+            total_loss = img_loss + multires_loss + self.l_div * g_div + self.l_rot * g_rot
             # 0.01 * self.decoder.generator.averageDeformation()  # Extra loss term to compensate large deformations
-            # self.decoder.generator.centerMassShift()  # Extra loss term to center strucuture
+            # self.decoder.generator.centerMassShift()  # Extra loss term to center structure
 
         grads = tape.gradient(total_loss, self.trainable_weights)
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
         self.total_loss_tracker.update_state(total_loss)
         self.img_loss_tracker.update_state(img_loss)
-        self.avg_d_loss_tracker.update_state(avg_d)
+        self.g_div_loss_tracker.update_state(g_div)
+        self.g_rot_loss_tracker.update_state(g_rot)
         return {
             "loss": self.total_loss_tracker.result(),
             "img_loss": self.img_loss_tracker.result(),
-            "avg_d_loss": self.avg_d_loss_tracker.result()
+            "g_div_loss": self.g_div_loss_tracker.result(),
+            "g_rot_loss": self.g_rot_loss_tracker.result()
         }
 
     def predict_step(self, data):
