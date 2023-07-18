@@ -17,8 +17,8 @@ protobuf==3.19.*
 xmipp_metadata@git+https://github.com/DavidHerreros/xmipp_metadata.git@devel
 prody
 tf_siren
-cupy-cuda101
-scikit-cuda
+#cupy-cuda101
+#scikit-cuda
 yellowbrick
 seaborn
 pathos
