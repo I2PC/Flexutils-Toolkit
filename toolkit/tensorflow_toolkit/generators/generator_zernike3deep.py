@@ -71,7 +71,6 @@ class Generator(DataGeneratorBase):
             self.tilt_batch = np.zeros(self.batch_size)
             self.psi_batch = np.zeros(self.batch_size)
 
-
     # ----- Initialization methods -----#
     def getCoordsGroup(self, mask):
         with mrcfile.open(mask) as mrc:
@@ -87,8 +86,8 @@ class Generator(DataGeneratorBase):
             groups, centers = None, None
 
         return groups, centers
-    # ----- -------- -----#
 
+    # ----- -------- -----#
 
     # ----- Utils -----#
 
@@ -197,19 +196,22 @@ class Generator(DataGeneratorBase):
         Gx = tf.zeros([batch_size_scope, self.xsize, self.xsize, self.xsize], dtype=tf.float32)
         Gy = tf.zeros([batch_size_scope, self.xsize, self.xsize, self.xsize], dtype=tf.float32)
         Gz = tf.zeros([batch_size_scope, self.xsize, self.xsize, self.xsize], dtype=tf.float32)
-        
+
         # XYZ gradients
         coords = tf.constant(self.indices[None, ...], dtype=tf.int32)
         coords = tf.repeat(coords, batch_size_scope, axis=0)
         Gx = tf.map_fn(fn, [Gx, coords, tf.transpose(d_x)], fn_output_signature=tf.float32)
         Gy = tf.map_fn(fn, [Gy, coords, tf.transpose(d_y)], fn_output_signature=tf.float32)
         Gz = tf.map_fn(fn, [Gz, coords, tf.transpose(d_z)], fn_output_signature=tf.float32)
-        
+
         # AvgPool3D (for speed up purposes)
-        Gx = tf.nn.avg_pool3d(Gx[..., None], ksize=2, strides=2, padding="VALID")
-        Gy = tf.nn.avg_pool3d(Gy[..., None], ksize=2, strides=2, padding="VALID")
-        Gz = tf.nn.avg_pool3d(Gz[..., None], ksize=2, strides=2, padding="VALID")
-        
+        # Gx = tf.nn.avg_pool3d(Gx[..., None], ksize=4, strides=4, padding="VALID")
+        # Gy = tf.nn.avg_pool3d(Gy[..., None], ksize=4, strides=4, padding="VALID")
+        # Gz = tf.nn.avg_pool3d(Gz[..., None], ksize=4, strides=4, padding="VALID")
+        Gx = self.pn_maxpool3d(Gx[..., None], ksize=4, strides=4, padding="VALID")
+        Gy = self.pn_maxpool3d(Gy[..., None], ksize=4, strides=4, padding="VALID")
+        Gz = self.pn_maxpool3d(Gz[..., None], ksize=4, strides=4, padding="VALID")
+
         Gx = self.sobel_edge_3d(Gx)
         Gy = self.sobel_edge_3d(Gy)
         Gz = self.sobel_edge_3d(Gz)
@@ -219,7 +221,7 @@ class Generator(DataGeneratorBase):
         rotGx = Gz[..., 1] - Gy[..., 2]
         rotGy = Gx[..., 2] - Gz[..., 0]
         rotGz = Gy[..., 0] - Gx[..., 1]
-        
+
         # Gradient divergence and rotational
         G_divG = self.sobel_edge_3d(divG[..., None])
         G_rotGx = self.sobel_edge_3d(rotGx[..., None])
@@ -255,6 +257,7 @@ class Generator(DataGeneratorBase):
     #     diff_z = tf.abs(d_z[1:] - d_z[:-1])
     #     return tf.reduce_mean(diff_x * diff_x + diff_y * diff_y + diff_z * diff_z, axis=0)
 
+    @tf.function
     def sobel_edge_3d(self, inputTensor):
         # This function computes Sobel edge maps on 3D images
         # inputTensor: input 3D images, with size of [batchsize,W,H,D,1]
@@ -291,5 +294,45 @@ class Generator(DataGeneratorBase):
 
     def downSampleImages(self, images, size):
         return tf.image.resize(images, size=size, antialias=True)
+
+    @tf.function
+    def tf_select_along_axis(self, arr, selecting_ixs, axis: int):
+        """ Select the given indices along the given axis.
+        :param arr: A N-dimensional tensor of shape (D[0], ..., D[axis], ..., D[N])
+        :param selecting_ixs: A N-1 dimensional tensor of shape (D[0], ... D[axis-1], D[axis+1], ... D[N]) int32 which selects elements along axis
+        :param axis: The axis along which you're selecting.
+        """
+        ixs = [tf.broadcast_to(tf.range(tf.shape(arr)[d])[(slice(None),) + (None,) * (axis - i)],
+                               tf.shape(selecting_ixs)) for i, d in
+               enumerate(range(axis))] \
+              + [selecting_ixs] \
+              + [tf.broadcast_to(tf.range(tf.shape(arr)[d])[(slice(None),) + (None,) * (axis - i)],
+                                 tf.shape(selecting_ixs)) for i, d
+                 in
+                 enumerate(range(axis + 1, len(tf.shape(arr))), start=axis + 1)]
+        ixs_nd = tf.reshape(tf.stack(ixs, axis=-1), (-1, len(tf.shape(arr))))
+        return tf.reshape(tf.gather_nd(arr, ixs_nd), tf.shape(selecting_ixs))
+
+    @tf.function
+    def pn_maxpool3d(self, tensor, ksize, strides, padding="SAME"):
+        """Max pooling function working on the absolute value of a tensor while preserving the sign of the values.
+
+        Args:
+          tensor: The input tensor.
+          kernel_size: The size of the kernel.
+          stride: The stride of the pooling operation.
+
+        Returns:
+          A tensor with the same shape as the input tensor, but with the absolute values of the elements pooled.
+        """
+
+        ksize = [1, ksize, ksize, ksize, 1]
+        strides = [1, strides, strides, strides, 1]
+        patches = tf.extract_volume_patches(tensor, ksize, strides, padding)
+        patches_abs = tf.abs(patches)
+        channel_pool_idx = tf.argmax(patches_abs[:, :, :, 0::1], axis=4, output_type=tf.int32)
+        channel_pool = self.tf_select_along_axis(patches, channel_pool_idx[..., None], axis=4)
+        res = tf.concat(channel_pool, axis=-1)
+        return res
 
     # ----- -------- -----#

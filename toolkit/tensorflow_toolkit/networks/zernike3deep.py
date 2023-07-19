@@ -195,7 +195,9 @@ class AutoEncoder(tf.keras.Model):
         self.decoder = Decoder(generator.zernike_size.shape[0], generator, CTF=CTF)
         self.l_div = l_div
         self.l_rot = l_rot
-        self.multires = [tf.constant([int(generator.xsize / mr), int(generator.xsize / mr)], dtype=tf.int32) for mr in multires]
+        self.multires = [tf.constant([int(generator.xsize / mr), int(generator.xsize / mr)], dtype=tf.int32)
+                         for mr in multires]
+        self.multires_len = len(self.multires) if len(self.multires) > 0 else 1
         self.total_loss_tracker = tf.keras.metrics.Mean(name="total_loss")
         self.img_loss_tracker = tf.keras.metrics.Mean(name="img_loss")
         self.g_div_loss_tracker = tf.keras.metrics.Mean(name="g_div_loss")
@@ -265,7 +267,7 @@ class AutoEncoder(tf.keras.Model):
                 images_mr = self.decoder.generator.downSampleImages(images, mr)
                 decoded_mr = self.decoder.generator.downSampleImages(decoded, mr)
                 multires_loss += self.decoder.generator.cost_function(images_mr, decoded_mr)
-            multires_loss = multires_loss / len(self.multires)
+            multires_loss = multires_loss / self.multires_len
 
             total_loss = img_loss + multires_loss + self.l_div * g_div + self.l_rot * g_rot
             # 0.01 * self.decoder.generator.averageDeformation()  # Extra loss term to compensate large deformations
