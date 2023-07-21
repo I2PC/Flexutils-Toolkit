@@ -44,10 +44,10 @@ class Encoder(tf.keras.Model):
         x = tf.keras.layers.Flatten()(encoder_inputs)
 
         if architecture == "mlpnn":
-            for _ in range(12):
-                x = layers.Dense(1024, activation='relu', kernel_regularizer=l2)(x)
-            x = layers.Dropout(0.3)(x)
-            x = layers.BatchNormalization()(x)
+            for _ in range(3):
+                x = layers.Dense(1024, activation='relu')(x)
+            # x = layers.Dropout(0.3)(x)
+            # x = layers.BatchNormalization()(x)
 
         elif architecture == "convnn":
             for _ in range(3):

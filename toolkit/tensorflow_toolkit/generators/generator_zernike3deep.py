@@ -292,6 +292,7 @@ class Generator(DataGeneratorBase):
 
         return tf.concat([outputTensor_x, outputTensor_y, outputTensor_z], 4)
 
+    @tf.function
     def downSampleImages(self, images, size):
         return tf.image.resize(images, size=size, antialias=True)
 

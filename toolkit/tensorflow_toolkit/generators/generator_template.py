@@ -42,7 +42,7 @@ from tensorflow_toolkit.utils import getXmippOrigin, fft_pad, ifft_pad
 class DataGeneratorBase(tf.keras.utils.Sequence):
     def __init__(self, md_file, batch_size=32, shuffle=True, step=1, splitTrain=0.8,
                  radius_mask=2, smooth_mask=True, cost="corr", keepMap=False, pad_factor=2,
-                 sr=1., applyCTF=1):
+                 sr=1., applyCTF=1, n_steps=None):
         # Attributes
         self.step = step
         self.shuffle = shuffle
@@ -100,11 +100,19 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
         # self.getFourierRings()
         # self.radial_masks, self.spatial_freq = self.get_radial_masks()
 
+        # Number of steps
+        if n_steps is None:
+            self.n_steps = len(self.file_idx)
+        else:
+            self.n_steps = n_steps
+
         # Cost function
         if cost == "corr":
             self.cost_function = self.loss_correlation
         elif cost == "fpc":
             self.cost_function = self.fourier_phase_correlation
+        elif cost == "mae":
+            self.cost_function = tf.keras.metrics.mae
 
 
     #----- Initialization methods -----#
@@ -210,7 +218,7 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
         return X, y
 
     def __len__(self):
-        return int(np.ceil(len(self.file_idx) / self.batch_size))
+        return int(np.ceil(self.n_steps / self.batch_size))
 
     # ----- -------- -----#
 
