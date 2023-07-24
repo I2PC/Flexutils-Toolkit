@@ -46,6 +46,7 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
         # Attributes
         self.step = step
         self.shuffle = shuffle
+        self.shuffle_epoch = 0
         self.batch_size = batch_size
         self.indexes = np.arange(self.batch_size)
         self.pad_factor = pad_factor
@@ -201,10 +202,11 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
     # ----- Data generation methods -----#
 
     def on_epoch_end(self):
-        if self.shuffle == True:
+        if self.shuffle != 0 and self.shuffle_epoch == self.shuffle:
             indexes = np.arange(self.file_idx.size)
             np.random.shuffle(indexes)
             self.file_idx = self.file_idx[indexes]
+            self.shuffle_epoch = 0
 
     def __data_generation(self):
         images = self.metadata.getMetaDataImage(self.indexes)
