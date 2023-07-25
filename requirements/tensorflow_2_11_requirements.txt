@@ -12,7 +12,7 @@ matplotlib==3.6.2
 scipy==1.9.3
 pandas
 biopython==1.76
-scikit-learn==1.1.3
+scikit-learn==1.2.2
 numpy==1.23.4
 protobuf==3.19.*
 xmipp_metadata@git+https://github.com/DavidHerreros/xmipp_metadata.git@devel
