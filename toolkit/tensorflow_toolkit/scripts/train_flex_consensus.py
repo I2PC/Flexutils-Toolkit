@@ -27,8 +27,9 @@
 
 
 import os
+import shutil
+import glob
 import re
-from glob import glob
 from scipy.stats import entropy
 from scipy.interpolate import NearestNDInterpolator
 
@@ -69,7 +70,7 @@ def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs, lr
 
     try:
         # Read data
-        data_files = glob(os.path.join(dataPath, "*.txt"))
+        data_files = glob.glob(os.path.join(dataPath, "*.txt"))
         sort_nicely(data_files)
         spaces = [np.loadtxt(file) for file in data_files]
 
@@ -88,9 +89,27 @@ def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs, lr
 
         optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
 
+        # Create a callback that saves the model's weights
+        initial_epoch = 0
+        checkpoint_path = os.path.join(outPath, "training", "cp-{epoch:04d}.hdf5")
+        cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
+                                                         save_weights_only=True,
+                                                         verbose=1)
+
+        checkpoint = os.path.join(outPath, "training")
+        if os.path.isdir(checkpoint):
+            files = glob.glob(os.path.join(checkpoint, "*"))
+            if len(files) > 1:
+                files.sort()
+                latest = files[-2]
+                _ = autoencoder(generator[0][0])
+                autoencoder.load_weights(latest)
+                latest = os.path.basename(latest)
+                initial_epoch = int(re.findall(r'\d+', latest)[0]) - 1
+
         autoencoder.compile(optimizer=optimizer)
         optimizer.build(autoencoder.trainable_variables)
-        autoencoder.fit(generator, epochs=epochs)
+        autoencoder.fit(generator, epochs=epochs, callbacks=[cp_callback], initial_epoch=initial_epoch)
     except tf.errors.ResourceExhaustedError as error:
         msg = "GPU memory has been exhausted. Usually this can be solved by " \
               "by decreasing the batch size. Please, modify these " \
@@ -100,6 +119,9 @@ def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs, lr
 
     # Save model
     autoencoder.save_weights(os.path.join(outPath, "network", "flex_consensus_model.h5"))
+
+    # Remove checkpoints
+    shutil.rmtree(checkpoint)
 
     # Get templates for future matching
     best_mean = [None, None]
@@ -154,7 +176,7 @@ if __name__ == '__main__':
         tf.config.experimental.set_memory_growth(gpu_instance, True)
 
     if args.max_samples_seen:
-        file = glob(os.path.join(args.data_path, "*.txt"))[0]
+        file = glob.glob(os.path.join(args.data_path, "*.txt"))[0]
         n_samples = len(np.loadtxt(file))
         epochs = epochs_from_iterations(args.max_samples_seen, n_samples, args.batch_size)
     elif args.epochs:

@@ -27,6 +27,9 @@
 
 
 import os
+import re
+import shutil
+import glob
 from xmipp_metadata.metadata import XmippMetaData
 
 import tensorflow as tf
@@ -69,8 +72,26 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
 
         optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
 
+        # Create a callback that saves the model's weights
+        initial_epoch = 0
+        checkpoint_path = os.path.join(outPath, "training", "cp-{epoch:04d}.hdf5")
+        cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
+                                                         save_weights_only=True,
+                                                         verbose=1)
+
+        checkpoint = os.path.join(outPath, "training")
+        if os.path.isdir(checkpoint):
+            files = glob.glob(os.path.join(checkpoint, "*"))
+            if len(files) > 1:
+                files.sort()
+                latest = files[-2]
+                autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
+                autoencoder.load_weights(latest)
+                latest = os.path.basename(latest)
+                initial_epoch = int(re.findall(r'\d+', latest)[0]) - 1
+
         autoencoder.compile(optimizer=optimizer)
-        autoencoder.fit(generator, epochs=epochs)
+        autoencoder.fit(generator, epochs=epochs, callbacks=[cp_callback], initial_epoch=initial_epoch)
     except tf.errors.ResourceExhaustedError as error:
         msg = "GPU memory has been exhausted. Usually this can be solved by " \
               "downsampling further your particles or by decreasing the batch size. " \
@@ -80,6 +101,9 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
 
     # Save model
     autoencoder.save_weights(os.path.join(outPath, "het_siren_model.h5"))
+
+    # Remove checkpoints
+    shutil.rmtree(checkpoint)
 
 
 if __name__ == '__main__':
