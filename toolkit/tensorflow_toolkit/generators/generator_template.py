@@ -40,7 +40,7 @@ from tensorflow_toolkit.utils import getXmippOrigin, fft_pad, ifft_pad
 
 
 class DataGeneratorBase(tf.keras.utils.Sequence):
-    def __init__(self, md_file, batch_size=32, shuffle=True, step=1, splitTrain=0.8,
+    def __init__(self, md_file, batch_size=32, shuffle=True, step=1, splitTrain=None,
                  radius_mask=2, smooth_mask=True, cost="corr", keepMap=False, pad_factor=2,
                  sr=1., applyCTF=1):
         # Attributes
@@ -69,7 +69,7 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
             self.readDefaultVolumeData(mask)
 
         # Get train dataset
-        if splitTrain < 1.0:
+        if splitTrain is not None:
             self.getTrainDataset(splitTrain)
 
         # Prepare CTF
@@ -184,8 +184,12 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
 
     def getTrainDataset(self, splitTrain):
         indexes = np.arange(self.file_idx.size)
-        np.random.shuffle(indexes)
-        self.file_idx = self.file_idx[indexes[:int(splitTrain * indexes.size)]]
+        if splitTrain > 0:
+            self.file_idx = self.file_idx[indexes[:int(splitTrain * indexes.size)]]
+        elif splitTrain < 0:
+            self.file_idx = self.file_idx[indexes[int(splitTrain * indexes.size):]]
+        else:
+            raise ValueError("The variable splitTrain must not be equal to 0")
 
     # ----- -------- -----#
 

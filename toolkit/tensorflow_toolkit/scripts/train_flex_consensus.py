@@ -78,6 +78,13 @@ def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs, lr
         generator = Generator(spaces, latent_dim=latDim, batch_size=batch_size,
                               shuffle=shuffle, splitTrain=splitTrain)
 
+        # Create validation generator
+        if splitTrain < 1.0:
+            generator_val = Generator(spaces, latent_dim=latDim, batch_size=batch_size,
+                                      shuffle=shuffle, splitTrain=(splitTrain - 1.0))
+        else:
+            generator_val = None
+
         # Tensorflow data pipeline
         # generator_dataset, generator = sequence_to_data_pipeline(generator)
         # dataset = create_dataset(generator_dataset, generator, batch_size=batch_size)
@@ -96,6 +103,11 @@ def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs, lr
                                                          save_weights_only=True,
                                                          verbose=1)
 
+        # Tensorboard callback
+        log_dir = os.path.join(outPath, "logs")
+        tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1,
+                                                              write_graph=True, write_steps_per_second=True)
+
         checkpoint = os.path.join(outPath, "training")
         if os.path.isdir(checkpoint):
             files = glob.glob(os.path.join(checkpoint, "*"))
@@ -109,7 +121,13 @@ def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs, lr
 
         autoencoder.compile(optimizer=optimizer)
         optimizer.build(autoencoder.trainable_variables)
-        autoencoder.fit(generator, epochs=epochs, callbacks=[cp_callback], initial_epoch=initial_epoch)
+
+        if generator_val is not None:
+            autoencoder.fit(generator, validation_data=generator_val, epochs=epochs, validation_freq=2,
+                            callbacks=[cp_callback, tensorboard_callback], initial_epoch=initial_epoch)
+        else:
+            autoencoder.fit(generator, epochs=epochs,
+                            callbacks=[cp_callback, tensorboard_callback], initial_epoch=initial_epoch)
     except tf.errors.ResourceExhaustedError as error:
         msg = "GPU memory has been exhausted. Usually this can be solved by " \
               "by decreasing the batch size. Please, modify these " \

@@ -188,6 +188,7 @@ class AutoEncoder(tf.keras.Model):
                                generator.refinePose, architecture=architecture)
         self.decoder = Decoder(generator.zernike_size.shape[0], generator, CTF=CTF)
         self.total_loss_tracker = tf.keras.metrics.Mean(name="total_loss")
+        self.test_loss_tracker = tf.keras.metrics.Mean(name="test_loss")
         self.img_loss_tracker = tf.keras.metrics.Mean(name="img_loss")
         self.avg_d_loss_tracker = tf.keras.metrics.Mean(name="avg_d_loss")
 
@@ -197,6 +198,7 @@ class AutoEncoder(tf.keras.Model):
             self.total_loss_tracker,
             self.avg_d_loss_tracker,
             self.img_loss_tracker,
+            self.test_loss_tracker
         ]
 
     def train_step(self, data):
@@ -254,6 +256,61 @@ class AutoEncoder(tf.keras.Model):
 
         grads = tape.gradient(total_loss, self.trainable_weights)
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
+        self.total_loss_tracker.update_state(total_loss)
+        self.img_loss_tracker.update_state(img_loss)
+        self.avg_d_loss_tracker.update_state(avg_d)
+        return {
+            "loss": self.total_loss_tracker.result(),
+            "img_loss": self.img_loss_tracker.result(),
+            "avg_d_loss": self.avg_d_loss_tracker.result()
+        }
+
+    def test_step(self, data):
+        self.decoder.generator.indexes = data[1]
+        self.decoder.generator.current_images = data[0]
+
+        images = data[0]
+
+        # Update batch_size (in case it is incomplete)
+        batch_size_scope = tf.shape(data[0])[0]
+
+        # Precompute batch alignments
+        if self.decoder.generator.refinePose:
+            self.decoder.generator.rot_batch = tf.gather(self.decoder.generator.angle_rot, data[1], axis=0)
+            self.decoder.generator.tilt_batch = tf.gather(self.decoder.generator.angle_tilt, data[1], axis=0)
+            self.decoder.generator.psi_batch = tf.gather(self.decoder.generator.angle_psi, data[1], axis=0)
+        else:
+            rot_batch = tf.gather(self.decoder.generator.angle_rot, data[1], axis=0)
+            tilt_batch = tf.gather(self.decoder.generator.angle_tilt, data[1], axis=0)
+            psi_batch = tf.gather(self.decoder.generator.angle_psi, data[1], axis=0)
+            # row_1 = euler_matrix_row(rot_batch, tilt_batch, psi_batch, 1, self.decoder.generator.batch_size)
+            # row_2 = euler_matrix_row(rot_batch, tilt_batch, psi_batch, 2, self.decoder.generator.batch_size)
+            # row_3 = euler_matrix_row(rot_batch, tilt_batch, psi_batch, 3, self.decoder.generator.batch_size)
+            # self.decoder.generator.r = [row_1, row_2, row_3]
+            self.decoder.generator.r = euler_matrix_batch(rot_batch, tilt_batch, psi_batch)
+
+        # Precompute batch CTFs
+        defocusU_batch = tf.gather(self.decoder.generator.defocusU, data[1], axis=0)
+        defocusV_batch = tf.gather(self.decoder.generator.defocusV, data[1], axis=0)
+        defocusAngle_batch = tf.gather(self.decoder.generator.defocusAngle, data[1], axis=0)
+        cs_batch = tf.gather(self.decoder.generator.cs, data[1], axis=0)
+        kv_batch = self.decoder.generator.kv
+        ctf = computeCTF(defocusU_batch, defocusV_batch, defocusAngle_batch, cs_batch, kv_batch,
+                         self.decoder.generator.sr, self.decoder.generator.pad_factor,
+                         [self.decoder.generator.xsize, int(0.5 * self.decoder.generator.xsize + 1)],
+                         batch_size_scope, self.decoder.generator.applyCTF)
+        self.decoder.generator.ctf = ctf
+
+        if self.CTF == "wiener":
+            images = self.decoder.generator.wiener2DFilter(images)
+
+        encoded = self.encoder(images)
+        decoded, avg_d = self.decoder(encoded)
+
+        img_loss = self.decoder.generator.cost_function(images, decoded)
+
+        total_loss = img_loss + 0.005 * avg_d
+
         self.total_loss_tracker.update_state(total_loss)
         self.img_loss_tracker.update_state(img_loss)
         self.avg_d_loss_tracker.update_state(avg_d)

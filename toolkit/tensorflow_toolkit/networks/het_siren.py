@@ -182,12 +182,14 @@ class AutoEncoder(Model):
         self.l1_lambda = l1_lambda
         self.het_dim = het_dim
         self.total_loss_tracker = tf.keras.metrics.Mean(name="total_loss")
+        self.test_loss_tracker = tf.keras.metrics.Mean(name="test_loss")
         self.loss_het_tracker = tf.keras.metrics.Mean(name="rec_het")
 
     @property
     def metrics(self):
         return [
             self.total_loss_tracker,
+            self.test_loss_tracker,
             self.loss_het_tracker,
         ]
 
@@ -240,6 +242,59 @@ class AutoEncoder(Model):
 
         grads = tape.gradient(total_loss, self.trainable_weights)
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
+
+        self.total_loss_tracker.update_state(total_loss)
+        self.loss_het_tracker.update_state(loss_het)
+        return {
+            "loss": self.total_loss_tracker.result(),
+            "rec_het": self.loss_het_tracker.result(),
+        }
+
+    def test_step(self, data):
+        self.decoder.generator.indexes = data[1]
+        self.decoder.generator.current_images = data[0]
+
+        images = data[0]
+
+        # Update batch_size (in case it is incomplete)
+        batch_size_scope = tf.shape(data[0])[0]
+
+        # Precompute batch aligments
+        self.decoder.generator.rot_batch = tf.gather(self.decoder.generator.angle_rot, data[1], axis=0)
+        self.decoder.generator.tilt_batch = tf.gather(self.decoder.generator.angle_tilt, data[1], axis=0)
+        self.decoder.generator.psi_batch = tf.gather(self.decoder.generator.angle_psi, data[1], axis=0)
+
+        # Precompute batch shifts
+        self.decoder.generator.shifts_batch = [tf.gather(self.decoder.generator.shift_x, data[1], axis=0),
+                                               tf.gather(self.decoder.generator.shift_y, data[1], axis=0)]
+
+        # Precompute batch CTFs
+        defocusU_batch = tf.gather(self.decoder.generator.defocusU, data[1], axis=0)
+        defocusV_batch = tf.gather(self.decoder.generator.defocusV, data[1], axis=0)
+        defocusAngle_batch = tf.gather(self.decoder.generator.defocusAngle, data[1], axis=0)
+        cs_batch = tf.gather(self.decoder.generator.cs, data[1], axis=0)
+        kv_batch = self.decoder.generator.kv
+        ctf = computeCTF(defocusU_batch, defocusV_batch, defocusAngle_batch, cs_batch, kv_batch,
+                         self.decoder.generator.sr, self.decoder.generator.pad_factor,
+                         [self.decoder.generator.xsize, int(0.5 * self.decoder.generator.xsize + 1)],
+                         batch_size_scope, self.decoder.generator.applyCTF)
+        self.decoder.generator.ctf = ctf
+
+        # Wiener filter
+        if self.CTF == "wiener":
+            images = self.decoder.generator.wiener2DFilter(images)
+
+        rows, shifts, het = self.encoder(images)
+        decoded_het = self.decoder([self.refPose * rows, self.refPose * shifts, het])
+
+        # L1 penalization delta_het
+        delta_het = self.decoder.decode_het(het)
+        l1_loss_het = tf.reduce_mean(tf.reduce_sum(tf.abs(delta_het), axis=1))
+        l1_loss_het = self.l1_lambda * l1_loss_het / self.decoder.generator.total_voxels
+
+        loss_het = self.decoder.generator.cost_function(images, decoded_het)
+
+        total_loss = 0.5 * loss_het + 0.5 * l1_loss_het
 
         self.total_loss_tracker.update_state(total_loss)
         self.loss_het_tracker.update_state(loss_het)

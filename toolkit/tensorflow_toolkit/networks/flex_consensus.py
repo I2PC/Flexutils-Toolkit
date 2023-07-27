@@ -76,7 +76,9 @@ class AutoEncoder(tf.keras.Model):
         self.loss_tracker = [tf.keras.metrics.Mean(name="total_loss"), tf.keras.metrics.Mean(name="encoder_loss")]
         self.decoder_loss_tracker = [tf.keras.metrics.Mean(name="space_decoder_%d" % idx)
                                      for idx in range(len(generator.space_dims))]
+        self.test_loss_tracker = [tf.keras.metrics.Mean(name="test_loss"),]
         self.loss_tracker += self.decoder_loss_tracker
+        self.loss_tracker += self.test_loss_tracker
 
         # Variables for prediction
         self.encoder_idx = None
@@ -130,6 +132,49 @@ class AutoEncoder(tf.keras.Model):
 
             grads = tape.gradient(total_loss, weights_to_train)
             self.optimizer.apply_gradients(zip(grads, weights_to_train))
+
+        self.loss_tracker[0].update_state(sum(total_losses))
+        self.loss_tracker[1].update_state(sum(encoder_losses))
+        loss_dict = {"loss": self.loss_tracker[0].result(), "enc_loss": self.loss_tracker[1].result()}
+        for idx in range(len(self.space_decoders)):
+            shift_idx = idx + 2
+            self.loss_tracker[shift_idx].update_state(decoder_losses[idx])
+            loss_dict["dec_loss_%d" % (idx + 1)] = self.loss_tracker[shift_idx].result()
+        return loss_dict
+
+    def test_step(self, data):
+        inputs = data[0]
+        encoder_losses = []
+        decoder_losses = []
+        total_losses = []
+
+        for idx, space_decoder in enumerate(self.space_decoders):
+            # Encode spaces
+            space_encoded = [space_encoder(input_data)
+                             for space_encoder, input_data in zip(self.space_encoders, inputs)]
+
+            # Decode spaces
+            space_decoded = []
+            for input_features in space_encoded:
+                space_decoded.append(space_decoder(input_features))
+
+            # Encoder losses (single space)
+            encoder_loss_1 = self.generator.compute_encoder_loss(space_encoded)
+
+            # Encoder losses (keep distances)
+            encoder_loss_2 = self.generator.compute_shannon_loss(inputs, space_encoded)
+
+            # Encoder loss
+            encoder_loss = encoder_loss_1 + encoder_loss_2
+            encoder_losses.append(encoder_loss)
+
+            # Decoder losses
+            decoder_loss = self.generator.compute_decoder_loss(inputs[idx], space_decoded)
+            decoder_losses.append(decoder_loss)
+
+            # Total loss
+            total_loss = encoder_loss + decoder_loss
+            total_losses.append(total_loss)
 
         self.loss_tracker[0].update_state(sum(total_losses))
         self.loss_tracker[1].update_state(sum(encoder_losses))
