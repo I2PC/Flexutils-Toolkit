@@ -34,6 +34,7 @@ from sklearn.cluster import KMeans
 from xmipp_metadata.image_handler import ImageHandler
 
 import tensorflow as tf
+from tensorboard.plugins import projector
 
 from tensorflow_toolkit.generators.generator_het_siren import Generator
 from tensorflow_toolkit.networks.het_siren import AutoEncoder
@@ -72,6 +73,19 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
     centers = kmeans.cluster_centers_
     print("------------------ Decoding volume... ------------------")
     decoded_maps = autoencoder.eval_volume_het(centers, filter=filter, allCoords=True)
+
+    # Tensorboard projector
+    log_dir = os.path.join(os.path.dirname(md_file), "network", "logs")
+    print(log_dir)
+    if os.path.isdir(log_dir):
+        het_norm = het / np.amax(np.linalg.norm(het, axis=1))
+        weights = tf.Variable(het_norm, name="het_space")
+        checkpoint = tf.train.Checkpoint(het_space=weights)
+        checkpoint.save(os.path.join(log_dir, "het_space.ckpt"))
+        config = projector.ProjectorConfig()
+        embedding = config.embeddings.add()
+        embedding.tensor_name = os.path.join("het_space", ".ATTRIBUTES", "VARIABLE_VALUE")
+        projector.visualize_embeddings(log_dir, config)
 
     # Save space to metadata file
     alignment = np.vstack(alignment)

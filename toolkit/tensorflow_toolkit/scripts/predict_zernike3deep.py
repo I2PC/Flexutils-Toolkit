@@ -30,6 +30,7 @@ import os
 import numpy as np
 
 import tensorflow as tf
+from tensorboard.plugins import projector
 
 from tensorflow_toolkit.generators.generator_zernike3deep import Generator
 from tensorflow_toolkit.networks.zernike3deep import AutoEncoder
@@ -73,6 +74,18 @@ def predict(md_file, weigths_file, L1, L2, refinePose, architecture, ctfType, pa
     if refinePose:
         delta_euler = encoded[3]
         delta_shifts = encoded[4]
+
+    # Tensorboard projector
+    log_dir = os.path.join(os.path.dirname(md_file), "network", "logs")
+    if os.path.isdir(log_dir):
+        zernike_space_norm = zernike_space / np.amax(np.linalg.norm(zernike_space, axis=1))
+        weights = tf.Variable(zernike_space_norm, name="zernike_space")
+        checkpoint = tf.train.Checkpoint(zernike_space=weights)
+        checkpoint.save(os.path.join(log_dir, "zernike_space.ckpt"))
+        config = projector.ProjectorConfig()
+        embedding = config.embeddings.add()
+        embedding.tensor_name = os.path.join("zernike_space", ".ATTRIBUTES", "VARIABLE_VALUE")
+        projector.visualize_embeddings(log_dir, config)
 
     # for data in generator:
     #     encoded = autoencoder.encoder(data[0])
