@@ -28,10 +28,10 @@
 
 import os
 import numpy as np
-import mrcfile
 from pathlib import Path
 from sklearn.cluster import KMeans
 from xmipp_metadata.image_handler import ImageHandler
+from threadpoolctl import threadpool_limits, threadpool_info
 
 import tensorflow as tf
 from tensorboard.plugins import projector
@@ -69,7 +69,9 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
     alignment, shifts, het = autoencoder.predict(generator, predict_mode="het")
 
     # Get map
-    kmeans = KMeans(n_clusters=numVol).fit(het)
+    pool_info = threadpool_info()
+    with threadpool_limits(limits=1, user_api=pool_info[1]["user_api"]):
+        kmeans = KMeans(n_clusters=numVol).fit(het)
     centers = kmeans.cluster_centers_
     print("------------------ Decoding volume... ------------------")
     decoded_maps = autoencoder.eval_volume_het(centers, filter=filter, allCoords=True)
