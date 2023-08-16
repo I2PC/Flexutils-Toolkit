@@ -93,9 +93,13 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
                 autoencoder.load_weights(latest)
                 latest = os.path.basename(latest)
                 initial_epoch = int(re.findall(r'\d+', latest)[0]) - 1
+        else:
+            os.mkdir(checkpoint)
 
         # Tensorboard callback
         log_dir = os.path.join(outPath, "logs")
+        if not os.path.isdir(log_dir):
+            os.mkdir(log_dir)
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1,
                                                               write_graph=True, write_steps_per_second=True)
 
