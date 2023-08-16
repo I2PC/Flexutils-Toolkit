@@ -79,6 +79,8 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
         # Create a callback that saves the model's weights
         initial_epoch = 0
         checkpoint_path = os.path.join(outPath, "training", "cp-{epoch:04d}.hdf5")
+        if not os.path.isdir(os.path.dirname(checkpoint_path)):
+            os.mkdir(os.path.dirname(checkpoint_path))
         cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
                                                          save_weights_only=True,
                                                          verbose=1)
@@ -93,8 +95,6 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
                 autoencoder.load_weights(latest)
                 latest = os.path.basename(latest)
                 initial_epoch = int(re.findall(r'\d+', latest)[0]) - 1
-        else:
-            os.mkdir(checkpoint)
 
         # Tensorboard callback
         log_dir = os.path.join(outPath, "logs")

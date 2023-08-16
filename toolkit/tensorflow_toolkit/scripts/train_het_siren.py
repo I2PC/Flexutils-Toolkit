@@ -85,8 +85,8 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
         # Create a callback that saves the model's weights
         initial_epoch = 0
         checkpoint_path = os.path.join(outPath, "training", "cp-{epoch:04d}.hdf5")
-        if not os.path.isdir(checkpoint_path):
-            os.mkdir(checkpoint_path)
+        if not os.path.isdir(os.path.dirname(checkpoint_path)):
+            os.mkdir(os.path.dirname(checkpoint_path))
         cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
                                                          save_weights_only=True,
                                                          verbose=1)
