@@ -166,9 +166,11 @@ class Decoder(Model):
 
 class AutoEncoder(Model):
     def __init__(self, generator, architecture="convnn", CTF="wiener", refPose=True,
-                 l1_lambda=0.1, maxAngleDiff=5., maxShiftDiff=2., **kwargs):
+                 l1_lambda=0.1, maxAngleDiff=5., maxShiftDiff=2., multires=(2, ), **kwargs):
         super(AutoEncoder, self).__init__(**kwargs)
         self.CTF = CTF if generator.applyCTF == 1 else None
+        self.multires = [tf.constant([int(generator.xsize / mr), int(generator.xsize / mr)], dtype=tf.int32) for mr in
+                         multires]
         self.encoder = Encoder(generator.xsize, architecture=architecture, refPose=refPose,
                                maxAngleDiff=maxAngleDiff, maxShiftDiff=maxShiftDiff)
         self.decoder = Decoder(generator, CTF=CTF)
@@ -225,7 +227,15 @@ class AutoEncoder(Model):
             l1_loss = tf.reduce_mean(tf.reduce_sum(tf.abs(delta_vol), axis=1))
             l1_loss = self.l1_lambda * l1_loss / self.decoder.generator.total_voxels
 
-            total_loss = self.decoder.generator.cost_function(images, decoded) + l1_loss
+            # Multiresolution loss
+            multires_loss = 0.0
+            for mr in self.multires:
+                images_mr = self.decoder.generator.downSampleImages(images, mr)
+                decoded_mr = self.decoder.generator.downSampleImages(decoded, mr)
+                multires_loss += tf.reduce_mean(tf.abs(images_mr - decoded_mr))
+            multires_loss = multires_loss / len(self.multires)
+
+            total_loss = self.decoder.generator.cost_function(images, decoded) + multires_loss + l1_loss
 
         grads = tape.gradient(total_loss, self.trainable_weights)
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
