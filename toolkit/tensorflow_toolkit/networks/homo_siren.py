@@ -31,12 +31,15 @@ from tensorflow.keras import layers, models, Input, Model
 import numpy as np
 from scipy.ndimage import gaussian_filter
 
-from tensorflow_toolkit.utils import computeCTF
+from tensorflow_toolkit.utils import computeCTF, gramSchmidt, euler_matrix_batch
 from tensorflow_toolkit.layers.siren import Sine, SIRENFirstLayerInitializer, SIRENInitializer
 
 
+def sigmoid_diff(x):
+    return 2.0 / (1.0 + tf.exp(-x)) - 1.0
+
 class Encoder(Model):
-    def __init__(self, input_dim, architecture="convnn", refPose=True):
+    def __init__(self, input_dim, architecture="convnn", refPose=True, maxAngleDiff=5., maxShiftDiff=2.):
         super(Encoder, self).__init__()
 
         images = Input(shape=(input_dim, input_dim, 1))
@@ -88,14 +91,17 @@ class Encoder(Model):
         rows = layers.Dense(256, activation="relu", trainable=refPose)(x)
         for _ in range(2):
             rows = layers.Dense(256, activation="relu", trainable=refPose)(rows)
-        rows = layers.Dense(3, activation="linear", trainable=refPose)(rows)
+        # rows = layers.Dense(3, activation=sigmoid_diff, trainable=refPose)(rows)
+        rows = layers.Dense(3, activation=Sine(w0=1.0), kernel_initializer=SIRENInitializer())(rows)
+        # rows = layers.Dense(6, activation="linear", trainable=refPose)(rows)
 
         shifts = layers.Dense(256, activation="relu", trainable=refPose)(x)
         for _ in range(2):
             shifts = layers.Dense(256, activation="relu", trainable=refPose)(shifts)
-        shifts = layers.Dense(2, activation="linear", trainable=refPose)(shifts)
+        # shifts = layers.Dense(2, activation=sigmoid_diff, trainable=refPose)(shifts)
+        shifts = layers.Dense(2, activation=Sine(w0=1.0), kernel_initializer=SIRENInitializer())(shifts)
 
-        self.encoder = Model(images, [rows, shifts], name="encoder")
+        self.encoder = Model(images, [maxAngleDiff * rows, maxShiftDiff * shifts], name="encoder")
 
     def call(self, x):
         encoded = self.encoder(x)
@@ -112,10 +118,10 @@ class Decoder(Model):
         rows = Input(shape=(3,))
         shifts = Input(shape=(2,))
 
-        coords = layers.Lambda(self.generator.getRotatedGrid)(rows)
+        coords, coords_fix = layers.Lambda(self.generator.getRotatedGrid)(rows)
 
         # Volume decoder
-        delta_vol = layers.Concatenate()(coords)
+        delta_vol = layers.Concatenate()(coords_fix)
         delta_vol = layers.Flatten()(delta_vol)
         delta_vol = layers.Dense(8, activation=Sine(w0=w0_first),
                                  kernel_initializer=SIRENFirstLayerInitializer(scale=6.0))(delta_vol)  # activation=Sine(w0=1.0)
@@ -160,10 +166,13 @@ class Decoder(Model):
 
 class AutoEncoder(Model):
     def __init__(self, generator, architecture="convnn", CTF="wiener", refPose=True,
-                 l1_lambda=0.1, **kwargs):
+                 l1_lambda=0.1, maxAngleDiff=5., maxShiftDiff=2., multires=(2, ), **kwargs):
         super(AutoEncoder, self).__init__(**kwargs)
         self.CTF = CTF if generator.applyCTF == 1 else None
-        self.encoder = Encoder(generator.xsize, architecture=architecture, refPose=refPose)
+        self.multires = [tf.constant([int(generator.xsize / mr), int(generator.xsize / mr)], dtype=tf.int32) for mr in
+                         multires]
+        self.encoder = Encoder(generator.xsize, architecture=architecture, refPose=refPose,
+                               maxAngleDiff=maxAngleDiff, maxShiftDiff=maxShiftDiff)
         self.decoder = Decoder(generator, CTF=CTF)
         self.refPose = 1.0 if refPose else 0.0
         self.l1_lambda = l1_lambda
@@ -218,7 +227,15 @@ class AutoEncoder(Model):
             l1_loss = tf.reduce_mean(tf.reduce_sum(tf.abs(delta_vol), axis=1))
             l1_loss = self.l1_lambda * l1_loss / self.decoder.generator.total_voxels
 
-            total_loss = self.decoder.generator.cost_function(images, decoded) + l1_loss
+            # Multiresolution loss
+            multires_loss = 0.0
+            for mr in self.multires:
+                images_mr = self.decoder.generator.downSampleImages(images, mr)
+                decoded_mr = self.decoder.generator.downSampleImages(decoded, mr)
+                multires_loss += tf.reduce_mean(tf.abs(images_mr - decoded_mr))
+            multires_loss = multires_loss / len(self.multires)
+
+            total_loss = self.decoder.generator.cost_function(images, decoded) + multires_loss + l1_loss
 
         grads = tape.gradient(total_loss, self.trainable_weights)
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
@@ -259,6 +276,10 @@ class AutoEncoder(Model):
         self.decoder.generator.rot_batch = tf.zeros((1, 1), dtype=tf.float32)
         self.decoder.generator.tilt_batch = tf.zeros((1, 1), dtype=tf.float32)
         self.decoder.generator.psi_batch = tf.zeros((1, 1), dtype=tf.float32)
+        
+        # Identity rows
+        i_rows = np.zeros([1, 3], dtype=np.float32)
+        # i_rows = np.eye(3, dtype=np.float32)[:-1, :].reshape([1, -1])
 
         # Volume
         volume = np.zeros((1, self.decoder.generator.xsize,
@@ -266,7 +287,7 @@ class AutoEncoder(Model):
                            self.decoder.generator.xsize), dtype=np.float32)
         for coords in new_coords:
             self.decoder.generator.coords = coords
-            volume += self.decoder.eval_volume(np.zeros((1, 3), dtype=np.float32), filter=filter)
+            volume += self.decoder.eval_volume(i_rows, filter=filter)
 
         if allCoords and self.decoder.generator.step > 1:
             self.decoder.generator.coords = prev_coords
@@ -307,7 +328,19 @@ class AutoEncoder(Model):
         if self.CTF == "wiener":
             images = self.decoder.generator.wiener2DFilter(images)
 
-        return self.encoder(images)
+        # Rows and shifts
+        rows, shifts = self.encoder(images)
+        pred_imgs = self.decoder([rows, shifts])
+
+        # Rows to matrix
+        # r = gramSchmidt(rows)
+        # r_ori = euler_matrix_batch(self.decoder.generator.rot_batch,
+        #                            self.decoder.generator.tilt_batch,
+        #                            self.decoder.generator.psi_batch)
+        # rows = tf.matmul(tf.stack(r, axis=2), tf.stack(r_ori, axis=2))
+        # rows = tf.stack(r_ori, axis=2)
+
+        return rows, shifts, pred_imgs
 
     def call(self, input_features):
         decoded = self.decoder(self.encoder(input_features))

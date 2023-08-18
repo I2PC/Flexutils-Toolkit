@@ -257,7 +257,8 @@ def gramSchmidt(r):
     c1 = tf.nn.l2_normalize(r[:, :3], axis=-1)
     c2 = tf.nn.l2_normalize(r[:, 3:] - dot(c1, r[:, 3:]) * c1, axis=-1)
     c3 = tf.linalg.cross(c1, c2)
-    return tf.stack([c1, c2, c3], axis=2)
+    c = tf.stack([c1, c2, c3], axis=2)
+    return c[:, 0, :], c[:, 1, :], c[:, 2, :]
 
 def dot(a, b):
     return tf.reduce_sum(a * b, axis=-1, keepdims=True)
