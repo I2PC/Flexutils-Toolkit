@@ -42,7 +42,7 @@ from tensorflow_toolkit.utils import getXmippOrigin, fft_pad, ifft_pad
 class DataGeneratorBase(tf.keras.utils.Sequence):
     def __init__(self, md_file, batch_size=32, shuffle=True, step=1, splitTrain=None,
                  radius_mask=2, smooth_mask=True, cost="corr", keepMap=False, pad_factor=2,
-                 sr=1., applyCTF=1):
+                 sr=1., applyCTF=1, xsize=128):
         # Attributes
         self.step = step
         self.shuffle = shuffle
@@ -55,7 +55,10 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
         mask, volume, structure = self.readMetadata(md_file)
         self.sr = tf.constant(sr, dtype=tf.float32)
         self.applyCTF = applyCTF
-        self.xsize = self.metadata.getMetaDataImage(0).shape[1]
+        if self.metadata.binaries is not None:
+            self.xsize = self.metadata.getMetaDataImage(0).shape[1]
+        else:
+            self.xsize = xsize
         self.xmipp_origin = getXmippOrigin(self.xsize)
 
         if os.path.isfile(volume):
@@ -165,6 +168,10 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
         # Values for every atom
         # self.values = np.ones(self.coords.shape[0])
         self.values = (pdb_info[:, -1]).reshape(-1)
+
+        # Connectivity
+        connect_file = str(Path(structure.parent, 'connectivity.txt'))
+        self.connectivity = np.loadtxt(connect_file).astype(int)
 
         # Flag (reference is structure)
         self.ref_is_struct = True
