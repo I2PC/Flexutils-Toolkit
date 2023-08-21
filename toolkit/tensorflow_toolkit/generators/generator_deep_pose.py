@@ -36,16 +36,13 @@ from tensorflow_toolkit.utils import euler_matrix_batch, gramSchmidt, \
 
 
 class Generator(DataGeneratorBase):
-    def __init__(self, refinePose=False, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        self.refinePose = refinePose
-
         # Initialize pose information
-        if refinePose:
-            self.rot_batch = np.zeros(self.batch_size)
-            self.tilt_batch = np.zeros(self.batch_size)
-            self.psi_batch = np.zeros(self.batch_size)
+        self.rot_batch = np.zeros(self.batch_size)
+        self.tilt_batch = np.zeros(self.batch_size)
+        self.psi_batch = np.zeros(self.batch_size)
 
         # Cost function
         cost = kwargs.get("cost")
@@ -80,14 +77,15 @@ class Generator(DataGeneratorBase):
         A = tf.stack(A, axis=1)
 
         # Get coords to move
-        c_x = tf.constant(self.coords[:, 0], dtype=tf.float32)
-        c_y = tf.constant(self.coords[:, 1], dtype=tf.float32)
-        c_z = tf.constant(self.coords[:, 2], dtype=tf.float32)
+        coords = tf.constant(self.coords, dtype=tf.float32)
+        # c_x = tf.constant(self.coords[:, 0], dtype=tf.float32)
+        # c_y = tf.constant(self.coords[:, 1], dtype=tf.float32)
+        # c_z = tf.constant(self.coords[:, 2], dtype=tf.float32)
 
         # Apply alignment
-        c_r_1 = tf.multiply(c_x[None, :], A[:, axis, 0][:, None])
-        c_r_2 = tf.multiply(c_y[None, :], A[:, axis, 1][:, None])
-        c_r_3 = tf.multiply(c_z[None, :], A[:, axis, 2][:, None])
+        c_r_1 = tf.multiply(coords[None, :, 0], A[:, axis, 0][:, None])
+        c_r_2 = tf.multiply(coords[None, :, 1], A[:, axis, 1][:, None])
+        c_r_3 = tf.multiply(coords[None, :, 2], A[:, axis, 2][:, None])
         return tf.add(tf.add(c_r_1, c_r_2), c_r_3)
 
     def applyShifts(self, c, axis):
@@ -171,23 +169,23 @@ class Generator(DataGeneratorBase):
 
         loss = 1 - cross_power_spectrum
 
-        return loss[:, None]
+        return loss
 
-    @tf.function()
-    def correlation_coefficient_loss(self, x, y):
-        epsilon = 10e-5
-        mx = K.mean(x, axis=[1, 2, 3])[:, None, None, None]
-        my = K.mean(y, axis=[1, 2, 3])[:, None, None, None]
-        xm, ym = x - mx, y - my
-        r_num = K.sum(xm * ym, axis=[1, 2, 3])
-        x_square_sum = K.sum(xm * xm, axis=[1, 2, 3])
-        y_square_sum = K.sum(ym * ym, axis=[1, 2, 3])
-        r_den = K.sqrt(x_square_sum * y_square_sum)
-        r = r_num / (r_den + epsilon)
-
-        loss = 1 - r
-
-        return loss[:, None]
+    # @tf.function()
+    # def correlation_coefficient_loss(self, x, y):
+    #     epsilon = 10e-5
+    #     mx = K.mean(x, axis=[1, 2, 3])[:, None, None, None]
+    #     my = K.mean(y, axis=[1, 2, 3])[:, None, None, None]
+    #     xm, ym = x - mx, y - my
+    #     r_num = K.sum(xm * ym, axis=[1, 2, 3])
+    #     x_square_sum = K.sum(xm * xm, axis=[1, 2, 3])
+    #     y_square_sum = K.sum(ym * ym, axis=[1, 2, 3])
+    #     r_den = K.sqrt(x_square_sum * y_square_sum)
+    #     r = r_num / (r_den + epsilon)
+    #
+    #     loss = 1 - r
+    #
+    #     return loss[:, None]
 
     def corr_fpc(self, x, y):
         return tf.sqrt(self.correlation_coefficient_loss(x, y)

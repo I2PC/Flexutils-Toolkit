@@ -27,6 +27,9 @@
 
 
 import os
+import shutil
+import glob
+import re
 from xmipp_metadata.metadata import XmippMetaData
 
 import tensorflow as tf
@@ -44,15 +47,24 @@ from tensorflow_toolkit.utils import epochs_from_iterations
 
 
 def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
-          radius_mask, smooth_mask, refinePose, architecture="convnn", weigths_file=None,
-          ctfType="apply", pad=2, sr=1.0, applyCTF=1, lr=1e-5):
+          radius_mask, smooth_mask, architecture="convnn", weigths_file=None,
+          ctfType="apply", pad=2, sr=1.0, applyCTF=1, lr=1e-5, multires=[2, 4, 8]):
 
     try:
         # Create data generator
         generator = Generator(md_file=md_file, shuffle=shuffle, batch_size=batch_size,
                               step=step, splitTrain=splitTrain, cost=cost, radius_mask=radius_mask,
-                              smooth_mask=smooth_mask, refinePose=refinePose, pad_factor=pad,
+                              smooth_mask=smooth_mask, pad_factor=pad,
                               sr=sr, applyCTF=applyCTF)
+
+        # Create validation generator
+        if splitTrain < 1.0:
+            generator_val = Generator(md_file=md_file, shuffle=shuffle, batch_size=batch_size,
+                                      step=step, splitTrain=(splitTrain - 1.0), cost=cost, radius_mask=radius_mask,
+                                      smooth_mask=smooth_mask, pad_factor=pad,
+                                      sr=sr, applyCTF=applyCTF)
+        else:
+            generator_val = None
 
         # Tensorflow data pipeline
         # generator_dataset, generator = sequence_to_data_pipeline(generator)
@@ -62,7 +74,8 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
         # strategy = tf.distribute.MirroredStrategy()
         # with strategy.scope():
         #     autoencoder = AutoEncoder(generator, architecture=architecture)
-        autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType)
+        autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, multires=multires,
+                                  maxAngleDiff=10., maxShiftDiff=1.0)
 
         # Fine tune a previous model
         if weigths_file:
@@ -76,8 +89,41 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
         #     optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4)
         optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
 
-        autoencoder.compile(optimizer=optimizer)
-        autoencoder.fit(generator, epochs=epochs)
+        # Create a callback that saves the model's weights
+        initial_epoch = 0
+        checkpoint_path = os.path.join(outPath, "training", "cp-{epoch:04d}.hdf5")
+        if not os.path.isdir(os.path.dirname(checkpoint_path)):
+            os.mkdir(os.path.dirname(checkpoint_path))
+        cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
+                                                         save_weights_only=True,
+                                                         verbose=1)
+
+        # Tensorboard callback
+        log_dir = os.path.join(outPath, "logs")
+        if not os.path.isdir(log_dir):
+            os.mkdir(log_dir)
+        tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1,
+                                                              write_graph=True, write_steps_per_second=True)
+
+        checkpoint = os.path.join(outPath, "training")
+        if os.path.isdir(checkpoint):
+            files = glob.glob(os.path.join(checkpoint, "*"))
+            if len(files) > 1:
+                files.sort()
+                latest = files[-2]
+                autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
+                autoencoder.load_weights(latest)
+                latest = os.path.basename(latest)
+                initial_epoch = int(re.findall(r'\d+', latest)[0]) - 1
+
+        autoencoder.compile(optimizer=optimizer, jit_compile=True)
+
+        if generator_val is not None:
+            autoencoder.fit(generator, validation_data=generator_val, epochs=epochs, validation_freq=2,
+                            callbacks=[cp_callback, tensorboard_callback], initial_epoch=initial_epoch)
+        else:
+            autoencoder.fit(generator, epochs=epochs,
+                            callbacks=[cp_callback, tensorboard_callback], initial_epoch=initial_epoch)
     except tf.errors.ResourceExhaustedError as error:
         msg = "GPU memory has been exhausted. Usually this can be solved by " \
               "downsampling further your particles or by decreasing the batch size. " \
@@ -87,6 +133,9 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
 
     # Save model
     autoencoder.save_weights(os.path.join(outPath, "deep_pose_model.h5"))
+
+    # Remove checkpoints
+    shutil.rmtree(checkpoint)
 
 
 if __name__ == '__main__':
@@ -109,10 +158,10 @@ if __name__ == '__main__':
     parser.add_argument('--pad', type=int, required=False, default=2)
     parser.add_argument('--radius_mask', type=float, required=False, default=2)
     parser.add_argument('--smooth_mask', action='store_true')
-    parser.add_argument('--refine_pose', action='store_true')
     parser.add_argument('--weigths_file', type=str, required=False, default=None)
     parser.add_argument('--sr', type=float, required=True)
     parser.add_argument('--apply_ctf', type=int, required=True)
+    parser.add_argument('--multires', type=str, required=False)
     parser.add_argument('--gpu', type=str)
 
     args = parser.parse_args()
@@ -132,13 +181,14 @@ if __name__ == '__main__':
     else:
         raise ValueError("Error: Either parameter --epochs or --max_samples_seen is needed")
 
+    multires = [int(x) for x in args.multires.split(",")]
+
     inputs = {"md_file": args.md_file, "outPath": args.out_path,
               "batch_size": args.batch_size, "shuffle": args.shuffle,
               "step": args.step, "splitTrain": args.split_train, "epochs": epochs,
               "cost": args.cost, "radius_mask": args.radius_mask, "smooth_mask": args.smooth_mask,
-              "refinePose": args.refine_pose, "architecture": args.architecture,
-              "weigths_file": args.weigths_file, "ctfType": args.ctf_type, "pad": args.pad,
-              "sr": args.sr, "applyCTF": args.apply_ctf, "lr": args.lr}
+              "architecture": args.architecture, "weigths_file": args.weigths_file, "ctfType": args.ctf_type, "pad": args.pad,
+              "sr": args.sr, "applyCTF": args.apply_ctf, "lr": args.lr, "multires": multires}
 
     # Initialize volume slicer
     train(**inputs)

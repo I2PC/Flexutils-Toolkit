@@ -42,10 +42,10 @@ from tensorflow_toolkit.networks.deep_pose import AutoEncoder
 #     tf.config.experimental.set_memory_growth(gpu_instance, True)
 
 
-def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=1.0, applyCTF=1):
+def predict(md_file, weigths_file, architecture, ctfType, pad=2, sr=1.0, applyCTF=1):
     # Create data generator
     generator = Generator(md_file=md_file, shuffle=False, batch_size=16,
-                          step=1, splitTrain=1.0, refinePose=refinePose,
+                          step=1, splitTrain=1.0,
                           pad_factor=pad, sr=sr, applyCTF=applyCTF)
 
     # Tensorflow data pipeline
@@ -97,7 +97,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--md_file', type=str, required=True)
     parser.add_argument('--weigths_file', type=str, required=True)
-    parser.add_argument('--refine_pose', action='store_true')
     parser.add_argument('--architecture', type=str, required=True)
     parser.add_argument('--ctf_type', type=str, required=True)
     parser.add_argument('--pad', type=int, required=False, default=2)
@@ -114,9 +113,8 @@ if __name__ == '__main__':
         tf.config.experimental.set_memory_growth(gpu_instance, True)
 
     inputs = {"md_file": args.md_file, "weigths_file": args.weigths_file,
-              "refinePose": args.refine_pose, "architecture": args.architecture,
-              "ctfType": args.ctf_type, "pad": args.pad, "sr": args.sr,
-              "applyCTF": args.apply_ctf}
+              "architecture": args.architecture,"ctfType": args.ctf_type, "pad": args.pad,
+              "sr": args.sr, "applyCTF": args.apply_ctf}
 
     # Initialize volume slicer
     predict(**inputs)

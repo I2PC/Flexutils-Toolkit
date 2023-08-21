@@ -25,94 +25,81 @@
 # **************************************************************************
 
 
-# import numpy as np
-
 import tensorflow as tf
 from tensorflow.keras import layers
-# import tensorflow_addons as tfa
 
 from tensorflow_toolkit.utils import computeCTF
-
-
-# from tensorflow_toolkit.layers.filter_stack import FilterStack
+from tensorflow_toolkit.layers.siren import Sine, SIRENInitializer
 
 
 class Encoder(tf.keras.Model):
-    def __init__(self, input_dim, refine, architecture="convnn"):
+    def __init__(self, input_dim, architecture="convnn", maxAngleDiff=5., maxShiftDiff=2.):
         super(Encoder, self).__init__()
-        l2 = tf.keras.regularizers.l2(1e-3)
 
-        encoder_inputs = tf.keras.Input(shape=(input_dim, input_dim, 1))
+        images = tf.keras.Input(shape=(input_dim, input_dim, 1))
 
-        if architecture == "mlpnn":
-            x = tf.keras.layers.Flatten()(encoder_inputs)
-            for _ in range(12):
-                x = layers.Dense(1024, activation='relu', kernel_regularizer=l2)(x)
+        if architecture == "convnn":
 
-            y = tf.keras.layers.Dense(1024, activation="relu", kernel_regularizer=l2)(x)
-            y = tf.keras.layers.Dense(1024, activation="relu", kernel_regularizer=l2)(y)
-            y = tf.keras.layers.Dense(1024, activation="relu", kernel_regularizer=l2)(y)
-            y = layers.Dropout(0.3)(y)
-            y = layers.BatchNormalization()(y)
+            x = tf.keras.layers.Flatten()(images)
+            x = tf.keras.layers.Dense(64 * 64)(x)
+            x = tf.keras.layers.Reshape((64, 64, 1))(x)
 
-            z = tf.keras.layers.Dense(1024, activation="relu", kernel_regularizer=l2)(x)
-            z = tf.keras.layers.Dense(1024, activation="relu", kernel_regularizer=l2)(z)
-            z = tf.keras.layers.Dense(1024, activation="relu", kernel_regularizer=l2)(z)
-            z = layers.Dropout(0.3)(z)
-            z = layers.BatchNormalization()(z)
+            x = tf.keras.layers.Conv2D(4, 5, activation="relu", strides=(2, 2), padding="same")(x)
+            b1_out = tf.keras.layers.Conv2D(8, 5, activation="relu", strides=(2, 2), padding="same")(x)
 
-        elif architecture == "convnn":
-            x = tf.keras.layers.Conv2D(filters=64, kernel_size=(5, 5),
-                                       padding="same", activation="relu", use_bias=False)(encoder_inputs)
-            x = tf.keras.layers.BatchNormalization()(x)
-            x = tf.keras.layers.MaxPool2D(pool_size=(2, 2), strides=(2, 2))(x)
-            x = tf.keras.layers.Conv2D(filters=64, kernel_size=(5, 5),
-                                       padding="same", activation="relu", use_bias=False)(x)
-            x = tf.keras.layers.BatchNormalization()(x)
-            x = tf.keras.layers.MaxPool2D(pool_size=(2, 2), strides=(2, 2))(x)
+            b2_x = tf.keras.layers.Conv2D(8, 1, activation="relu", strides=(1, 1), padding="same")(b1_out)
+            b2_x = tf.keras.layers.Conv2D(8, 1, activation="linear", strides=(1, 1), padding="same")(b2_x)
+            b2_add = layers.Add()([b1_out, b2_x])
+            b2_add = layers.ReLU()(b2_add)
 
-            x = tf.keras.layers.Conv2D(filters=256, kernel_size=(3, 3),
-                                       padding="same", activation="relu", use_bias=True)(x)
-            x = tf.keras.layers.Conv2D(filters=256, kernel_size=(3, 3),
-                                       padding="same", activation="relu", use_bias=False)(x)
-            x = tf.keras.layers.BatchNormalization()(x)
-            x = tf.keras.layers.MaxPool2D(pool_size=(2, 2), strides=(2, 2))(x)
-            x = tf.keras.layers.Conv2D(filters=256, kernel_size=(3, 3),
-                                       padding="same", activation="relu", use_bias=True)(x)
-            x = tf.keras.layers.Conv2D(filters=256, kernel_size=(3, 3),
-                                       padding="same", activation="relu", use_bias=False)(x)
-            x = tf.keras.layers.BatchNormalization()(x)
-            x = tf.keras.layers.MaxPool2D(pool_size=(2, 2), strides=(2, 2))(x)
+            for _ in range(1):
+                b2_x = tf.keras.layers.Conv2D(8, 1, activation="linear", strides=(1, 1), padding="same")(b2_add)
+                b2_add = layers.Add()([b2_add, b2_x])
+                b2_add = layers.ReLU()(b2_add)
 
-            x = tf.keras.layers.Conv2D(filters=256, kernel_size=(3, 3),
-                                       padding="same", activation="relu", use_bias=False)(x)
-            x = tf.keras.layers.BatchNormalization()(x)
-            x = tf.keras.layers.MaxPool2D(pool_size=(2, 2), strides=(2, 2))(x)
+            b2_out = tf.keras.layers.Conv2D(16, 3, activation="relu", strides=(2, 2), padding="same")(b2_add)
 
-            x = tf.keras.layers.Flatten()(x)
+            b3_x = tf.keras.layers.Conv2D(16, 1, activation="relu", strides=(1, 1), padding="same")(b2_out)
+            b3_x = tf.keras.layers.Conv2D(16, 1, activation="linear", strides=(1, 1), padding="same")(b3_x)
+            b3_add = layers.Add()([b2_out, b3_x])
+            b3_add = layers.ReLU()(b3_add)
 
-            x = tf.keras.layers.Dense(256, activation="relu")(x)
-            x = tf.keras.layers.Dense(256, activation="relu")(x)
-            x = tf.keras.layers.Dense(256, activation="relu")(x)
-            x = tf.keras.layers.Dense(256, activation="relu")(x)
+            for _ in range(1):
+                b3_x = tf.keras.layers.Conv2D(16, 1, activation="linear", strides=(1, 1), padding="same")(b3_add)
+                b3_add = layers.Add()([b3_add, b3_x])
+                b3_add = layers.ReLU()(b3_add)
 
-            y = tf.keras.layers.Dense(256, activation="relu")(x)
-            y = tf.keras.layers.Dense(256, activation="relu")(y)
-            y = tf.keras.layers.Dense(256, activation="relu")(y)
-            y = tf.keras.layers.Dense(256, activation="relu")(y)
+            b3_out = tf.keras.layers.Conv2D(16, 3, activation="relu", strides=(2, 2), padding="same")(b3_add)
+            x = tf.keras.layers.Flatten()(b3_out)
 
-            z = tf.keras.layers.Dense(256, activation="relu")(x)
-            z = tf.keras.layers.Dense(256, activation="relu")(z)
-            z = tf.keras.layers.Dense(256, activation="relu")(z)
-            z = tf.keras.layers.Dense(256, activation="relu")(z)
+            x = layers.Flatten()(x)
+            for _ in range(4):
+                x = layers.Dense(256, activation='relu')(x)
 
-        alignnment = layers.Dense(3, activation="linear", name="alignnment")(y) if refine \
-            else layers.Dense(6, activation="linear", name="alignnment")(y)
-        shifts = layers.Dense(2, activation="linear", name="shifts")(z)
-        self.encoder = tf.keras.Model(encoder_inputs, [alignnment, shifts], name="encoder")
+        elif architecture == "mlpnn":
+            x = layers.Flatten()(images)
+            x = layers.Dense(1024, activation='relu')(x)
+            for _ in range(2):
+                x = layers.Dense(1024, activation='relu')(x)
+
+        rows = layers.Dense(256, activation="relu")(x)
+        for _ in range(2):
+            rows = layers.Dense(256, activation="relu")(rows)
+        # rows = layers.Dense(3, activation=sigmoid_diff, trainable=refPose)(rows)
+        rows = layers.Dense(3, activation=Sine(w0=1.0), kernel_initializer=SIRENInitializer())(rows)
+        # rows = layers.Dense(6, activation="linear", trainable=refPose)(rows)
+
+        shifts = layers.Dense(256, activation="relu")(x)
+        for _ in range(2):
+            shifts = layers.Dense(256, activation="relu")(shifts)
+        # shifts = layers.Dense(2, activation=sigmoid_diff, trainable=refPose)(shifts)
+        shifts = layers.Dense(2, activation=Sine(w0=1.0), kernel_initializer=SIRENInitializer())(shifts)
+
+        self.encoder = tf.keras.Model(images, [maxAngleDiff * rows, maxShiftDiff * shifts], name="encoder")
 
     def call(self, x):
-        return self.encoder(x)
+        encoded = self.encoder(x)
+        return encoded
 
 
 class Decoder(tf.keras.Model):
@@ -121,23 +108,19 @@ class Decoder(tf.keras.Model):
         self.generator = generator
         self.CTF = CTF
 
-        alignnment = tf.keras.Input(shape=(3,)) if self.generator.refinePose else tf.keras.Input(shape=(6,))
+        alignment = tf.keras.Input(shape=(3,))
         shifts = tf.keras.Input(shape=(2,))
 
         # Apply alignment
-        if self.generator.refinePose:
-            c_r_x = layers.Lambda(lambda inp: self.generator.applyAlignmentEuler(inp, 0), trainable=False)(alignnment)
-            c_r_y = layers.Lambda(lambda inp: self.generator.applyAlignmentEuler(inp, 1), trainable=False)(alignnment)
-        else:
-            c_r_x = layers.Lambda(lambda inp: self.generator.applyAlignmentMatrix(inp, 0), trainable=False)(alignnment)
-            c_r_y = layers.Lambda(lambda inp: self.generator.applyAlignmentMatrix(inp, 1), trainable=False)(alignnment)
+        c_r_x = layers.Lambda(lambda inp: self.generator.applyAlignmentEuler(inp, 0), trainable=True)(alignment)
+        c_r_y = layers.Lambda(lambda inp: self.generator.applyAlignmentEuler(inp, 1), trainable=True)(alignment)
 
         # Apply shifts
-        c_r_s_x = layers.Lambda(lambda inp: self.generator.applyShifts(inp, 0), trainable=False)([c_r_x, shifts])
-        c_r_s_y = layers.Lambda(lambda inp: self.generator.applyShifts(inp, 1), trainable=False)([c_r_y, shifts])
+        c_r_s_x = layers.Lambda(lambda inp: self.generator.applyShifts(inp, 0), trainable=True)([c_r_x, shifts])
+        c_r_s_y = layers.Lambda(lambda inp: self.generator.applyShifts(inp, 1), trainable=True)([c_r_y, shifts])
 
         # Scatter image and bypass gradient
-        scatter_images = layers.Lambda(self.generator.scatterImgByPass, trainable=False)([c_r_s_x, c_r_s_y])
+        scatter_images = layers.Lambda(self.generator.scatterImgByPass, trainable=True)([c_r_s_x, c_r_s_y])
 
         if self.generator.step >= 1 or self.generator.ref_is_struct:
             # Gaussian filter image
@@ -151,7 +134,7 @@ class Decoder(tf.keras.Model):
                 # CTF filter image
                 decoded_ctf = layers.Lambda(self.generator.ctfFilterImage)(scatter_images)
 
-        self.decoder = tf.keras.Model([alignnment, shifts], decoded_ctf, name="decoder")
+        self.decoder = tf.keras.Model([alignment, shifts], decoded_ctf, name="decoder")
 
     def call(self, x):
         decoded = self.decoder(x)
@@ -159,27 +142,33 @@ class Decoder(tf.keras.Model):
 
 
 class AutoEncoder(tf.keras.Model):
-    def __init__(self, generator, architecture="convnn", CTF="apply", n_gradients=1, **kwargs):
+    def __init__(self, generator, architecture="convnn", CTF="apply", n_gradients=1,
+                 maxAngleDiff=5., maxShiftDiff=2., multires=(2, ), **kwargs):
         super(AutoEncoder, self).__init__(**kwargs)
         self.generator = generator
-        self.CTF = CTF
-        self.encoder = Encoder(generator.xsize, generator.refinePose, architecture=architecture)
+        self.CTF = CTF if generator.applyCTF == 1 else None
+        self.multires = [tf.constant([int(generator.xsize / mr), int(generator.xsize / mr)], dtype=tf.int32) for mr in
+                         multires]
+        self.encoder = Encoder(generator.xsize, architecture=architecture,
+                               maxAngleDiff=maxAngleDiff, maxShiftDiff=maxShiftDiff)
         self.decoder = Decoder(generator, CTF=CTF)
         self.total_loss_tracker = tf.keras.metrics.Mean(name="total_loss")
+        self.test_loss_tracker = tf.keras.metrics.Mean(name="test_loss")
 
-        self.n_gradients = tf.constant(n_gradients, dtype=tf.int32)
-        self.n_acum_step = tf.Variable(0, dtype=tf.int32, trainable=False)
-        self.gradient_accumulation = [tf.Variable(tf.zeros_like(v, dtype=tf.float32), trainable=False) for v in
-                                      self.trainable_variables]
+        # self.n_gradients = tf.constant(n_gradients, dtype=tf.int32)
+        # self.n_acum_step = tf.Variable(0, dtype=tf.int32, trainable=False)
+        # self.gradient_accumulation = [tf.Variable(tf.zeros_like(v, dtype=tf.float32), trainable=False) for v in
+        #                               self.trainable_variables]
 
     @property
     def metrics(self):
         return [
             self.total_loss_tracker,
+            self.test_loss_tracker,
         ]
 
     def train_step(self, data):
-        self.n_acum_step.assign_add(1)
+        # self.n_acum_step.assign_add(1)
 
         self.decoder.generator.indexes = data[1]
         self.decoder.generator.current_images = data[0]
@@ -190,10 +179,9 @@ class AutoEncoder(tf.keras.Model):
         batch_size_scope = tf.shape(data[0])[0]
 
         # Precompute batch alignments
-        if self.decoder.generator.refinePose:
-            self.decoder.generator.rot_batch = tf.gather(self.decoder.generator.angle_rot, data[1], axis=0)
-            self.decoder.generator.tilt_batch = tf.gather(self.decoder.generator.angle_tilt, data[1], axis=0)
-            self.decoder.generator.psi_batch = tf.gather(self.decoder.generator.angle_psi, data[1], axis=0)
+        self.decoder.generator.rot_batch = tf.gather(self.decoder.generator.angle_rot, data[1], axis=0)
+        self.decoder.generator.tilt_batch = tf.gather(self.decoder.generator.angle_tilt, data[1], axis=0)
+        self.decoder.generator.psi_batch = tf.gather(self.decoder.generator.angle_psi, data[1], axis=0)
 
         # Precompute batch CTFs
         defocusU_batch = tf.gather(self.decoder.generator.defocusU, data[1], axis=0)
@@ -210,29 +198,79 @@ class AutoEncoder(tf.keras.Model):
         if self.CTF == "wiener":
             images = self.decoder.generator.wiener2DFilter(images)
 
-        # images_rot = tfa.image.rotate(images, np.pi, interpolation="bilinear")
-
         with tf.GradientTape() as tape:
             encoded = self.encoder(images)
             decoded = self.decoder(encoded)
 
-            # encoded = self.encoder(images_rot)
-            # decoded_rot = self.decoder(encoded)
+            # Multiresolution loss
+            multires_loss = 0.0
+            for mr in self.multires:
+                images_mr = self.decoder.generator.downSampleImages(images, mr)
+                decoded_mr = self.decoder.generator.downSampleImages(decoded, mr)
+                multires_loss += tf.reduce_mean(tf.abs(images_mr - decoded_mr))
+            multires_loss = multires_loss / len(self.multires)
 
-            # loss_1 = self.decoder.generator.cost_function(images, decoded)
-            # loss_2 = self.decoder.generator.cost_function(images_rot, decoded_rot)
-            # total_loss = tf.reduce_min(tf.concat([loss_1, loss_2], axis=1), axis=1)
-            total_loss = self.decoder.generator.cost_function(images, decoded)
+            total_loss = self.decoder.generator.cost_function(images, decoded) + multires_loss
 
-        # Calculate batch gradients
-        gradients = tape.gradient(total_loss, self.trainable_variables)
+        # # Calculate batch gradients
+        # gradients = tape.gradient(total_loss, self.trainable_variables)
+        #
+        # # Accumulate batch gradients
+        # for i in range(len(self.gradient_accumulation)):
+        #     self.gradient_accumulation[i].assign_add(gradients[i])
+        #
+        # # If n_acum_step reach the n_gradients then we apply accumulated gradients to update the variables otherwise do nothing
+        # tf.cond(tf.equal(self.n_acum_step, self.n_gradients), self.apply_accu_gradients, lambda: None)
 
-        # Accumulate batch gradients
-        for i in range(len(self.gradient_accumulation)):
-            self.gradient_accumulation[i].assign_add(gradients[i])
+        grads = tape.gradient(total_loss, self.trainable_weights)
+        self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
 
-        # If n_acum_step reach the n_gradients then we apply accumulated gradients to update the variables otherwise do nothing
-        tf.cond(tf.equal(self.n_acum_step, self.n_gradients), self.apply_accu_gradients, lambda: None)
+        self.total_loss_tracker.update_state(total_loss)
+        return {
+            "loss": self.total_loss_tracker.result(),
+        }
+
+    def test_step(self, data):
+        self.decoder.generator.indexes = data[1]
+        self.decoder.generator.current_images = data[0]
+
+        images = data[0]
+
+        # Update batch_size (in case it is incomplete)
+        batch_size_scope = tf.shape(data[0])[0]
+
+        # Precompute batch alignments
+        self.decoder.generator.rot_batch = tf.gather(self.decoder.generator.angle_rot, data[1], axis=0)
+        self.decoder.generator.tilt_batch = tf.gather(self.decoder.generator.angle_tilt, data[1], axis=0)
+        self.decoder.generator.psi_batch = tf.gather(self.decoder.generator.angle_psi, data[1], axis=0)
+
+        # Precompute batch CTFs
+        defocusU_batch = tf.gather(self.decoder.generator.defocusU, data[1], axis=0)
+        defocusV_batch = tf.gather(self.decoder.generator.defocusV, data[1], axis=0)
+        defocusAngle_batch = tf.gather(self.decoder.generator.defocusAngle, data[1], axis=0)
+        cs_batch = tf.gather(self.decoder.generator.cs, data[1], axis=0)
+        kv_batch = self.decoder.generator.kv
+        ctf = computeCTF(defocusU_batch, defocusV_batch, defocusAngle_batch, cs_batch, kv_batch,
+                         self.decoder.generator.sr, self.decoder.generator.pad_factor,
+                         [self.decoder.generator.xsize, int(0.5 * self.decoder.generator.xsize + 1)],
+                         batch_size_scope, self.decoder.generator.applyCTF)
+        self.decoder.generator.ctf = ctf
+
+        if self.CTF == "wiener":
+            images = self.decoder.generator.wiener2DFilter(images)
+
+        encoded = self.encoder(images)
+        decoded = self.decoder(encoded)
+
+        # Multiresolution loss
+        multires_loss = 0.0
+        for mr in self.multires:
+            images_mr = self.decoder.generator.downSampleImages(images, mr)
+            decoded_mr = self.decoder.generator.downSampleImages(decoded, mr)
+            multires_loss += tf.reduce_mean(tf.abs(images_mr - decoded_mr))
+        multires_loss = multires_loss / len(self.multires)
+
+        total_loss = self.decoder.generator.cost_function(images, decoded) + multires_loss
 
         self.total_loss_tracker.update_state(total_loss)
         return {
@@ -261,13 +299,9 @@ class AutoEncoder(tf.keras.Model):
         batch_size_scope = tf.shape(data[0])[0]
 
         # Precompute batch alignments
-        if self.decoder.generator.refinePose:
-            self.decoder.generator.rot_batch = tf.gather(self.decoder.generator.angle_rot, data[1],
-                                                         axis=0)
-            self.decoder.generator.tilt_batch = tf.gather(self.decoder.generator.angle_tilt, data[1],
-                                                          axis=0)
-            self.decoder.generator.psi_batch = tf.gather(self.decoder.generator.angle_psi, data[1],
-                                                         axis=0)
+        self.decoder.generator.rot_batch = tf.gather(self.decoder.generator.angle_rot, data[1], axis=0)
+        self.decoder.generator.tilt_batch = tf.gather(self.decoder.generator.angle_tilt, data[1], axis=0)
+        self.decoder.generator.psi_batch = tf.gather(self.decoder.generator.angle_psi, data[1], axis=0)
 
         # Precompute batch CTFs
         defocusU_batch = tf.gather(self.decoder.generator.defocusU, data[1], axis=0)
@@ -284,47 +318,7 @@ class AutoEncoder(tf.keras.Model):
         if self.CTF == "wiener":
             images = self.decoder.generator.wiener2DFilter(images)
 
-        # Get symmetric inputs
-        # images_rot = tfa.image.rotate(images, np.pi, interpolation="bilinear")
-
         # Decode inputs
         encoded = self.encoder(images)
 
         return encoded
-
-        # decoded = self.decoder(encoded)
-
-        # Decode rotated inputs
-        # encoded_rot = self.encoder(images_rot)
-        # decoded_rot = self.decoder(encoded_rot)
-
-        # Convert to matrix if ab initio
-        # if not self.decoder.generator.refinePose:
-        #     encoded[0] = gramSchmidt(encoded[0])
-        #     encoded_rot[0] = gramSchmidt(encoded_rot[0])
-
-        # Correct encoded rot
-        # if self.decoder.generator.refinePose:
-        #     encoded_rot[0][:, -1] += np.pi
-        # else:
-        #     A = euler_matrix_batch(tf.zeros([batch_size_scope], tf.float32),
-        #                            tf.zeros([batch_size_scope], tf.float32),
-        #                            tf.zeros([batch_size_scope], tf.float32) + 180.)
-        #     A = tf.stack(A, axis=1)
-        #     encoded_rot[0] = tf.matmul(A, encoded_rot[0])
-
-        # Stack encoder outputs
-        # pred_algn = tf.stack([encoded[0], encoded_rot[0]], axis=-1)
-        # pred_shifts = tf.stack([encoded[1], encoded_rot[1]], axis=-1)
-
-        # Compute losses between symmetric inputs and predictions
-        # loss_1 = self.decoder.generator.cost_function(images, decoded)
-        # loss_2 = self.decoder.generator.cost_function(images_rot, decoded_rot)
-        # loss = tf.concat([loss_1, loss_2], axis=1)
-
-        # Get only best predictions according to symmetric loss
-        # index_min = tf.math.argmin(loss, axis=1)
-        # pred_algn = pred_algn[tf.range(batch_size_scope, dtype=tf.int32), ..., index_min]
-        # pred_shifts = pred_shifts[tf.range(batch_size_scope, dtype=tf.int32), ..., index_min]
-
-        # return pred_algn, pred_shifts, loss
