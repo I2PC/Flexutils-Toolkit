@@ -348,6 +348,9 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
 
         return radial_masks, spatial_freq
 
+    def downSampleImages(self, images, size):
+        return tf.image.resize(images, size=size)
+
     # ----- -------- -----#
 
 
