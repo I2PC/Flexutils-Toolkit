@@ -63,7 +63,7 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
 
     # Get poses
     print("------------------ Predicting particles... ------------------")
-    alignment, shifts = autoencoder.predict(generator)
+    alignment, shifts, _ = autoencoder.predict(generator)
 
     # Get map
     print("------------------ Decoding volume... ------------------")

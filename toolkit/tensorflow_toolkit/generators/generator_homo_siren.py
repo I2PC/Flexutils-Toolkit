@@ -164,7 +164,4 @@ class Generator(DataGeneratorBase):
         images = tfa.image.gaussian_filter2d(images, 3, 1)
         return images
 
-    def downSampleImages(self, images, size):
-        return tf.image.resize(images, size=size)
-
     # ----- -------- -----#
