@@ -28,6 +28,7 @@
 
 import os
 import numpy as np
+import h5py
 import mrcfile
 from pathlib import Path
 from sklearn.cluster import KMeans
@@ -51,8 +52,13 @@ def predict(weigths_file, het_file, out_path, allCoords=False, filter=False, **k
         x_het = x_het.reshape((1, -1))
     md_file = Path(Path(weigths_file).parent.parent, "input_particles.xmd")
 
+    # Get xsize from weights file
+    f = h5py.File(weigths_file, 'r')
+    xsize = int(np.sqrt(f["encoder"]["dense"]["kernel:0"].shape[0]))
+
     # Create data generator
-    generator = Generator(md_file=md_file, step=kwargs.pop("step"), shuffle=False)
+    generator = Generator(md_file=md_file, step=kwargs.pop("step"), shuffle=False,
+                          xsize=xsize)
 
     # Load model
     autoencoder = AutoEncoder(generator, het_dim=x_het.shape[1], **kwargs)
