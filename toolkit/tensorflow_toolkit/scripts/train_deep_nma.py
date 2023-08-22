@@ -27,6 +27,9 @@
 
 
 import os
+import re
+import glob
+import shutil
 from xmipp_metadata.metadata import XmippMetaData
 
 import tensorflow as tf
@@ -45,7 +48,7 @@ from tensorflow_toolkit.utils import epochs_from_iterations
 
 def train(outPath, md_file, n_modes, batch_size, shuffle, splitTrain, epochs, cost,
           radius_mask, smooth_mask, refinePose, architecture="convnn", ctfType="apply", pad=2,
-          sr=1.0, applyCTF=1, lr=1e-5):
+          sr=1.0, applyCTF=1, lr=1e-5, multires=[2, 4, 8], angReg=0.01, bondReg=0.01):
 
     try:
         # Create data generator
@@ -54,17 +57,61 @@ def train(outPath, md_file, n_modes, batch_size, shuffle, splitTrain, epochs, co
                               smooth_mask=smooth_mask, refinePose=refinePose, pad_factor=pad,
                               sr=sr, applyCTF=applyCTF)
 
+        # Create validation generator
+        if splitTrain < 1.0:
+            generator_val = Generator(n_modes=n_modes, md_file=md_file, shuffle=shuffle, batch_size=batch_size,
+                                      step=1, splitTrain=(splitTrain - 1.0), cost=cost, radius_mask=radius_mask,
+                                      smooth_mask=smooth_mask, refinePose=refinePose, pad_factor=pad,
+                                      sr=sr, applyCTF=applyCTF)
+        else:
+            generator_val = None
+
         # Tensorflow data pipeline
         # generator_dataset, generator = sequence_to_data_pipeline(generator)
         # dataset = create_dataset(generator_dataset, generator, batch_size=batch_size)
 
         # Train model
-        strategy = tf.distribute.MirroredStrategy()
-        with strategy.scope():
-            autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType)
+        # strategy = tf.distribute.MirroredStrategy()
+        # with strategy.scope():
+        autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, multires=multires,
+                                  l_angle=angReg, l_bond=bondReg)
         optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
-        autoencoder.compile(optimizer=optimizer)
-        autoencoder.fit(generator, epochs=epochs)
+
+        # Create a callback that saves the model's weights
+        initial_epoch = 0
+        checkpoint_path = os.path.join(outPath, "training", "cp-{epoch:04d}.hdf5")
+        if not os.path.isdir(os.path.dirname(checkpoint_path)):
+            os.mkdir(os.path.dirname(checkpoint_path))
+        cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
+                                                         save_weights_only=True,
+                                                         verbose=1)
+
+        # Tensorboard callback
+        log_dir = os.path.join(outPath, "logs")
+        if not os.path.isdir(log_dir):
+            os.mkdir(log_dir)
+        tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1,
+                                                              write_graph=True, write_steps_per_second=True)
+
+        checkpoint = os.path.join(outPath, "training")
+        if os.path.isdir(checkpoint):
+            files = glob.glob(os.path.join(checkpoint, "*"))
+            if len(files) > 1:
+                files.sort()
+                latest = files[-2]
+                autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
+                autoencoder.load_weights(latest)
+                latest = os.path.basename(latest)
+                initial_epoch = int(re.findall(r'\d+', latest)[0]) - 1
+
+        autoencoder.compile(optimizer=optimizer, jit_compile=True)
+
+        if generator_val is not None:
+            autoencoder.fit(generator, validation_data=generator_val, epochs=epochs, validation_freq=2,
+                            callbacks=[cp_callback, tensorboard_callback], initial_epoch=initial_epoch)
+        else:
+            autoencoder.fit(generator, epochs=epochs,
+                            callbacks=[cp_callback, tensorboard_callback], initial_epoch=initial_epoch)
     except tf.errors.ResourceExhaustedError as error:
         msg = "GPU memory has been exhausted. Usually this can be solved by " \
               "downsampling further your particles or by decreasing the batch size. " \
@@ -74,6 +121,9 @@ def train(outPath, md_file, n_modes, batch_size, shuffle, splitTrain, epochs, co
 
     # Save model
     autoencoder.save_weights(os.path.join(outPath, "deep_nma_model.h5"))
+
+    # Remove checkpoints
+    shutil.rmtree(checkpoint)
 
 
 if __name__ == '__main__':
@@ -88,7 +138,6 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, required=True)
     parser.add_argument('--shuffle', action='store_true')
     parser.add_argument('--split_train', type=float, required=True)
-    parser.add_argument('--epochs', type=int, required=False)
     parser.add_argument('--max_samples_seen', type=int, required=False)
     parser.add_argument('--epochs', type=int, required=True)
     parser.add_argument('--cost', type=str, required=True)
@@ -100,6 +149,9 @@ if __name__ == '__main__':
     parser.add_argument('--refine_pose', action='store_true')
     parser.add_argument('--sr', type=float, required=True)
     parser.add_argument('--apply_ctf', type=int, required=True)
+    parser.add_argument('--multires', type=str, required=True)
+    parser.add_argument('--angle_reg', type=float, required=True)
+    parser.add_argument('--bond_reg', type=float, required=True)
     parser.add_argument('--gpu', type=str)
 
     args = parser.parse_args()
@@ -119,13 +171,16 @@ if __name__ == '__main__':
     else:
         raise ValueError("Error: Either parameter --epochs or --max_samples_seen is needed")
 
+    multires = [int(x) for x in args.multires.split(",")]
+
     inputs = {"md_file": args.md_file, "outPath": args.out_path, "n_modes": args.n_modes,
               "batch_size": args.batch_size, "shuffle": args.shuffle,
               "splitTrain": args.split_train, "epochs": epochs,
               "cost": args.cost, "radius_mask": args.radius_mask, "smooth_mask": args.smooth_mask,
               "refinePose": args.refine_pose, "architecture": args.architecture,
               "ctfType": args.ctf_type, "pad": args.pad, "sr": args.sr,
-              "applyCTF": args.apply_ctf, "lr": args.lr}
+              "applyCTF": args.apply_ctf, "lr": args.lr, "multires": multires,
+              "angReg": args.angle_reg, "bondReg": args.bond_reg}
 
     # Initialize volume slicer
     train(**inputs)

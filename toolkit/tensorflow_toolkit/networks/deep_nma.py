@@ -114,6 +114,10 @@ class Decoder(tf.keras.Model):
         c_y = layers.Lambda(lambda inp: self.generator.applyDeformationField(inp, 1), trainable=True)(d_y)
         c_z = layers.Lambda(lambda inp: self.generator.applyDeformationField(inp, 2), trainable=True)(d_z)
 
+        # Bond and angle
+        bondk = layers.Lambda(lambda inp: self.generator.calc_bond(inp), trainable=True)([c_x, c_y, c_z])
+        anglek = layers.Lambda(lambda inp: self.generator.calc_angle(inp), trainable=True)([c_x, c_y, c_z])
+
         # Apply alignment
         if self.generator.refinePose:
             c_r_x = layers.Lambda(lambda inp: self.generator.applyAlignmentDeltaEuler(inp, 0), trainable=True) \
@@ -147,9 +151,9 @@ class Decoder(tf.keras.Model):
             decoded = layers.Lambda(self.generator.ctfFilterImage)(decoded)
 
         if self.generator.refinePose:
-            self.decoder = tf.keras.Model([c_nma, delta_euler, delta_shifts], decoded, name="decoder")
+            self.decoder = tf.keras.Model([c_nma, delta_euler, delta_shifts], [decoded, bondk, anglek], name="decoder")
         else:
-            self.decoder = tf.keras.Model(c_nma, decoded, name="decoder")
+            self.decoder = tf.keras.Model(c_nma, [decoded, bondk, anglek], name="decoder")
 
     def call(self, x):
         decoded = self.decoder(x)
@@ -158,23 +162,30 @@ class Decoder(tf.keras.Model):
 
 
 class AutoEncoder(tf.keras.Model):
-    def __init__(self, generator, architecture="convnn", CTF="apply", **kwargs):
+    def __init__(self, generator, architecture="convnn", CTF="apply", multires=(2, ),
+                 l_bond=0.01, l_angle=0.01, **kwargs):
         super(AutoEncoder, self).__init__(**kwargs)
         self.generator = generator
-        self.CTF = CTF
+        self.CTF = CTF if generator.applyCTF == 1 else None
+        self.multires = [tf.constant([int(generator.xsize / mr), int(generator.xsize / mr)], dtype=tf.int32) for mr in
+                         multires]
+        self.l_bond = l_bond
+        self.l_angle = l_angle
         self.encoder = Encoder(generator.n_modes, generator.xsize,
                                generator.refinePose, architecture=architecture)
         self.decoder = Decoder(generator.n_modes, generator, CTF=CTF)
         self.total_loss_tracker = tf.keras.metrics.Mean(name="total_loss")
-        # self.img_loss_tracker = tf.keras.metrics.Mean(name="img_loss")
-        # self.cap_def_loss_tracker = tf.keras.metrics.Mean(name="cap_def_loss")
+        self.img_loss_tracker = tf.keras.metrics.Mean(name="img_loss")
+        self.bond_loss_tracker = tf.keras.metrics.Mean(name="bond_loss")
+        self.angle_loss_tracker = tf.keras.metrics.Mean(name="angle_loss")
 
     @property
     def metrics(self):
         return [
             self.total_loss_tracker,
-            # self.cap_def_loss_tracker,
-            # self.img_loss_tracker,
+            self.img_loss_tracker,
+            self.bond_loss_tracker,
+            self.angle_loss_tracker
         ]
 
     def train_step(self, data):
@@ -195,10 +206,6 @@ class AutoEncoder(tf.keras.Model):
             rot_batch = tf.gather(self.decoder.generator.angle_rot, data[1], axis=0)
             tilt_batch = tf.gather(self.decoder.generator.angle_tilt, data[1], axis=0)
             psi_batch = tf.gather(self.decoder.generator.angle_psi, data[1], axis=0)
-            # row_1 = euler_matrix_row(rot_batch, tilt_batch, psi_batch, 1, self.decoder.generator.batch_size)
-            # row_2 = euler_matrix_row(rot_batch, tilt_batch, psi_batch, 2, self.decoder.generator.batch_size)
-            # row_3 = euler_matrix_row(rot_batch, tilt_batch, psi_batch, 3, self.decoder.generator.batch_size)
-            # self.decoder.generator.r = [row_1, row_2, row_3]
             self.decoder.generator.r = euler_matrix_batch(rot_batch, tilt_batch, psi_batch)
 
         # Precompute batch CTFs
@@ -218,27 +225,100 @@ class AutoEncoder(tf.keras.Model):
 
         with tf.GradientTape() as tape:
             encoded = self.encoder(images)
-            decoded = self.decoder(encoded)
+            decoded, bondk, anglek = self.decoder(encoded)
 
-            # ori_images = self.decoder.generator.applyFourierMask(data[0])
-            # decoded = self.decoder.generator.applyFourierMask(decoded)
-
-            # cap_def_loss = self.decoder.generator.capDeformation(d_x, d_y, d_z)
             img_loss = self.decoder.generator.cost_function(images, decoded)
 
-            total_loss = img_loss
-            # 0.01 * self.decoder.generator.averageDeformation()  # Extra loss term to compensate large deformations
-            # self.decoder.generator.centerMassShift()  # Extra loss term to center strucuture
+            # Multiresolution loss
+            multires_loss = 0.0
+            for mr in self.multires:
+                images_mr = self.decoder.generator.downSampleImages(images, mr)
+                decoded_mr = self.decoder.generator.downSampleImages(decoded, mr)
+                multires_loss += self.decoder.generator.cost_function(images_mr, decoded_mr)
+            multires_loss = multires_loss / len(self.multires)
+
+            # Bond and angle losses
+            bond_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.decoder.generator.bond0, bondk)))
+            angle_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.decoder.generator.angle0, anglek)))
+
+            total_loss = img_loss + multires_loss + self.l_bond * bond_loss + self.l_angle * angle_loss
 
         grads = tape.gradient(total_loss, self.trainable_weights)
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
         self.total_loss_tracker.update_state(total_loss)
-        # self.img_loss_tracker.update_state(img_loss)
-        # self.cap_def_loss_tracker.update_state(cap_def_loss)
+        self.img_loss_tracker.update_state(img_loss)
+        self.angle_loss_tracker.update_state(angle_loss)
+        self.bond_loss_tracker.update_state(bond_loss)
         return {
             "loss": self.total_loss_tracker.result(),
-            # "img_loss": self.img_loss_tracker.result(),
-            # "cap_def_loss": self.cap_def_loss_tracker.result()
+            "img_loss": self.img_loss_tracker.result(),
+            "bond": self.bond_loss_tracker.result(),
+            "angle": self.angle_loss_tracker.result(),
+        }
+
+    def test_step(self, data):
+        self.decoder.generator.indexes = data[1]
+        self.decoder.generator.current_images = data[0]
+
+        images = data[0]
+
+        # Update batch_size (in case it is incomplete)
+        batch_size_scope = tf.shape(data[0])[0]
+
+        # Precompute batch alignments
+        if self.decoder.generator.refinePose:
+            self.decoder.generator.rot_batch = tf.gather(self.decoder.generator.angle_rot, data[1], axis=0)
+            self.decoder.generator.tilt_batch = tf.gather(self.decoder.generator.angle_tilt, data[1], axis=0)
+            self.decoder.generator.psi_batch = tf.gather(self.decoder.generator.angle_psi, data[1], axis=0)
+        else:
+            rot_batch = tf.gather(self.decoder.generator.angle_rot, data[1], axis=0)
+            tilt_batch = tf.gather(self.decoder.generator.angle_tilt, data[1], axis=0)
+            psi_batch = tf.gather(self.decoder.generator.angle_psi, data[1], axis=0)
+            self.decoder.generator.r = euler_matrix_batch(rot_batch, tilt_batch, psi_batch)
+
+        # Precompute batch CTFs
+        defocusU_batch = tf.gather(self.decoder.generator.defocusU, data[1], axis=0)
+        defocusV_batch = tf.gather(self.decoder.generator.defocusV, data[1], axis=0)
+        defocusAngle_batch = tf.gather(self.decoder.generator.defocusAngle, data[1], axis=0)
+        cs_batch = tf.gather(self.decoder.generator.cs, data[1], axis=0)
+        kv_batch = self.decoder.generator.kv
+        ctf = computeCTF(defocusU_batch, defocusV_batch, defocusAngle_batch, cs_batch, kv_batch,
+                         self.decoder.generator.sr, self.decoder.generator.pad_factor,
+                         [self.decoder.generator.xsize, int(0.5 * self.decoder.generator.xsize + 1)],
+                         batch_size_scope, self.decoder.generator.applyCTF)
+        self.decoder.generator.ctf = ctf
+
+        if self.CTF == "wiener":
+            images = self.decoder.generator.wiener2DFilter(images)
+
+        encoded = self.encoder(images)
+        decoded, bondk, anglek = self.decoder(encoded)
+
+        img_loss = self.decoder.generator.cost_function(images, decoded)
+
+        # Multiresolution loss
+        multires_loss = 0.0
+        for mr in self.multires:
+            images_mr = self.decoder.generator.downSampleImages(images, mr)
+            decoded_mr = self.decoder.generator.downSampleImages(decoded, mr)
+            multires_loss += self.decoder.generator.cost_function(images_mr, decoded_mr)
+        multires_loss = multires_loss / len(self.multires)
+
+        # Bond and angle losses
+        bond_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.decoder.generator.bond0, bondk)))
+        angle_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.decoder.generator.angle0, anglek)))
+
+        total_loss = img_loss + multires_loss + self.l_bond * bond_loss + self.l_angle * angle_loss
+
+        self.total_loss_tracker.update_state(total_loss)
+        self.img_loss_tracker.update_state(img_loss)
+        self.angle_loss_tracker.update_state(angle_loss)
+        self.bond_loss_tracker.update_state(bond_loss)
+        return {
+            "loss": self.total_loss_tracker.result(),
+            "img_loss": self.img_loss_tracker.result(),
+            "bond": self.bond_loss_tracker.result(),
+            "angle": self.angle_loss_tracker.result(),
         }
 
     def predict_step(self, data):
@@ -265,7 +345,8 @@ class AutoEncoder(tf.keras.Model):
         if self.CTF == "wiener":
             images = self.decoder.generator.wiener2DFilter(images)
 
-        return self.encoder(images)
+        encoded = self.encoder(images)
+        return encoded
 
     def call(self, input_features):
         return self.decoder(self.encoder(input_features))

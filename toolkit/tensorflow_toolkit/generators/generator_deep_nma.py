@@ -38,7 +38,7 @@ from tensorflow_toolkit.utils import euler_matrix_batch
 
 
 class Generator(DataGeneratorBase):
-    def __init__(self, n_modes=20, refinePose=True, struct_file="", basis_file=None, sr=1.0, **kwargs):
+    def __init__(self, n_modes=20, refinePose=True, basis_file=None, sr=1.0, **kwargs):
         super().__init__(**kwargs)
 
         self.refinePose = refinePose
@@ -62,6 +62,11 @@ class Generator(DataGeneratorBase):
             self.rot_batch = np.zeros(self.batch_size)
             self.tilt_batch = np.zeros(self.batch_size)
             self.psi_batch = np.zeros(self.batch_size)
+
+        # Initial bonds and angles
+        coords = [self.coords[:, 0][..., None], self.coords[:, 1][..., None], self.coords[:, 2][..., None]]
+        self.angle0 = self.calc_angle(coords)
+        self.bond0 = self.calc_bond(coords)
 
 
     # ----- Utils -----#
@@ -192,5 +197,33 @@ class Generator(DataGeneratorBase):
         rmsdef = tf.reduce_mean(tf.sqrt(tf.reduce_mean(d_x * d_x + d_y * d_y + d_z * d_z, axis=0)))
 
         return rmsdef
+
+    def calc_bond(self, coords):
+        coords = [tf.transpose(coords[0]), tf.transpose(coords[1]), tf.transpose(coords[2])]
+        coords = tf.stack(coords, axis=2)
+        px = tf.gather(coords, self.connectivity[:, 0], axis=1)
+        py = tf.gather(coords, self.connectivity[:, 1], axis=1)
+        pz = tf.gather(coords, self.connectivity[:, 2], axis=1)
+        dst_1 = tf.sqrt(tf.nn.relu(tf.reduce_sum((px - py) ** 2, axis=2)))
+        dst_2 = tf.sqrt(tf.nn.relu(tf.reduce_sum((py - pz) ** 2, axis=2)))
+
+        return tf.stack([dst_1, dst_2], axis=2)
+
+    def calc_angle(self, coords):
+        coords = [tf.transpose(coords[0]), tf.transpose(coords[1]), tf.transpose(coords[2])]
+        coords = tf.stack(coords, axis=2)
+        p0 = tf.gather(coords, self.connectivity[:, 0], axis=1)
+        p1 = tf.gather(coords, self.connectivity[:, 1], axis=1)
+        p2 = tf.gather(coords, self.connectivity[:, 2], axis=1)
+        b0 = p0 - p1
+        b1 = p2 - p1
+        ang = tf.reduce_sum(b0 * b1, axis=2)
+        n0 = tf.linalg.norm(b0, axis=2) * tf.linalg.norm(b1, axis=2)
+        ang = tf.math.divide_no_nan(ang, n0)
+        # ang = np.min(np.max(ang, axis=1), axis=0)
+        ang = tf.acos(ang)
+        ang *= 180 / np.pi
+
+        return ang
 
     # ----- -------- -----#

@@ -44,7 +44,7 @@ from tensorflow_toolkit.generators.generator_deep_nma import Generator
 #     tf.config.experimental.set_memory_growth(gpu_instance, True)
 
 
-def predict(weigths_file, nma_file, out_path, sr=1.0):
+def predict(weigths_file, nma_file, out_path, sr=1.0, xsize=128):
     c_nma = np.loadtxt(nma_file)
     if len(c_nma.shape) == 1:
         c_nma = c_nma.reshape((1, -1))
@@ -52,7 +52,8 @@ def predict(weigths_file, nma_file, out_path, sr=1.0):
     basis_file = Path(Path(weigths_file).parent.parent, "nma_basis.anm.npz")
 
     # Create data generator
-    generator = Generator(n_modes=c_nma.shape[1], md_file=md_file, shuffle=False, basis_file=basis_file)
+    generator = Generator(n_modes=c_nma.shape[1], md_file=md_file, shuffle=False, basis_file=basis_file,
+                          xsize=xsize)
 
     # Decode maps
     for idx in range(c_nma.shape[0]):
@@ -88,6 +89,7 @@ if __name__ == '__main__':
     parser.add_argument('--nma_file', type=str, required=True)
     parser.add_argument('--out_path', type=str, required=True)
     parser.add_argument('--sr', type=float, required=True)
+    parser.add_argument('--xsize', type=int, required=True)
 
     args = parser.parse_args()
 
@@ -98,7 +100,7 @@ if __name__ == '__main__':
         tf.config.experimental.set_memory_growth(gpu_instance, True)
 
     inputs = {"weigths_file": args.weigths_file, "nma_file": args.nma_file,
-              "out_path": args.out_path, "sr": args.sr}
+              "out_path": args.out_path, "sr": args.sr, "xsize": args.xsize}
 
     # Initialize volume slicer
     predict(**inputs)

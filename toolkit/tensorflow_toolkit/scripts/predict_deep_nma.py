@@ -31,6 +31,7 @@ import numpy as np
 from pathlib import Path
 
 import tensorflow as tf
+from tensorboard.plugins import projector
 
 from tensorflow_toolkit.generators.generator_deep_nma import Generator
 from tensorflow_toolkit.networks.deep_nma import AutoEncoder
@@ -66,11 +67,24 @@ def predict(md_file, weigths_file, n_modes, refinePose, architecture, ctfType, p
     encoded = autoencoder.predict(generator)
 
     # Get encoded data in right format
-    nma_space = encoded[0]
-
     if refinePose:
+        nma_space = encoded[0]
         delta_euler = encoded[1]
         delta_shifts = encoded[2]
+    else:
+        nma_space = encoded
+
+    # Tensorboard projector
+    log_dir = os.path.join(os.path.dirname(md_file), "network", "logs")
+    if os.path.isdir(log_dir):
+        het_norm = nma_space / np.amax(np.linalg.norm(nma_space, axis=1))
+        weights = tf.Variable(het_norm, name="het_space")
+        checkpoint = tf.train.Checkpoint(het_space=weights)
+        checkpoint.save(os.path.join(log_dir, "het_space.ckpt"))
+        config = projector.ProjectorConfig()
+        embedding = config.embeddings.add()
+        embedding.tensor_name = os.path.join("het_space", ".ATTRIBUTES", "VARIABLE_VALUE")
+        projector.visualize_embeddings(log_dir, config)
 
     # Save space to metadata file
     generator.metadata[:, 'nmaCoefficients'] = np.asarray([",".join(item) for item in nma_space.astype(str)])
