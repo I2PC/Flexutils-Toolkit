@@ -234,7 +234,7 @@ class AutoEncoder(Model):
             for mr in self.multires:
                 images_mr = self.decoder.generator.downSampleImages(images, mr)
                 decoded_mr = self.decoder.generator.downSampleImages(decoded, mr)
-                multires_loss += tf.reduce_mean(tf.abs(images_mr - decoded_mr))
+                multires_loss += self.decoder.generator.cost_function(images_mr, decoded_mr)
             multires_loss = multires_loss / len(self.multires)
 
             total_loss = self.decoder.generator.cost_function(images, decoded) + multires_loss + l1_loss
@@ -294,7 +294,7 @@ class AutoEncoder(Model):
         for mr in self.multires:
             images_mr = self.decoder.generator.downSampleImages(images, mr)
             decoded_mr = self.decoder.generator.downSampleImages(decoded, mr)
-            multires_loss += tf.reduce_mean(tf.abs(images_mr - decoded_mr))
+            multires_loss += self.decoder.generator.cost_function(images_mr, decoded_mr)
         multires_loss = multires_loss / len(self.multires)
 
         total_loss = self.decoder.generator.cost_function(images, decoded) + multires_loss + l1_loss
