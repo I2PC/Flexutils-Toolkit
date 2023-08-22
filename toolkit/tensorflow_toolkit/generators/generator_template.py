@@ -55,7 +55,7 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
         mask, volume, structure = self.readMetadata(md_file)
         self.sr = tf.constant(sr, dtype=tf.float32)
         self.applyCTF = applyCTF
-        if self.metadata.binaries is not None:
+        if self.metadata.binaries:
             self.xsize = self.metadata.getMetaDataImage(0).shape[1]
         else:
             self.xsize = xsize
