@@ -78,7 +78,6 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
 
     # Tensorboard projector
     log_dir = os.path.join(os.path.dirname(md_file), "network", "logs")
-    print(log_dir)
     if os.path.isdir(log_dir):
         het_norm = het / np.amax(np.linalg.norm(het, axis=1))
         weights = tf.Variable(het_norm, name="het_space")
