@@ -66,8 +66,8 @@ class Generator(DataGeneratorBase):
 
         # Cost functions
         cost = kwargs.get("cost")
-        if cost == "mse":
-            self.cost_function = tf.keras.metrics.mse
+        if cost == "mae":
+            self.cost_function = tf.keras.metrics.mae
         elif cost == "corr":
             self.cost_function = self.correlation_coefficient_loss
         elif cost == "fpc":
