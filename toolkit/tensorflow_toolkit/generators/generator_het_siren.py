@@ -45,8 +45,7 @@ class Generator(DataGeneratorBase):
         with mrcfile.open(mask_path) as mrc:
             self.mask_map = mrc.data
             coords = np.asarray(np.where(mrc.data == 1))
-            coords = np.transpose(np.asarray([coords[2, :], coords[1, :], coords[0, :]]))
-            self.indices = np.copy(coords)
+            self.indices = coords.T
 
         # Scale factor
         self.scale_factor = 0.5 * self.xsize
