@@ -108,6 +108,10 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
             self.cost_function = self.loss_correlation
         elif cost == "fpc":
             self.cost_function = self.fourier_phase_correlation
+        elif cost == "mae":
+            self.cost_function = self.mae
+        elif cost == "mse":
+            self.cost_function = self.mse
 
 
     #----- Initialization methods -----#
@@ -417,6 +421,16 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
 
         frcval = tf.reduce_mean(frc[:, minpx:maxpx], axis=1)
         return frcval
+
+    def mae(self, y_true, y_pred):
+        cost = tf.keras.metrics.mae(y_true, y_pred)
+        axis = tf.range(1, tf.rank(cost))
+        return tf.reduce_mean(cost, axis=axis)
+
+    def mse(self, y_true, y_pred):
+        cost = tf.keras.metrics.mse(y_true, y_pred)
+        axis = tf.range(1, tf.rank(cost))
+        return tf.reduce_mean(cost, axis=axis)
 
     # @tf.function
     # def fourier_ring_correlation(self, image1, image2, rn, spatial_freq):

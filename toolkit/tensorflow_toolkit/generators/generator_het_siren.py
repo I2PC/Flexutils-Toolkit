@@ -64,15 +64,6 @@ class Generator(DataGeneratorBase):
         self.psi_batch = np.zeros(self.batch_size)
         self.shifts_batch = [np.zeros(self.batch_size), np.zeros(self.batch_size)]
 
-        # Cost functions
-        cost = kwargs.get("cost")
-        if cost == "mse":
-            self.cost_function = tf.keras.metrics.mse
-        elif cost == "corr":
-            self.cost_function = self.correlation_coefficient_loss
-        elif cost == "fpc":
-            self.cost_function = self.fourier_phase_correlation
-
 
     # ----- Utils -----#
 
