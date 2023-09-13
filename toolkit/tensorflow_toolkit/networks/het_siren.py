@@ -232,7 +232,7 @@ class AutoEncoder(Model):
             decoded_het = self.decoder([self.refPose * rows, self.refPose * shifts, het])
 
             # L1 penalization delta_het
-            delta_het = self.decoder.decode_het(het)
+            delta_het = self.decoder.decode_het(het) + self.decoder.generator.values[None, :]
             l1_loss_het = tf.reduce_mean(tf.reduce_sum(tf.abs(delta_het), axis=1))
             l1_loss_het = self.l1_lambda * l1_loss_het / self.decoder.generator.total_voxels
 
@@ -288,7 +288,7 @@ class AutoEncoder(Model):
         decoded_het = self.decoder([self.refPose * rows, self.refPose * shifts, het])
 
         # L1 penalization delta_het
-        delta_het = self.decoder.decode_het(het)
+        delta_het = self.decoder.decode_het(het) + self.decoder.generator.values[None, :]
         l1_loss_het = tf.reduce_mean(tf.reduce_sum(tf.abs(delta_het), axis=1))
         l1_loss_het = self.l1_lambda * l1_loss_het / self.decoder.generator.total_voxels
 
