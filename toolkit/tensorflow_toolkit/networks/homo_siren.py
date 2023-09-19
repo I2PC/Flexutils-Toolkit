@@ -23,15 +23,16 @@
 # *  e-mail address 'scipion@cnb.csic.es'
 # *
 # **************************************************************************
-
+import sys
 
 import tensorflow as tf
+import tensorflow_addons as tfa
 from tensorflow.keras import layers, models, Input, Model
 
 import numpy as np
 from scipy.ndimage import gaussian_filter
 
-from tensorflow_toolkit.utils import computeCTF, gramSchmidt, euler_matrix_batch
+from tensorflow_toolkit.utils import computeCTF, gramSchmidt, euler_matrix_batch, xmippEulerFromMatrix
 from tensorflow_toolkit.layers.siren import Sine, SIRENFirstLayerInitializer, SIRENInitializer
 
 
@@ -39,7 +40,8 @@ def sigmoid_diff(x):
     return 2.0 / (1.0 + tf.exp(-x)) - 1.0
 
 class Encoder(Model):
-    def __init__(self, input_dim, architecture="convnn", refPose=True, maxAngleDiff=5., maxShiftDiff=2.):
+    def __init__(self, input_dim, architecture="convnn", refPose=True, maxAngleDiff=5., maxShiftDiff=2.,
+                 rotType="euler"):
         super(Encoder, self).__init__()
 
         images = Input(shape=(input_dim, input_dim, 1))
@@ -92,8 +94,10 @@ class Encoder(Model):
         for _ in range(2):
             rows = layers.Dense(256, activation="relu", trainable=refPose)(rows)
         # rows = layers.Dense(3, activation=sigmoid_diff, trainable=refPose)(rows)
-        rows = layers.Dense(3, activation=Sine(w0=1.0), kernel_initializer=SIRENInitializer())(rows)
-        # rows = layers.Dense(6, activation="linear", trainable=refPose)(rows)
+        if rotType == "euler":
+            rows = layers.Dense(3, activation=Sine(w0=1.0), kernel_initializer=SIRENInitializer())(rows)
+        elif rotType == "6n":
+            rows = layers.Dense(6, activation="linear", trainable=refPose)(rows)
 
         shifts = layers.Dense(256, activation="relu", trainable=refPose)(x)
         for _ in range(2):
@@ -101,7 +105,10 @@ class Encoder(Model):
         # shifts = layers.Dense(2, activation=sigmoid_diff, trainable=refPose)(shifts)
         shifts = layers.Dense(2, activation=Sine(w0=1.0), kernel_initializer=SIRENInitializer())(shifts)
 
-        self.encoder = Model(images, [maxAngleDiff * rows, maxShiftDiff * shifts], name="encoder")
+        if rotType == "euler":
+            self.encoder = Model(images, [maxAngleDiff * rows, maxShiftDiff * shifts], name="encoder")
+        elif rotType == "6n":
+            self.encoder = Model(images, [rows, maxShiftDiff * shifts], name="encoder")
 
     def call(self, x):
         encoded = self.encoder(x)
@@ -109,13 +116,16 @@ class Encoder(Model):
 
 
 class Decoder(Model):
-    def __init__(self, generator, CTF="apply"):
+    def __init__(self, generator, CTF="apply", rotType="euler"):
         super(Decoder, self).__init__()
         self.generator = generator
         self.CTF = CTF
         w0_first = 30.0 if generator.step == 1 else 30.0
 
-        rows = Input(shape=(3,))
+        if rotType == "euler":
+            rows = Input(shape=(3,))
+        elif rotType == "6n":
+            rows = Input(shape=(6,))
         shifts = Input(shape=(2,))
 
         coords, coords_fix = layers.Lambda(self.generator.getRotatedGrid)(rows)
@@ -166,14 +176,16 @@ class Decoder(Model):
 
 class AutoEncoder(Model):
     def __init__(self, generator, architecture="convnn", CTF="wiener", refPose=True,
-                 l1_lambda=0.1, maxAngleDiff=5., maxShiftDiff=2., multires=(2, ), **kwargs):
+                 l1_lambda=0.1, maxAngleDiff=5., maxShiftDiff=2., multires=(2, ),
+                 rotType="euler", **kwargs):
         super(AutoEncoder, self).__init__(**kwargs)
         self.CTF = CTF if generator.applyCTF == 1 else None
         self.multires = [tf.constant([int(generator.xsize / mr), int(generator.xsize / mr)], dtype=tf.int32) for mr in
                          multires]
+        self.rotType = rotType
         self.encoder = Encoder(generator.xsize, architecture=architecture, refPose=refPose,
-                               maxAngleDiff=maxAngleDiff, maxShiftDiff=maxShiftDiff)
-        self.decoder = Decoder(generator, CTF=CTF)
+                               maxAngleDiff=maxAngleDiff, maxShiftDiff=maxShiftDiff, rotType=rotType)
+        self.decoder = Decoder(generator, CTF=CTF, rotType=rotType)
         self.refPose = 1.0 if refPose else 0.0
         self.l1_lambda = l1_lambda
         self.total_loss_tracker = tf.keras.metrics.Mean(name="total_loss")
@@ -220,6 +232,10 @@ class AutoEncoder(Model):
         if self.CTF == "wiener":
             images = self.decoder.generator.wiener2DFilter(images)
 
+        # Symmetric loss
+        if self.rotType == "6n":
+            images_rot = tf.image.rot90(images, k=2)
+
         with tf.GradientTape() as tape:
             rows, shifts = self.encoder(images)
             decoded = self.decoder([self.refPose * rows, self.refPose * shifts])
@@ -234,10 +250,27 @@ class AutoEncoder(Model):
             for mr in self.multires:
                 images_mr = self.decoder.generator.downSampleImages(images, mr)
                 decoded_mr = self.decoder.generator.downSampleImages(decoded, mr)
-                multires_loss += self.decoder.generator.cost_function(images_mr, decoded_mr)
+                multires_loss += tf.reduce_mean(tf.abs(images_mr - decoded_mr))
             multires_loss = multires_loss / len(self.multires)
 
-            total_loss = self.decoder.generator.cost_function(images, decoded) + multires_loss + l1_loss
+            loss_1 = self.decoder.generator.cost_function(images, decoded) + multires_loss
+
+            # Symmetric loss
+            if self.rotType == "6n":
+                rows, shifts = self.encoder(images_rot)
+                decoded = self.decoder([self.refPose * rows, self.refPose * shifts])
+
+                multires_loss = 0.0
+                for mr in self.multires:
+                    images_mr = self.decoder.generator.downSampleImages(images_rot, mr)
+                    decoded_mr = self.decoder.generator.downSampleImages(decoded, mr)
+                    multires_loss += tf.reduce_mean(tf.abs(images_mr - decoded_mr))
+                multires_loss = multires_loss / len(self.multires)
+
+                loss_2 = self.decoder.generator.cost_function(images_rot, decoded) + multires_loss
+                loss_1 = tf.reduce_min(tf.stack([loss_1, loss_2], axis=3), axis=3)
+
+            total_loss = loss_1 + l1_loss
 
         grads = tape.gradient(total_loss, self.trainable_weights)
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
@@ -281,6 +314,10 @@ class AutoEncoder(Model):
         if self.CTF == "wiener":
             images = self.decoder.generator.wiener2DFilter(images)
 
+        # Symmetric loss
+        if self.rotType == "6n":
+            images_rot = tf.image.rot90(images, k=2)
+
         rows, shifts = self.encoder(images)
         decoded = self.decoder([self.refPose * rows, self.refPose * shifts])
 
@@ -294,10 +331,27 @@ class AutoEncoder(Model):
         for mr in self.multires:
             images_mr = self.decoder.generator.downSampleImages(images, mr)
             decoded_mr = self.decoder.generator.downSampleImages(decoded, mr)
-            multires_loss += self.decoder.generator.cost_function(images_mr, decoded_mr)
+            multires_loss += tf.reduce_mean(tf.abs(images_mr - decoded_mr))
         multires_loss = multires_loss / len(self.multires)
 
-        total_loss = self.decoder.generator.cost_function(images, decoded) + multires_loss + l1_loss
+        loss_1 = self.decoder.generator.cost_function(images, decoded) + multires_loss
+
+        # Symmetric loss
+        if self.rotType == "6n":
+            rows, shifts = self.encoder(images_rot)
+            decoded = self.decoder([self.refPose * rows, self.refPose * shifts])
+
+            multires_loss = 0.0
+            for mr in self.multires:
+                images_mr = self.decoder.generator.downSampleImages(images_rot, mr)
+                decoded_mr = self.decoder.generator.downSampleImages(decoded, mr)
+                multires_loss += tf.reduce_mean(tf.abs(images_mr - decoded_mr))
+            multires_loss = multires_loss / len(self.multires)
+
+            loss_2 = self.decoder.generator.cost_function(images_rot, decoded) + multires_loss
+            loss_1 = tf.reduce_min(tf.stack([loss_1, loss_2], axis=3), axis=3)
+
+        total_loss = loss_1 + l1_loss
 
         self.total_loss_tracker.update_state(total_loss)
         return {
@@ -337,7 +391,10 @@ class AutoEncoder(Model):
         self.decoder.generator.psi_batch = tf.zeros((1, 1), dtype=tf.float32)
         
         # Identity rows
-        i_rows = np.zeros([1, 3], dtype=np.float32)
+        if self.rotType == "euler":
+            i_rows = np.zeros([1, 3], dtype=np.float32)
+        elif self.rotType == "6n":
+            i_rows = np.zeros([1, 6], dtype=np.float32)
         # i_rows = np.eye(3, dtype=np.float32)[:-1, :].reshape([1, -1])
 
         # Volume
@@ -389,17 +446,23 @@ class AutoEncoder(Model):
 
         # Rows and shifts
         rows, shifts = self.encoder(images)
-        pred_imgs = self.decoder([rows, shifts])
+        # pred_imgs = self.decoder([rows, shifts])
 
-        # Rows to matrix
-        # r = gramSchmidt(rows)
-        # r_ori = euler_matrix_batch(self.decoder.generator.rot_batch,
-        #                            self.decoder.generator.tilt_batch,
-        #                            self.decoder.generator.psi_batch)
-        # rows = tf.matmul(tf.stack(r, axis=2), tf.stack(r_ori, axis=2))
-        # rows = tf.stack(r_ori, axis=2)
+        if self.rotType == "6n":
+            # Rows to matrix
+            r = gramSchmidt(rows)
+            # M = tf.stack(r, axis=2)
+            M = tf.concat([r[0][:, None, :],
+                           r[1][:, None, :],
+                           r[2][:, None, :]], axis=1)
+            rows = tf.map_fn(xmippEulerFromMatrix, M, fn_output_signature=tf.float32)
+            # rows = xmippEulerFromMatrix(M)
+            # r_ori = euler_matrix_batch(self.decoder.generator.rot_batch,
+            #                            self.decoder.generator.tilt_batch,
+            #                            self.decoder.generator.psi_batch)
+            # rows = tf.matmul(tf.stack(r, axis=2), tf.stack(r_ori, axis=2))
 
-        return rows, shifts, pred_imgs
+        return rows, shifts
 
     def call(self, input_features):
         decoded = self.decoder(self.encoder(input_features))

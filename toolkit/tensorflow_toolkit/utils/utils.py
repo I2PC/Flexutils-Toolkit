@@ -73,7 +73,7 @@ def getXmippOrigin(boxsize):
                        int(0.5 * boxsize),
                        int(0.5 * boxsize)])
 
-def euler_from_matrix(matrix):
+def euler_from_matrix(M):
     # Only valid for Xmipp axes szyz
     firstaxis, parity, repetition, frame = (2, 1, 1, 0)
     _EPS = np.finfo(float).eps * 4.0
@@ -82,36 +82,43 @@ def euler_from_matrix(matrix):
     j = _NEXT_AXIS[i + parity]
     k = _NEXT_AXIS[i - parity + 1]
 
-    M = np.array(matrix, dtype=np.float64, copy=False)[:3, :3]
     if repetition:
-        sy = math.sqrt(M[i, j] * M[i, j] + M[i, k] * M[i, k])
-        if sy > _EPS:
-            ax = math.atan2(M[i, j], M[i, k])
-            ay = math.atan2(sy, M[i, i])
-            az = math.atan2(M[j, i], -M[k, i])
-        else:
-            ax = math.atan2(-M[j, k], M[j, j])
-            ay = math.atan2(sy, M[i, i])
+        sy = tf.sqrt(M[i, j] * M[i, j] + M[i, k] * M[i, k])
+        def true_fn(M, sy):
+            ax = tf.atan2(M[i, j], M[i, k])
+            ay = tf.atan2(sy, M[i, i])
+            az = tf.atan2(M[j, i], -M[k, i])
+            return [ax, ay, az]
+        def false_fn(M, sy):
+            ax = tf.atan2(-M[j, k], M[j, j])
+            ay = tf.atan2(sy, M[i, i])
             az = 0.0
+            return [ax, ay, az]
+        ax, ay, az = tf.cond(tf.greater(sy, _EPS), lambda: true_fn(M, sy), lambda: false_fn(M, sy))
     else:
-        cy = math.sqrt(M[i, i] * M[i, i] + M[j, i] * M[j, i])
-        if cy > _EPS:
-            ax = math.atan2(M[k, j], M[k, k])
-            ay = math.atan2(-M[k, i], cy)
-            az = math.atan2(M[j, i], M[i, i])
-        else:
-            ax = math.atan2(-M[j, k], M[j, j])
-            ay = math.atan2(-M[k, i], cy)
+        cy = tf.sqrt(M[i, i] * M[i, i] + M[j, i] * M[j, i])
+        def true_fn(M, cy):
+            ax = tf.atan2(M[k, j], M[k, k])
+            ay = tf.atan2(-M[k, i], cy)
+            az = tf.atan2(M[j, i], M[i, i])
+            return [ax, ay, az]
+        def false_fn(M, cy):
+            ax = tf.atan2(-M[j, k], M[j, j])
+            ay = tf.atan2(-M[k, i], cy)
             az = 0.0
+            return [ax, ay, az]
+        ax, ay, az = tf.cond(tf.greater(cy, _EPS), lambda: true_fn(M, cy), lambda: false_fn(M, cy))
 
     if parity:
         ax, ay, az = -ax, -ay, -az
     if frame:
         ax, az = az, ax
-    return ax, ay, az
+    return tf.stack([ax, ay, az], axis=0)
 
 def xmippEulerFromMatrix(matrix):
-    return -np.rad2deg(euler_from_matrix(matrix))
+    euler = -euler_from_matrix(matrix)
+    euler *= (180.0 / np.pi)
+    return euler
 
 def euler_matrix_row(alpha, beta, gamma, row, batch_size):
     A = []

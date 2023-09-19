@@ -38,8 +38,9 @@ from tensorflow_toolkit.utils import euler_matrix_batch, gramSchmidt
 
 
 class Generator(DataGeneratorBase):
-    def __init__(self, **kwargs):
+    def __init__(self, rotType="euler", **kwargs):
         super().__init__(**kwargs)
+        self.rotType = rotType
 
         # Save mask map and indices
         mask_path = Path(self.filename.parent, 'mask.mrc')
@@ -65,17 +66,6 @@ class Generator(DataGeneratorBase):
         self.psi_batch = np.zeros(self.batch_size, dtype=np.float32)
         self.shifts_batch = [np.zeros(self.batch_size), np.zeros(self.batch_size)]
 
-        # Cost functions
-        cost = kwargs.get("cost")
-        if cost == "mae":
-            self.cost_function = tf.keras.metrics.mae
-        elif cost == "mse":
-            self.cost_function = tf.keras.metrics.mse
-        elif cost == "corr":
-            self.cost_function = self.correlation_coefficient_loss
-        elif cost == "fpc":
-            self.cost_function = self.fourier_phase_correlation
-
 
     # ----- Utils -----#
 
@@ -97,10 +87,12 @@ class Generator(DataGeneratorBase):
 
     def applyAlignment(self, c_x, c_y, c_z, delta_angles, axis):
         # Get rotation matrix
-        r = euler_matrix_batch(self.rot_batch + delta_angles[:, 0],
-                               self.tilt_batch + delta_angles[:, 1],
-                               self.psi_batch + delta_angles[:, 2])
-        # r = gramSchmidt(delta_angles)
+        if self.rotType == "euler":
+            r = euler_matrix_batch(self.rot_batch + delta_angles[:, 0],
+                                   self.tilt_batch + delta_angles[:, 1],
+                                   self.psi_batch + delta_angles[:, 2])
+        elif self.rotType == "6n":
+            r = gramSchmidt(delta_angles)
         # r_ori = euler_matrix_batch(self.rot_batch, self.tilt_batch, self.psi_batch)
         # r = tf.matmul(tf.stack(r, axis=2), tf.stack(r_ori, axis=2))
         # r = [r[:, 0], r[:, 1], r[:, 2]]

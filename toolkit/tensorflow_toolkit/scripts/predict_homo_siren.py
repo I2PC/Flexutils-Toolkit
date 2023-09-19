@@ -46,24 +46,25 @@ from tensorflow_toolkit.networks.homo_siren import AutoEncoder
 
 
 def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=1.0,
-            applyCTF=1, filter=False):
+            applyCTF=1, filter=False, rotType="6n", maxAngleDiff=10.0, maxShiftDiff=1.0):
     # Create data generator
     generator = Generator(md_file=md_file, shuffle=False, batch_size=16,
                           step=1, splitTrain=1.0, pad_factor=pad, sr=sr,
-                          applyCTF=applyCTF)
+                          applyCTF=applyCTF, rotType=rotType)
 
     # Tensorflow data pipeline
     # generator_dataset, generator = sequence_to_data_pipeline(generator)
     # dataset = create_dataset(generator_dataset, generator, shuffle=False, batch_size=16)
 
     # Load model
-    autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose)
+    autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
+                              rotType=rotType)
     autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
     autoencoder.load_weights(weigths_file)
 
     # Get poses
     print("------------------ Predicting particles... ------------------")
-    alignment, shifts, _ = autoencoder.predict(generator)
+    alignment, shifts = autoencoder.predict(generator)
 
     # Get map
     print("------------------ Decoding volume... ------------------")
@@ -71,7 +72,10 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
 
     # Save space to metadata file
     alignment = np.vstack(alignment)
-    shifts = np.vstack(shifts)
+    shifts = maxShiftDiff * np.vstack(shifts)
+
+    if rotType == "euler":
+        alignment *= maxAngleDiff
 
     generator.metadata[:, 'delta_angle_rot'] = alignment[:, 0]
     generator.metadata[:, 'delta_angle_tilt'] = alignment[:, 1]
@@ -100,6 +104,8 @@ if __name__ == '__main__':
     parser.add_argument('--sr', type=float, required=True)
     parser.add_argument('--apply_ctf', type=int, required=True)
     parser.add_argument('--apply_filter', action='store_true')
+    parser.add_argument('--max_angle', type=float, required=True)
+    parser.add_argument('--max_shift', type=float, required=True)
     parser.add_argument('--gpu', type=str)
 
     args = parser.parse_args()
@@ -113,7 +119,8 @@ if __name__ == '__main__':
     inputs = {"md_file": args.md_file, "weigths_file": args.weigths_file,
               "refinePose": args.refine_pose, "architecture": args.architecture,
               "ctfType": args.ctf_type, "pad": args.pad, "sr": args.sr,
-              "applyCTF": args.apply_ctf, "filter": args.apply_filter}
+              "applyCTF": args.apply_ctf, "filter": args.apply_filter,
+              "maxAngleDiff": args.max_angle, "maxShiftDiff": args.max_shift}
 
     # Initialize volume slicer
     predict(**inputs)

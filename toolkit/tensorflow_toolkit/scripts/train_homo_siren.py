@@ -51,7 +51,8 @@ from tensorflow_toolkit.utils import epochs_from_iterations
 def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
           radius_mask, smooth_mask, refinePose, architecture="convnn", weigths_file=None,
           ctfType="apply", pad=2, sr=1.0, applyCTF=1, l1Reg=0.1, lr=1e-5,
-          refString="p,m", multires=(2, 4, 8), gpu=None):
+          refString="p,m", multires=(2, 4, 8), gpu=None, maxAngleDiff=10.0, maxShiftDiff=1.0,
+          rotType="6n"):
 
     log_dir = os.path.join(outPath, "logs")
     if not os.path.isdir(log_dir):
@@ -69,14 +70,14 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
             generator = Generator(md_file=md_file, shuffle=shuffle, batch_size=batch_size,
                                   splitTrain=splitTrain, step=step, cost=cost, pad_factor=pad,
                                   applyCTF=applyCTF, sr=sr, radius_mask=radius_mask,
-                                  smooth_mask=smooth_mask)
+                                  smooth_mask=smooth_mask, rotType=rotType)
 
             # Create validation generator
             if splitTrain < 1.0:
                 generator_val = Generator(md_file=md_file, shuffle=shuffle, batch_size=batch_size,
                                           splitTrain=(splitTrain - 1.0), step=step, cost=cost, pad_factor=pad,
                                           applyCTF=applyCTF, sr=sr, radius_mask=radius_mask,
-                                          smooth_mask=smooth_mask)
+                                          smooth_mask=smooth_mask, rotType=rotType)
             else:
                 generator_val = None
 
@@ -86,7 +87,9 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
 
             # Train model
             autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
-                                      l1_lambda=l1Reg, multires=multires, maxAngleDiff=10., maxShiftDiff=1.0)
+                                      l1_lambda=l1Reg, multires=multires,
+                                      maxAngleDiff=maxAngleDiff, maxShiftDiff=maxShiftDiff,
+                                      rotType=rotType)
 
             # Fine tune a previous model
             if os.path.isfile(os.path.join(out, "homo_siren_model.h5")):
@@ -159,16 +162,16 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
 
             if generator_val is not None:
                 autoencoder.fit(generator, validation_data=generator_val, epochs=epochs, validation_freq=2,
-                                callbacks=[cp_callback, tensorboard_callback], initial_epoch=initial_epoch)
+                                callbacks=[], initial_epoch=initial_epoch)
             else:
                 autoencoder.fit(generator, epochs=epochs,
-                                callbacks=[cp_callback, tensorboard_callback], initial_epoch=initial_epoch)
+                                callbacks=[], initial_epoch=initial_epoch)
 
             # Save model
             autoencoder.save_weights(os.path.join(out, "homo_siren_model.h5"))
 
             if mode in ["m", "s", "b"]:
-                decoded_map = autoencoder.eval_volume(filter=False, allCoords=True)
+                decoded_map = autoencoder.eval_volume(filter=True, allCoords=True)
                 ImageHandler().write(decoded_map, os.path.join(out, f"decoded_map_step_{idx}.mrc"),
                                      overwrite=True)
 
@@ -228,6 +231,8 @@ if __name__ == '__main__':
     parser.add_argument('--sr', type=float, required=True)
     parser.add_argument('--apply_ctf', type=int, required=True)
     parser.add_argument('--multires', type=str, required=False)
+    parser.add_argument('--max_angle', type=float, required=True)
+    parser.add_argument('--max_shift', type=float, required=True)
     parser.add_argument('--gpu', type=str)
 
     args = parser.parse_args()
@@ -251,7 +256,8 @@ if __name__ == '__main__':
               "weigths_file": args.weigths_file, "ctfType": args.ctf_type, "pad": args.pad,
               "sr": args.sr, "applyCTF": args.apply_ctf,
               "l1Reg": args.l1_reg, "lr": args.lr, "refString": args.ref_string,
-              "multires": multires, "gpu": args.gpu}
+              "multires": multires, "maxAngleDiff": args.max_angle, "maxShiftDiff": args.max_shift,
+              "gpu": args.gpu}
 
     # Initialize volume slicer
     train(**inputs)
