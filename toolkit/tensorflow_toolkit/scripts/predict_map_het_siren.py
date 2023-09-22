@@ -62,7 +62,11 @@ def predict(weigths_file, het_file, out_path, allCoords=False, filter=False, **k
 
     # Load model
     autoencoder = AutoEncoder(generator, het_dim=x_het.shape[1], **kwargs)
-    autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
+    if generator.mode == "spa":
+        autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
+    elif generator.mode == "tomo":
+        autoencoder.build(input_shape=[(None, generator.xsize, generator.xsize, 1),
+                                       [None, generator.sinusoid_table.shape[1]]])
     autoencoder.load_weights(weigths_file)
 
     # Decode maps

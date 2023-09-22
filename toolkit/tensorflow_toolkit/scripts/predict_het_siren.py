@@ -61,7 +61,11 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
     # Load model
     autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
                               het_dim=hetDim)
-    autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
+    if generator.mode == "spa":
+        autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
+    elif generator.mode == "tomo":
+        autoencoder.build(input_shape=[(None, generator.xsize, generator.xsize, 1),
+                                       [None, generator.sinusoid_table.shape[1]]])
     autoencoder.load_weights(weigths_file)
 
     # Get poses

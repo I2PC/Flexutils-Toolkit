@@ -42,7 +42,7 @@ from tensorflow_toolkit.utils import getXmippOrigin, fft_pad, ifft_pad
 class DataGeneratorBase(tf.keras.utils.Sequence):
     def __init__(self, md_file, batch_size=32, shuffle=True, step=1, splitTrain=None,
                  radius_mask=2, smooth_mask=True, cost="corr", keepMap=False, pad_factor=2,
-                 sr=1., applyCTF=1, xsize=128):
+                 sr=1., applyCTF=1, xsize=128, mode=None):
         # Attributes
         self.step = step
         self.shuffle = shuffle
@@ -113,6 +113,21 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
         elif cost == "mse":
             self.cost_function = self.mse
 
+        # Generator mode
+        if mode is None:
+            if self.metadata.isMetaDataLabel("subtomo_labels"):
+                self.mode = "tomo"
+            else:
+                self.mode = "spa"
+        else:
+            self.mode = mode
+
+        # Positional encoding of subtomo labels (Tomo only)
+        if self.mode == "tomo":
+            unique_labels = np.unique(self.metadata[:, "subtomo_labels"]).astype(int)
+            # self.get_sinusoid_encoding_table(len(unique_labels), 10)
+            self.get_sinusoid_encoding_table(np.amax(unique_labels), 100)
+
 
     #----- Initialization methods -----#
 
@@ -174,8 +189,8 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
         self.values = (pdb_info[:, -1]).reshape(-1)
 
         # Connectivity
-        connect_file = str(Path(structure.parent, 'connectivity.txt'))
-        self.connectivity = np.loadtxt(connect_file).astype(int)
+        # connect_file = str(Path(structure.parent, 'connectivity.txt'))
+        # self.connectivity = np.loadtxt(connect_file).astype(int)
 
         # Flag (reference is structure)
         self.ref_is_struct = True
@@ -214,8 +229,18 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
             self.file_idx = self.file_idx[indexes]
 
     def __data_generation(self):
-        images = self.metadata.getMetaDataImage(self.indexes)
-        return images.reshape([-1, self.xsize, self.xsize, 1]), self.indexes
+        images = self.metadata.getMetaDataImage(self.indexes)[..., None]
+        if len(images.shape) == 3:
+            images = images[None, ...]
+        if self.mode == "spa":
+            return images, self.indexes
+        elif self.mode == "tomo":
+            subtomo_labels = self.metadata[self.indexes, "subtomo_labels"].astype(int) - 1
+            subtomo_pe = self.sinusoid_table[subtomo_labels]
+            if len(images.shape) == 1:
+                subtomo_pe = subtomo_pe[None, ...]
+            return [images, subtomo_pe], [self.indexes, self.indexes]
+
 
     def __getitem__(self, index):
         # Generate indexes of the batch
@@ -463,5 +488,33 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
     #
     #     loss = tf.math.reduce_mean(loss)
     #     return loss
+
+    def get_sinusoid_encoding_table(self, n_position, d_hid, padding_idx=None):
+        """
+        numpy sinusoid position encoding of Transformer model.
+        params:
+            n_position(n):number of positions
+            d_hid(m): dimension of embedding vector
+            padding_idx:set 0 dimension
+        return:
+            sinusoid_table(n*m):numpy array
+        """
+
+        def cal_angle(position, hid_idx):
+            return position / np.power(10000, 2 * (hid_idx // 2) / d_hid)
+
+        def get_posi_angle_vec(position):
+            return [cal_angle(position, hid_j) for hid_j in range(d_hid)]
+
+        sinusoid_table = np.array([get_posi_angle_vec(pos_i) for pos_i in range(n_position)])
+
+        sinusoid_table[:, 0::2] = np.sin(sinusoid_table[:, 0::2])  # dim 2i
+        sinusoid_table[:, 1::2] = np.cos(sinusoid_table[:, 1::2])  # dim 2i+1
+
+        if padding_idx is not None:
+            # zero vector for padding dimension
+            sinusoid_table[padding_idx] = 0.
+
+        self.sinusoid_table = sinusoid_table
 
     # ----- -------- -----#

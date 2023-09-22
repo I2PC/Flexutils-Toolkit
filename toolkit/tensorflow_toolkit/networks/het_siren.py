@@ -36,10 +36,12 @@ from tensorflow_toolkit.layers.siren import SIRENFirstLayerInitializer, SIRENIni
 
 
 class Encoder(Model):
-    def __init__(self, latent_dim, input_dim, architecture="convnn", refPose=True):
+    def __init__(self, latent_dim, input_dim, architecture="convnn", refPose=True,
+                 mode="spa"):
         super(Encoder, self).__init__()
 
         images = Input(shape=(input_dim, input_dim, 1))
+        subtomo_pe = Input(shape=(100,))
 
         if architecture == "convnn":
             x = tf.keras.layers.Flatten()(images)
@@ -84,7 +86,12 @@ class Encoder(Model):
             for _ in range(2):
                 x = layers.Dense(1024, activation='relu')(x)
 
-        latent = layers.Dense(256, activation="relu")(x)
+        if mode == "spa":
+            latent = layers.Dense(256, activation="relu")(x)
+        elif mode == "tomo":
+            latent = layers.Dense(1024, activation="relu")(subtomo_pe)
+            for _ in range(2):  # TODO: Is it better to use 12 hidden layers as in Zernike3Deep?
+                latent = layers.Dense(1024, activation="relu")(latent)
         for _ in range(2):
             latent = layers.Dense(256, activation="relu")(latent)
         latent = layers.Dense(latent_dim, activation="linear")(latent)  # Tanh [-1,1] as needed by SIREN?
@@ -99,7 +106,11 @@ class Encoder(Model):
             shifts = layers.Dense(256, activation="relu", trainable=refPose)(shifts)
         shifts = layers.Dense(2, activation="linear", trainable=refPose)(shifts)
 
-        self.encoder = Model(images, [rows, shifts, latent], name="encoder")
+        if mode == "spa":
+            self.encoder = Model(images, [rows, shifts, latent], name="encoder")
+        elif mode == "tomo":
+            self.encoder = Model([images, subtomo_pe], [rows, shifts, latent], name="encoder")
+            self.encoder_latent = Model(subtomo_pe, latent, name="encode_latent")
 
     def call(self, x):
         encoded = self.encoder(x)
@@ -173,10 +184,12 @@ class Decoder(Model):
 
 class AutoEncoder(Model):
     def __init__(self, generator, het_dim=10, architecture="convnn", CTF="wiener", refPose=True,
-                 l1_lambda=0.5, **kwargs):
+                 l1_lambda=0.5, mode=None, **kwargs):
         super(AutoEncoder, self).__init__(**kwargs)
         self.CTF = CTF if generator.applyCTF == 1 else None
-        self.encoder = Encoder(het_dim, generator.xsize, architecture=architecture, refPose=refPose)
+        self.mode = generator.mode if mode is None else mode
+        self.encoder = Encoder(het_dim, generator.xsize, architecture=architecture,
+                               refPose=refPose, mode=self.mode)
         self.decoder = Decoder(het_dim, generator, CTF=CTF)
         self.refPose = 1.0 if refPose else 0.0
         self.l1_lambda = l1_lambda
@@ -194,28 +207,35 @@ class AutoEncoder(Model):
         ]
 
     def train_step(self, data):
-        self.decoder.generator.indexes = data[1]
-        self.decoder.generator.current_images = data[0]
+        inputs = data[0]
 
-        images = data[0]
+        if self.mode == "spa":
+            indexes = data[1]
+            images = inputs
+        elif self.mode == "tomo":
+            indexes = data[1][0]
+            images = inputs[0]
+
+        self.decoder.generator.indexes = indexes
+        self.decoder.generator.current_images = images
 
         # Update batch_size (in case it is incomplete)
-        batch_size_scope = tf.shape(data[0])[0]
+        batch_size_scope = tf.shape(images)[0]
 
         # Precompute batch aligments
-        self.decoder.generator.rot_batch = tf.gather(self.decoder.generator.angle_rot, data[1], axis=0)
-        self.decoder.generator.tilt_batch = tf.gather(self.decoder.generator.angle_tilt, data[1], axis=0)
-        self.decoder.generator.psi_batch = tf.gather(self.decoder.generator.angle_psi, data[1], axis=0)
+        self.decoder.generator.rot_batch = tf.gather(self.decoder.generator.angle_rot, indexes, axis=0)
+        self.decoder.generator.tilt_batch = tf.gather(self.decoder.generator.angle_tilt, indexes, axis=0)
+        self.decoder.generator.psi_batch = tf.gather(self.decoder.generator.angle_psi, indexes, axis=0)
 
         # Precompute batch shifts
-        self.decoder.generator.shifts_batch = [tf.gather(self.decoder.generator.shift_x, data[1], axis=0),
-                                               tf.gather(self.decoder.generator.shift_y, data[1], axis=0)]
+        self.decoder.generator.shifts_batch = [tf.gather(self.decoder.generator.shift_x, indexes, axis=0),
+                                               tf.gather(self.decoder.generator.shift_y, indexes, axis=0)]
 
         # Precompute batch CTFs
-        defocusU_batch = tf.gather(self.decoder.generator.defocusU, data[1], axis=0)
-        defocusV_batch = tf.gather(self.decoder.generator.defocusV, data[1], axis=0)
-        defocusAngle_batch = tf.gather(self.decoder.generator.defocusAngle, data[1], axis=0)
-        cs_batch = tf.gather(self.decoder.generator.cs, data[1], axis=0)
+        defocusU_batch = tf.gather(self.decoder.generator.defocusU, indexes, axis=0)
+        defocusV_batch = tf.gather(self.decoder.generator.defocusV, indexes, axis=0)
+        defocusAngle_batch = tf.gather(self.decoder.generator.defocusAngle, indexes, axis=0)
+        cs_batch = tf.gather(self.decoder.generator.cs, indexes, axis=0)
         kv_batch = self.decoder.generator.kv
         ctf = computeCTF(defocusU_batch, defocusV_batch, defocusAngle_batch, cs_batch, kv_batch,
                          self.decoder.generator.sr, self.decoder.generator.pad_factor,
@@ -226,9 +246,13 @@ class AutoEncoder(Model):
         # Wiener filter
         if self.CTF == "wiener":
             images = self.decoder.generator.wiener2DFilter(images)
+            if self.mode == "spa":
+                inputs = images
+            elif self.mode == "tomo":
+                inputs[0] = images
 
         with tf.GradientTape() as tape:
-            rows, shifts, het = self.encoder(images)
+            rows, shifts, het = self.encoder(inputs)
             decoded_het = self.decoder([self.refPose * rows, self.refPose * shifts, het])
 
             # L1 penalization delta_het
@@ -251,28 +275,35 @@ class AutoEncoder(Model):
         }
 
     def test_step(self, data):
-        self.decoder.generator.indexes = data[1]
-        self.decoder.generator.current_images = data[0]
+        inputs = data[0]
 
-        images = data[0]
+        if self.mode == "spa":
+            indexes = data[1]
+            images = inputs
+        elif self.mode == "tomo":
+            indexes = data[1][0]
+            images = inputs[0]
 
-        # Update batch_size (in case it is incomplete)
-        batch_size_scope = tf.shape(data[0])[0]
+        self.decoder.generator.indexes = indexes
+        self.decoder.generator.current_images = images
+
+            # Update batch_size (in case it is incomplete)
+        batch_size_scope = tf.shape(images)[0]
 
         # Precompute batch aligments
-        self.decoder.generator.rot_batch = tf.gather(self.decoder.generator.angle_rot, data[1], axis=0)
-        self.decoder.generator.tilt_batch = tf.gather(self.decoder.generator.angle_tilt, data[1], axis=0)
-        self.decoder.generator.psi_batch = tf.gather(self.decoder.generator.angle_psi, data[1], axis=0)
+        self.decoder.generator.rot_batch = tf.gather(self.decoder.generator.angle_rot, indexes, axis=0)
+        self.decoder.generator.tilt_batch = tf.gather(self.decoder.generator.angle_tilt, indexes, axis=0)
+        self.decoder.generator.psi_batch = tf.gather(self.decoder.generator.angle_psi, indexes, axis=0)
 
         # Precompute batch shifts
-        self.decoder.generator.shifts_batch = [tf.gather(self.decoder.generator.shift_x, data[1], axis=0),
-                                               tf.gather(self.decoder.generator.shift_y, data[1], axis=0)]
+        self.decoder.generator.shifts_batch = [tf.gather(self.decoder.generator.shift_x, indexes, axis=0),
+                                               tf.gather(self.decoder.generator.shift_y, indexes, axis=0)]
 
         # Precompute batch CTFs
-        defocusU_batch = tf.gather(self.decoder.generator.defocusU, data[1], axis=0)
-        defocusV_batch = tf.gather(self.decoder.generator.defocusV, data[1], axis=0)
-        defocusAngle_batch = tf.gather(self.decoder.generator.defocusAngle, data[1], axis=0)
-        cs_batch = tf.gather(self.decoder.generator.cs, data[1], axis=0)
+        defocusU_batch = tf.gather(self.decoder.generator.defocusU, indexes, axis=0)
+        defocusV_batch = tf.gather(self.decoder.generator.defocusV, indexes, axis=0)
+        defocusAngle_batch = tf.gather(self.decoder.generator.defocusAngle, indexes, axis=0)
+        cs_batch = tf.gather(self.decoder.generator.cs, indexes, axis=0)
         kv_batch = self.decoder.generator.kv
         ctf = computeCTF(defocusU_batch, defocusV_batch, defocusAngle_batch, cs_batch, kv_batch,
                          self.decoder.generator.sr, self.decoder.generator.pad_factor,
@@ -283,8 +314,12 @@ class AutoEncoder(Model):
         # Wiener filter
         if self.CTF == "wiener":
             images = self.decoder.generator.wiener2DFilter(images)
+            if self.mode == "spa":
+                inputs = images
+            elif self.mode == "tomo":
+                inputs[0] = images
 
-        rows, shifts, het = self.encoder(images)
+        rows, shifts, het = self.encoder(inputs)
         decoded_het = self.decoder([self.refPose * rows, self.refPose * shifts, het])
 
         # L1 penalization delta_het
@@ -351,28 +386,35 @@ class AutoEncoder(Model):
         return decoded
 
     def predict_step(self, data):
-        self.decoder.generator.indexes = data[1]
-        self.decoder.generator.current_images = data[0]
+        inputs = data[0]
 
-        images = data[0]
+        if self.mode == "spa":
+            indexes = data[1]
+            images = inputs
+        elif self.mode == "tomo":
+            indexes = data[1][0]
+            images = inputs[0]
+
+        self.decoder.generator.indexes = indexes
+        self.decoder.generator.current_images = images
 
         # Update batch_size (in case it is incomplete)
-        batch_size_scope = tf.shape(data[0])[0]
+        batch_size_scope = tf.shape(images)[0]
 
         # Precompute batch aligments
-        self.decoder.generator.rot_batch = tf.gather(self.decoder.generator.angle_rot, data[1], axis=0)
-        self.decoder.generator.tilt_batch = tf.gather(self.decoder.generator.angle_tilt, data[1], axis=0)
-        self.decoder.generator.psi_batch = tf.gather(self.decoder.generator.angle_psi, data[1], axis=0)
+        self.decoder.generator.rot_batch = tf.gather(self.decoder.generator.angle_rot, indexes, axis=0)
+        self.decoder.generator.tilt_batch = tf.gather(self.decoder.generator.angle_tilt, indexes, axis=0)
+        self.decoder.generator.psi_batch = tf.gather(self.decoder.generator.angle_psi, indexes, axis=0)
 
         # Precompute batch shifts
-        self.decoder.generator.shifts_batch = [tf.gather(self.decoder.generator.shift_x, data[1], axis=0),
-                                               tf.gather(self.decoder.generator.shift_y, data[1], axis=0)]
+        self.decoder.generator.shifts_batch = [tf.gather(self.decoder.generator.shift_x, indexes, axis=0),
+                                               tf.gather(self.decoder.generator.shift_y, indexes, axis=0)]
 
         # Precompute batch CTFs
-        defocusU_batch = tf.gather(self.decoder.generator.defocusU, data[1], axis=0)
-        defocusV_batch = tf.gather(self.decoder.generator.defocusV, data[1], axis=0)
-        defocusAngle_batch = tf.gather(self.decoder.generator.defocusAngle, data[1], axis=0)
-        cs_batch = tf.gather(self.decoder.generator.cs, data[1], axis=0)
+        defocusU_batch = tf.gather(self.decoder.generator.defocusU, indexes, axis=0)
+        defocusV_batch = tf.gather(self.decoder.generator.defocusV, indexes, axis=0)
+        defocusAngle_batch = tf.gather(self.decoder.generator.defocusAngle, indexes, axis=0)
+        cs_batch = tf.gather(self.decoder.generator.cs, indexes, axis=0)
         kv_batch = self.decoder.generator.kv
         ctf = computeCTF(defocusU_batch, defocusV_batch, defocusAngle_batch, cs_batch, kv_batch,
                          self.decoder.generator.sr, self.decoder.generator.pad_factor,
@@ -383,6 +425,10 @@ class AutoEncoder(Model):
         # Wiener filter
         if self.CTF == "wiener":
             images = self.decoder.generator.wiener2DFilter(images)
+            if self.mode == "spa":
+                inputs = images
+            elif self.mode == "tomo":
+                inputs[0] = images
 
         # Predict images with CTF applied?
         if self.applyCTF == 1:
@@ -391,9 +437,9 @@ class AutoEncoder(Model):
             self.decoder.generator.CTF = None
 
         if self.predict_mode == "het":
-            return self.encoder(images)
+            return self.encoder(inputs)
         elif self.predict_mode == "particles":
-            return self.decoder(self.encoder(images))
+            return self.decoder(self.encoder(inputs))
         else:
             raise ValueError("Prediction mode not understood!")
 
