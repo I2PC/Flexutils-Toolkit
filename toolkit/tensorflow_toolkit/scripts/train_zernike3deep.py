@@ -70,9 +70,9 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
         # dataset = create_dataset(generator_dataset, generator, batch_size=batch_size)
 
         # Train model
-        strategy = tf.distribute.MirroredStrategy()
-        with strategy.scope():
-            autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType)
+        # strategy = tf.distribute.MirroredStrategy()
+        # with strategy.scope():
+        autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType)
 
         optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
 
@@ -103,7 +103,7 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1,
                                                               write_graph=True, write_steps_per_second=True)
 
-        autoencoder.compile(optimizer=optimizer)
+        autoencoder.compile(optimizer=optimizer, jit_compile=True)
 
         if generator_val is not None:
             autoencoder.fit(generator, validation_data=generator_val, epochs=epochs, validation_freq=2,

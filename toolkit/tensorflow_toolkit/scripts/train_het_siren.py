@@ -109,7 +109,7 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
                 latest = os.path.basename(latest)
                 initial_epoch = int(re.findall(r'\d+', latest)[0]) - 1
 
-        autoencoder.compile(optimizer=optimizer)
+        autoencoder.compile(optimizer=optimizer, jit_compile=True)
 
         if generator_val is not None:
             autoencoder.fit(generator, validation_data=generator_val, epochs=epochs, validation_freq=2,
