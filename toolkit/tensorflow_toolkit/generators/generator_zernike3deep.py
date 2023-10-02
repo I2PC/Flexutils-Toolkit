@@ -63,7 +63,7 @@ class Generator(DataGeneratorBase):
                                   for item in self.metadata[:, 'zernikeCoefficients']])
             self.z_x_space = tf.constant(z_space[:, :size], dtype=tf.float32)
             self.z_y_space = tf.constant(z_space[:, size:2 * size], dtype=tf.float32)
-            self.z_y_space = tf.constant(z_space[:, 2 * size:], dtype=tf.float32)
+            self.z_z_space = tf.constant(z_space[:, 2 * size:], dtype=tf.float32)
         else:
             self.z_x_space = tf.zeros((len(self.metadata), size), dtype=tf.float32)
             self.z_y_space = tf.zeros((len(self.metadata), size), dtype=tf.float32)
