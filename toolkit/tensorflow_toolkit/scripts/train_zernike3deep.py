@@ -47,7 +47,7 @@ from tensorflow_toolkit.utils import epochs_from_iterations
 
 def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epochs, cost,
           radius_mask, smooth_mask, refinePose, architecture="convnn", ctfType="apply", pad=2,
-          sr=1.0, applyCTF=1, lr=1e-5):
+          sr=1.0, applyCTF=1, lr=1e-5, jit_compile=True):
 
     try:
         # Create data generator
@@ -103,7 +103,7 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1,
                                                               write_graph=True, write_steps_per_second=True)
 
-        autoencoder.compile(optimizer=optimizer, jit_compile=True)
+        autoencoder.compile(optimizer=optimizer, jit_compile=jit_compile)
 
         if generator_val is not None:
             autoencoder.fit(generator, validation_data=generator_val, epochs=epochs, validation_freq=2,
@@ -150,6 +150,7 @@ if __name__ == '__main__':
     parser.add_argument('--refine_pose', action='store_true')
     parser.add_argument('--sr', type=float, required=True)
     parser.add_argument('--apply_ctf', type=int, required=True)
+    parser.add_argument('--jit_compile', action='store_true')
     parser.add_argument('--gpu', type=str)
 
     args = parser.parse_args()
@@ -175,7 +176,7 @@ if __name__ == '__main__':
               "cost": args.cost, "radius_mask": args.radius_mask, "smooth_mask": args.smooth_mask,
               "refinePose": args.refine_pose, "architecture": args.architecture,
               "ctfType": args.ctf_type, "pad": args.pad, "sr": args.sr,
-              "applyCTF": args.apply_ctf, "lr": args.lr}
+              "applyCTF": args.apply_ctf, "lr": args.lr, "jit_compile": args.jit_compile}
 
     # Initialize volume slicer
     train(**inputs)

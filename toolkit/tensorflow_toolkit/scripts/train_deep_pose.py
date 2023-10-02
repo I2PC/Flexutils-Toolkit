@@ -48,7 +48,8 @@ from tensorflow_toolkit.utils import epochs_from_iterations
 
 def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
           radius_mask, smooth_mask, architecture="convnn", weigths_file=None,
-          ctfType="apply", pad=2, sr=1.0, applyCTF=1, lr=1e-5, multires=[2, 4, 8]):
+          ctfType="apply", pad=2, sr=1.0, applyCTF=1, lr=1e-5, multires=[2, 4, 8],
+          jit_compile=True):
 
     try:
         # Create data generator
@@ -116,7 +117,7 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
                 latest = os.path.basename(latest)
                 initial_epoch = int(re.findall(r'\d+', latest)[0]) - 1
 
-        autoencoder.compile(optimizer=optimizer, jit_compile=True)
+        autoencoder.compile(optimizer=optimizer, jit_compile=jit_compile)
 
         if generator_val is not None:
             autoencoder.fit(generator, validation_data=generator_val, epochs=epochs, validation_freq=2,
@@ -162,6 +163,7 @@ if __name__ == '__main__':
     parser.add_argument('--sr', type=float, required=True)
     parser.add_argument('--apply_ctf', type=int, required=True)
     parser.add_argument('--multires', type=str, required=False)
+    parser.add_argument('--jit_compile', action='store_true')
     parser.add_argument('--gpu', type=str)
 
     args = parser.parse_args()
@@ -188,7 +190,8 @@ if __name__ == '__main__':
               "step": args.step, "splitTrain": args.split_train, "epochs": epochs,
               "cost": args.cost, "radius_mask": args.radius_mask, "smooth_mask": args.smooth_mask,
               "architecture": args.architecture, "weigths_file": args.weigths_file, "ctfType": args.ctf_type, "pad": args.pad,
-              "sr": args.sr, "applyCTF": args.apply_ctf, "lr": args.lr, "multires": multires}
+              "sr": args.sr, "applyCTF": args.apply_ctf, "lr": args.lr, "multires": multires,
+              "jit_compile": args.jit_compile}
 
     # Initialize volume slicer
     train(**inputs)

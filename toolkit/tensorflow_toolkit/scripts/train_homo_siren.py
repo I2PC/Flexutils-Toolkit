@@ -51,7 +51,7 @@ from tensorflow_toolkit.utils import epochs_from_iterations
 def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
           radius_mask, smooth_mask, refinePose, architecture="convnn", weigths_file=None,
           ctfType="apply", pad=2, sr=1.0, applyCTF=1, l1Reg=0.1, lr=1e-5,
-          refString="p,m", multires=(2, 4, 8), gpu=None):
+          refString="p,m", multires=(2, 4, 8), gpu=None, jit_compile=True):
 
     log_dir = os.path.join(outPath, "logs")
     if not os.path.isdir(log_dir):
@@ -59,7 +59,7 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
 
     try:
         def fitModel(args):
-            (workflow_step, idx, out) = args
+            (workflow_step, idx, out, jit_compile) = args
 
             physical_devices = tf.config.list_physical_devices('GPU')
             for gpu_instance in physical_devices:
@@ -155,7 +155,7 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
                     latest = os.path.basename(latest)
                     initial_epoch = int(re.findall(r'\d+', latest)[0]) - 1
 
-            autoencoder.compile(optimizer=optimizer, jit_compile=True)
+            autoencoder.compile(optimizer=optimizer, jit_compile=jit_compile)
 
             if generator_val is not None:
                 autoencoder.fit(generator, validation_data=generator_val, epochs=epochs, validation_freq=2,
@@ -189,7 +189,7 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
             idx += 1
             workflow_step = workflow_step if len(workflow_step) > 1 else str(epochs) + workflow_step
             p.restart()
-            p.pipe(fitModel, args=(workflow_step, idx, outPath))
+            p.pipe(fitModel, args=(workflow_step, idx, outPath, jit_compile))
             p.close()
             p.join()
 
@@ -228,6 +228,7 @@ if __name__ == '__main__':
     parser.add_argument('--sr', type=float, required=True)
     parser.add_argument('--apply_ctf', type=int, required=True)
     parser.add_argument('--multires', type=str, required=False)
+    parser.add_argument('--jit_compile', action='store_true')
     parser.add_argument('--gpu', type=str)
 
     args = parser.parse_args()
@@ -251,7 +252,7 @@ if __name__ == '__main__':
               "weigths_file": args.weigths_file, "ctfType": args.ctf_type, "pad": args.pad,
               "sr": args.sr, "applyCTF": args.apply_ctf,
               "l1Reg": args.l1_reg, "lr": args.lr, "refString": args.ref_string,
-              "multires": multires, "gpu": args.gpu}
+              "multires": multires, "gpu": args.gpu, "jit_compile": args.jit_compile}
 
     # Initialize volume slicer
     train(**inputs)
