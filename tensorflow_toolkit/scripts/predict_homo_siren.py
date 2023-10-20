@@ -86,7 +86,7 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
     ImageHandler().write(decoded_map, decoded_path, overwrite=True)
 
 
-if __name__ == '__main__':
+def main():
     import argparse
 
     # Input parameters

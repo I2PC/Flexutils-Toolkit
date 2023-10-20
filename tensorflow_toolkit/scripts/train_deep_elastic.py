@@ -90,7 +90,7 @@ def train(space, output, splitTrain, n_clusters, init_power, end_power, vae_sigm
     np.savetxt(output, encoded_space)
 
 
-if __name__ == '__main__':
+def main():
     import argparse
 
     # Input parameters

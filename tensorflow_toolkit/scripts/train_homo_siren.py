@@ -201,7 +201,7 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
         raise error
 
 
-if __name__ == '__main__':
+def main():
     import argparse
 
     # Input parameters

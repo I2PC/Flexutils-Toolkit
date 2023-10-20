@@ -119,7 +119,7 @@ def predict(md_file, weigths_file, L1, L2, refinePose, architecture, ctfType, pa
     generator.metadata.write(md_file, overwrite=True)
 
 
-if __name__ == '__main__':
+def main():
     import argparse
 
     # Input parameters

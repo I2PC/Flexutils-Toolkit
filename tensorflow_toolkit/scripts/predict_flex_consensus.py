@@ -113,7 +113,7 @@ def predict(outPath, dataPath, weigths_file, latDim):
     np.savetxt(os.path.join(outPath, "error_matched_entropy.txt"), error_matched_entropy)
 
 
-if __name__ == '__main__':
+def main():
     import argparse
 
     # Input parameters

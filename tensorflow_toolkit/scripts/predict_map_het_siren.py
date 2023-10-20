@@ -76,7 +76,7 @@ def predict(weigths_file, het_file, out_path, allCoords=False, filter=False, **k
         ImageHandler().write(decoded_map, decoded_path, overwrite=True)
 
 
-if __name__ == '__main__':
+def main():
     import argparse
 
     # Input parameters

@@ -80,7 +80,7 @@ def predict(weigths_file, nma_file, out_path, sr=1.0, xsize=128):
         ImageHandler().write(volume, decoded_path, overwrite=True)
 
 
-if __name__ == '__main__':
+def main():
     import argparse
 
     # Input parameters

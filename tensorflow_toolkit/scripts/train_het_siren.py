@@ -132,7 +132,7 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
     shutil.rmtree(checkpoint)
 
 
-if __name__ == '__main__':
+def main():
     import argparse
 
     # Input parameters

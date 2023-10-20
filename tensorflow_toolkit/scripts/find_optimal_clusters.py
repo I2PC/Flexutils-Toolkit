@@ -73,7 +73,7 @@ def clusterAnalysis(dataFile, outPath, maxClusters=15, clusterMethod="KMeans"):
     df.to_csv(os.path.join(outPath, "auto_clustering_results.csv"))
 
 
-if __name__ == '__main__':
+def main():
     import argparse
 
     # Input parameters

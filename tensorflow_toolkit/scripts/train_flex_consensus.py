@@ -173,7 +173,7 @@ def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs, lr
     np.save(os.path.join(outPath, "error_interpolators.npy"), error_interpolators)
 
 
-if __name__ == '__main__':
+def main():
     import argparse
 
     # Input parameters
