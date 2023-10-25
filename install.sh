@@ -9,6 +9,11 @@ else
   exit 1
 fi
 
+# Install pynvml package in current env (installation dependency)
+echo "Adding installation dependencies to current env..."
+pip install pynvml packaging
+echo "...Done"
+
 # Run Conda installation
 if python tensorflow_toolkit/build.py ; then
   echo "Environment: flexutils-tensorflow built succesfully"
@@ -20,7 +25,7 @@ else
   exit 1
 fi
 
-# Install flexutils-toolkit in flexutils-tensorlfow env
+# Install flexutils-toolkit in flexutils-tensorflow env
 conda activate flexutils-tensorflow
 pip install -e . -v
 conda deactivate
