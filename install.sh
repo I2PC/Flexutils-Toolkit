@@ -10,6 +10,8 @@ else
 fi
 
 # Install pynvml package in current env (installation dependency)
+conda create -y -n install-temp python=3.9
+conda activate install-temp
 echo "Adding installation dependencies to current env..."
 pip install pynvml packaging
 echo "...Done"
@@ -24,6 +26,10 @@ else
   fi
   exit 1
 fi
+
+# Deactivate and remove temporal installation environment
+conda deactivate
+conda env remove -n install-temp
 
 # Install flexutils-toolkit in flexutils-tensorflow env
 conda activate flexutils-tensorflow
