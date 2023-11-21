@@ -53,7 +53,7 @@ class Installation:
 
         # If at least one GPU is series 3000 and above, change installation requirements
         for gpu_model in gpu_models:
-            if re.findall(r"40[0-9]+", gpu_model) or re.findall(r"30[0-9]+", gpu_model) and \
+            if re.findall(r"40[0-9]+", gpu_model) or re.findall(r"30[0-9]+", gpu_model) or \
                     version.parse("520.56.06") <= version.parse(driver):
                 cuda_version = "11.8"
                 break
