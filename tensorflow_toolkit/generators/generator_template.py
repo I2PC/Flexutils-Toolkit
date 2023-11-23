@@ -36,7 +36,7 @@ import tensorflow as tf
 from tensorflow.keras import backend as K
 import tensorflow_addons as tfa
 
-from tensorflow_toolkit.utils import getXmippOrigin, fft_pad, ifft_pad
+from tensorflow_toolkit.utils import getXmippOrigin, fft_pad, ifft_pad, full_fft_pad, full_ifft_pad
 
 
 class DataGeneratorBase(tf.keras.utils.Sequence):
@@ -64,12 +64,13 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
         if os.path.isfile(volume):
             # Read volume data
             self.readVolumeData(mask, volume, keepMap)
-        elif os.path.isfile(structure):
-            # Read structure data
-            self.readStructureData(structure)
         elif os.path.isfile(mask):
             # Read default volume data
             self.readDefaultVolumeData(mask)
+
+        if os.path.isfile(structure):
+            # Read structure data
+            self.readStructureData(structure)
 
         # Get train dataset
         if splitTrain is not None:
@@ -182,15 +183,16 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
         pdb_info = np.loadtxt(structure)
 
         # Get structure coords
-        self.coords = pdb_info[:, :-1]
+        self.atom_coords = pdb_info[:, :-1]
 
         # Values for every atom
         # self.values = np.ones(self.coords.shape[0])
-        self.values = (pdb_info[:, -1]).reshape(-1)
+        # self.values = (pdb_info[:, -1]).reshape(-1)
 
         # Connectivity
-        # connect_file = str(Path(structure.parent, 'connectivity.txt'))
-        # self.connectivity = np.loadtxt(connect_file).astype(int)
+        connect_file = str(Path(structure.parent, 'connectivity.txt'))
+        if os.path.isfile(connect_file):
+            self.connectivity = np.loadtxt(connect_file).astype(int)
 
         # Flag (reference is structure)
         self.ref_is_struct = True
@@ -298,6 +300,27 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
         # ctf_images = tf.signal.irfft2d(tf.signal.ifftshift(ft_ctf_images))
         ctf_images = ifft_pad(ft_ctf_images, size, size)
         return tf.reshape(ctf_images, [batch_size_scope, self.xsize, self.xsize, 1])
+
+    def resizeImageFourier(self, images, out_size):
+        # Sizes
+        xsize = tf.shape(images)[1]
+        pad_size = self.pad_factor * xsize
+        pad_out_size = self.pad_factor * out_size
+
+        # Fourier transform
+        ft_images = full_fft_pad(images, pad_size, pad_size)
+
+        # Normalization constant
+        norm = tf.cast(pad_out_size, dtype=tf.float32) / tf.cast(pad_size, dtype=tf.float32)
+
+        # Resizing
+        ft_images = tf.image.resize_with_crop_or_pad(ft_images[..., None], pad_out_size, pad_out_size)[..., 0]
+
+        # Inverse transform
+        images = full_ifft_pad(ft_images, out_size, out_size)
+        images *= norm * norm
+
+        return images
 
     def create_circular_mask(self, h, w, center=None, radius_mask=None, smooth_mask=True):
 
@@ -516,5 +539,11 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
             sinusoid_table[padding_idx] = 0.
 
         self.sinusoid_table = sinusoid_table
+
+    def softThresholdImage(self, images):
+        images = (images - tf.cast(images > 1e-6, dtype=tf.float32)
+                  * 1e-6 + tf.cast(images < -1e-6, dtype=tf.float32)
+                  * 1e-6 - tf.cast(images == 1e-6, dtype=tf.float32) * images)
+        return images
 
     # ----- -------- -----#

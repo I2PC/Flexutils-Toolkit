@@ -47,7 +47,7 @@ from tensorflow_toolkit.utils import epochs_from_iterations
 
 def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epochs, cost,
           radius_mask, smooth_mask, refinePose, architecture="convnn", ctfType="apply", pad=2,
-          sr=1.0, applyCTF=1, lr=1e-5, jit_compile=True):
+          sr=1.0, applyCTF=1, lr=1e-5, jit_compile=True, regBond=0.01, regAngle=0.01):
 
     try:
         # Create data generator
@@ -72,7 +72,7 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
         # Train model
         # strategy = tf.distribute.MirroredStrategy()
         # with strategy.scope():
-        autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType)
+        autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, l_bond=regBond, l_angle=regAngle)
 
         optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
 
@@ -151,6 +151,8 @@ def main():
     parser.add_argument('--sr', type=float, required=True)
     parser.add_argument('--apply_ctf', type=int, required=True)
     parser.add_argument('--jit_compile', action='store_true')
+    parser.add_argument('--regBond', type=float, default=0.01)
+    parser.add_argument('--regAngle', type=float, default=0.01)
     parser.add_argument('--gpu', type=str)
 
     args = parser.parse_args()
@@ -176,7 +178,8 @@ def main():
               "cost": args.cost, "radius_mask": args.radius_mask, "smooth_mask": args.smooth_mask,
               "refinePose": args.refine_pose, "architecture": args.architecture,
               "ctfType": args.ctf_type, "pad": args.pad, "sr": args.sr,
-              "applyCTF": args.apply_ctf, "lr": args.lr, "jit_compile": args.jit_compile}
+              "applyCTF": args.apply_ctf, "lr": args.lr, "jit_compile": args.jit_compile,
+              "regBond": args.regBond, "regAngle": args.regAngle}
 
     # Initialize volume slicer
     train(**inputs)

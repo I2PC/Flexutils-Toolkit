@@ -125,20 +125,33 @@ class Decoder(tf.keras.Model):
         delta_shifts = tf.keras.Input(shape=(2,))
 
         # Compute deformation field
-        d_x = layers.Lambda(self.generator.computeDeformationField, trainable=True)(decoder_inputs_x)
-        d_y = layers.Lambda(self.generator.computeDeformationField, trainable=True)(decoder_inputs_y)
-        d_z = layers.Lambda(self.generator.computeDeformationField, trainable=True)(decoder_inputs_z)
-
-        # Average deformation
-        if self.generator.cap_def:
-            avg_d = layers.Lambda(self.generator.averageDeformation)([d_x, d_y, d_z])
-        else:
-            avg_d = layers.Lambda(lambda d_f: 0.0)([[d_x, d_y, d_z]])
+        d_x = layers.Lambda(self.generator.computeDeformationFieldVol, trainable=True)(decoder_inputs_x)
+        d_y = layers.Lambda(self.generator.computeDeformationFieldVol, trainable=True)(decoder_inputs_y)
+        d_z = layers.Lambda(self.generator.computeDeformationFieldVol, trainable=True)(decoder_inputs_z)
 
         # Apply deformation field
-        c_x = layers.Lambda(lambda inp: self.generator.applyDeformationField(inp, 0), trainable=True)(d_x)
-        c_y = layers.Lambda(lambda inp: self.generator.applyDeformationField(inp, 1), trainable=True)(d_y)
-        c_z = layers.Lambda(lambda inp: self.generator.applyDeformationField(inp, 2), trainable=True)(d_z)
+        c_x = layers.Lambda(lambda inp: self.generator.applyDeformationFieldVol(inp, 0), trainable=True)(d_x)
+        c_y = layers.Lambda(lambda inp: self.generator.applyDeformationFieldVol(inp, 1), trainable=True)(d_y)
+        c_z = layers.Lambda(lambda inp: self.generator.applyDeformationFieldVol(inp, 2), trainable=True)(d_z)
+
+        # Bond and angle
+        if self.generator.ref_is_struct:
+            # Compute atoms deformation field
+            da_x = layers.Lambda(self.generator.computeDeformationFieldAtoms, trainable=True)(decoder_inputs_x)
+            da_y = layers.Lambda(self.generator.computeDeformationFieldAtoms, trainable=True)(decoder_inputs_y)
+            da_z = layers.Lambda(self.generator.computeDeformationFieldAtoms, trainable=True)(decoder_inputs_z)
+
+            # Apply deformation field
+            a_x = layers.Lambda(lambda inp: self.generator.applyDeformationFieldAtoms(inp, 0), trainable=True)(da_x)
+            a_y = layers.Lambda(lambda inp: self.generator.applyDeformationFieldAtoms(inp, 1), trainable=True)(da_y)
+            a_z = layers.Lambda(lambda inp: self.generator.applyDeformationFieldAtoms(inp, 2), trainable=True)(da_z)
+
+            bondk = layers.Lambda(lambda inp: self.generator.calcBond(inp), trainable=True)([a_x, a_y, a_z])
+            anglek = layers.Lambda(lambda inp: self.generator.calcAngle(inp), trainable=True)([a_x, a_y, a_z])
+        else:
+            bondk = layers.Lambda(lambda d_f: 0.0)([[c_x, c_y, c_z]])
+            anglek = layers.Lambda(lambda d_f: 0.0)([[c_x, c_y, c_z]])
+
 
         # Apply alignment
         c_r_x = layers.Lambda(lambda inp: self.generator.applyAlignmentDeltaEuler(inp, 0), trainable=True) \
@@ -168,7 +181,7 @@ class Decoder(tf.keras.Model):
                 decoded = layers.Lambda(self.generator.ctfFilterImage)(decoded)
 
         self.decoder = tf.keras.Model([decoder_inputs_x, decoder_inputs_y, decoder_inputs_z,
-                                       delta_euler, delta_shifts], [decoded, avg_d], name="decoder")
+                                       delta_euler, delta_shifts], [decoded, bondk, anglek], name="decoder")
 
     def call(self, x):
         decoded = self.decoder(x)
@@ -177,28 +190,30 @@ class Decoder(tf.keras.Model):
 
 
 class AutoEncoder(tf.keras.Model):
-    def __init__(self, generator, architecture="convnn", CTF="apply", mode=None, **kwargs):
+    def __init__(self, generator, architecture="convnn", CTF="apply", mode=None, l_bond=0.01, l_angle=0.01, **kwargs):
         super(AutoEncoder, self).__init__(**kwargs)
         self.generator = generator
         self.CTF = CTF
         self.refPose = 1.0 if generator.refinePose else 0.0
         self.mode = generator.mode if mode is None else mode
+        self.l_bond = l_bond
+        self.l_angle = l_angle
         self.encoder = Encoder(generator.zernike_size.shape[0], generator.xsize,
                                generator.refinePose, architecture=architecture,
                                mode=self.mode)
         self.decoder = Decoder(generator.zernike_size.shape[0], generator, CTF=CTF)
         self.total_loss_tracker = tf.keras.metrics.Mean(name="total_loss")
-        self.test_loss_tracker = tf.keras.metrics.Mean(name="test_loss")
         self.img_loss_tracker = tf.keras.metrics.Mean(name="img_loss")
-        self.avg_d_loss_tracker = tf.keras.metrics.Mean(name="avg_d_loss")
+        self.bond_loss_tracker = tf.keras.metrics.Mean(name="bond_loss")
+        self.angle_loss_tracker = tf.keras.metrics.Mean(name="angle_loss")
 
     @property
     def metrics(self):
         return [
             self.total_loss_tracker,
-            self.avg_d_loss_tracker,
             self.img_loss_tracker,
-            self.test_loss_tracker
+            self.bond_loss_tracker,
+            self.angle_loss_tracker
         ]
 
     def train_step(self, data):
@@ -263,27 +278,27 @@ class AutoEncoder(tf.keras.Model):
             encoded[2] = encoded[2] + self.decoder.generator.z_z_batch
             encoded[3] *= self.refPose
             encoded[4] *= self.refPose
-            decoded, avg_d = self.decoder(encoded)
+            decoded, bondk, anglek = self.decoder(encoded)
 
-            # ori_images = self.decoder.generator.applyFourierMask(data[0])
-            # decoded = self.decoder.generator.applyFourierMask(decoded)
-
-            # cap_def_loss = self.decoder.generator.capDeformation(d_x, d_y, d_z)
             img_loss = self.decoder.generator.cost_function(images, decoded)
 
-            total_loss = img_loss + 0.005 * avg_d
-            # 0.01 * self.decoder.generator.averageDeformation()  # Extra loss term to compensate large deformations
-            # self.decoder.generator.centerMassShift()  # Extra loss term to center strucuture
+            # Bond and angle losses
+            bond_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.decoder.generator.bond0, bondk)))
+            angle_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.decoder.generator.angle0, anglek)))
+
+            total_loss = img_loss + self.l_bond * bond_loss + self.l_angle * angle_loss
 
         grads = tape.gradient(total_loss, self.trainable_weights)
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
         self.total_loss_tracker.update_state(total_loss)
         self.img_loss_tracker.update_state(img_loss)
-        self.avg_d_loss_tracker.update_state(avg_d)
+        self.angle_loss_tracker.update_state(angle_loss)
+        self.bond_loss_tracker.update_state(bond_loss)
         return {
             "loss": self.total_loss_tracker.result(),
             "img_loss": self.img_loss_tracker.result(),
-            "avg_d_loss": self.avg_d_loss_tracker.result()
+            "bond": self.bond_loss_tracker.result(),
+            "angle": self.angle_loss_tracker.result(),
         }
 
     def test_step(self, data):
@@ -352,19 +367,25 @@ class AutoEncoder(tf.keras.Model):
         encoded[2] = encoded[2] + self.decoder.generator.z_z_batch
         encoded[3] *= self.refPose
         encoded[4] *= self.refPose
-        decoded, avg_d = self.decoder(encoded)
+        decoded, bondk, anglek = self.decoder(encoded)
 
         img_loss = self.decoder.generator.cost_function(images, decoded)
 
-        total_loss = img_loss + 0.005 * avg_d
+        # Bond and angle losses
+        bond_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.decoder.generator.bond0, bondk)))
+        angle_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.decoder.generator.angle0, anglek)))
+
+        total_loss = img_loss + self.l_bond * bond_loss + self.l_angle * angle_loss
 
         self.total_loss_tracker.update_state(total_loss)
         self.img_loss_tracker.update_state(img_loss)
-        self.avg_d_loss_tracker.update_state(avg_d)
+        self.angle_loss_tracker.update_state(angle_loss)
+        self.bond_loss_tracker.update_state(bond_loss)
         return {
             "loss": self.total_loss_tracker.result(),
             "img_loss": self.img_loss_tracker.result(),
-            "avg_d_loss": self.avg_d_loss_tracker.result()
+            "bond": self.bond_loss_tracker.result(),
+            "angle": self.angle_loss_tracker.result(),
         }
 
     def predict_step(self, data):
