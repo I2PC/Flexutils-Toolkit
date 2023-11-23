@@ -240,9 +240,13 @@ class Generator(DataGeneratorBase):
         p2 = tf.gather(coords, self.connectivity[:, 2], axis=1)
         b0 = p0 - p1
         b1 = p2 - p1
+        b0 = b0 / tf.sqrt(tf.reduce_sum(b0 ** 2.0, axis=2, keepdims=True))
+        b1 = b1 / tf.reduce_sum(b1 ** 2.0, axis=2, keepdims=True)
         ang = tf.reduce_sum(b0 * b1, axis=2)
         n0 = tf.linalg.norm(b0, axis=2) * tf.linalg.norm(b1, axis=2)
         ang = tf.math.divide_no_nan(ang, n0)
+        epsilon = 1.0 - 1e-6
+        ang = tf.minimum(tf.maximum(ang, -epsilon), epsilon)
         # ang = np.min(np.max(ang, axis=1), axis=0)
         ang = tf.acos(ang)
         ang *= 180 / np.pi
