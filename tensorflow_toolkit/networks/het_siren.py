@@ -30,9 +30,73 @@ from tensorflow.keras import layers, models, Input, Model
 
 import numpy as np
 from scipy.ndimage import gaussian_filter
+from scipy import signal
 
 from tensorflow_toolkit.utils import computeCTF
 from tensorflow_toolkit.layers.siren import SIRENFirstLayerInitializer, SIRENInitializer, MetaDenseWrapper
+
+
+##### Extra functions for HetSIREN network #####
+def richardsonLucyDeconvolver(volume, iter=5):
+    original_volume = volume.copy()
+    volume = tf.constant(volume, dtype=tf.float32)
+    original_volume = tf.constant(original_volume, dtype=tf.float32)
+
+    std = np.pi * np.sqrt(volume.shape[1])
+    gauss_1d = signal.windows.gaussian(volume.shape[1], std)
+    kernel = np.einsum('i,j,k->ijk', gauss_1d, gauss_1d, gauss_1d)
+
+    def applyKernelFourier(x):
+        x = tf.cast(x, dtype=tf.complex64)
+        ft_x = tf.signal.fftshift(tf.signal.fft3d(x))
+        ft_x_real = tf.math.real(ft_x) * kernel
+        ft_x_imag = tf.math.imag(ft_x) * kernel
+        ft_x = tf.complex(ft_x_real, ft_x_imag)
+        return tf.math.real(tf.signal.ifft3d(tf.signal.fftshift(ft_x)))
+
+    for _ in range(iter):
+        # Deconvolve image (update)
+        conv_1 = applyKernelFourier(volume)
+        conv_1_2 = conv_1 * conv_1
+        epsilon = 0.1 * np.mean(conv_1_2[:])
+        update = original_volume * conv_1 / (conv_1_2 + epsilon)
+        update = applyKernelFourier(update)
+        volume = volume * update
+
+        volume = volume.numpy()
+        thr = 1e-6
+        volume = volume - (volume > thr) * thr + (volume < -thr) * thr - (volume == thr) * volume
+        volume = tf.constant(volume, dtype=tf.float32)
+
+    return volume.numpy()
+
+def filterVol(volume):
+    size = volume.shape[1]
+    volume = tf.constant(volume, dtype=tf.float32)
+
+    b_spline_1d = np.asarray([0.0, 0.5, 1.0, 0.5, 0.0])
+
+    pad_before = (size - len(b_spline_1d)) // 2
+    pad_after = size - pad_before - len(b_spline_1d)
+
+    kernel = np.einsum('i,j,k->ijk', b_spline_1d, b_spline_1d, b_spline_1d)
+    kernel = np.pad(kernel, (pad_before, pad_after), 'constant', constant_values=(0.0,))
+    kernel = tf.constant(kernel, dtype=tf.complex64)
+    ft_kernel = tf.abs(tf.signal.fftshift(tf.signal.fft3d(kernel)))
+
+    def applyKernelFourier(x):
+        x = tf.cast(x, dtype=tf.complex64)
+        ft_x = tf.signal.fftshift(tf.signal.fft3d(x))
+        ft_x_real = tf.math.real(ft_x) * ft_kernel
+        ft_x_imag = tf.math.imag(ft_x) * ft_kernel
+        ft_x = tf.complex(ft_x_real, ft_x_imag)
+        return tf.math.real(tf.signal.ifft3d(tf.signal.fftshift(ft_x)))
+
+    volume = applyKernelFourier(volume).numpy()
+    thr = 1e-6
+    volume = volume - (volume > thr) * thr + (volume < -thr) * thr - (volume == thr) * volume
+
+    return volume
 
 
 class Encoder(Model):
@@ -151,6 +215,9 @@ class Decoder(Model):
         # Gaussian filter image
         decoded_het = layers.Lambda(self.generator.gaussianFilterImage)(decoded_het)
 
+        # Soft threshold image
+        decoded_het = layers.Lambda(self.generator.softThresholdImage)(decoded_het)
+
         if self.CTF == "apply":
             # CTF filter image
             decoded_het = layers.Lambda(self.generator.ctfFilterImage)(decoded_het)
@@ -164,16 +231,19 @@ class Decoder(Model):
         values = self.generator.values[None, :] + self.decode_het(x_het)
 
         # Coords indices
-        coords = self.generator.scale_factor * self.generator.coords + self.generator.xmipp_origin
-        o_x, o_y, o_z = coords[:, 0].astype(int), coords[:, 1].astype(int), coords[:, 2].astype(int)
+        o_z, o_y, o_x = (self.generator.indices[:, 0].astype(int), self.generator.indices[:, 1].astype(int),
+                         self.generator.indices[:, 2].astype(int))
 
         # Get numpy volumes
         values = values.numpy()
         volume_grids = np.zeros((batch_size, self.generator.xsize, self.generator.xsize, self.generator.xsize))
         for idx in range(batch_size):
             volume_grids[idx, o_z, o_y, o_x] = values[idx]
+            volume_grids[idx] = volume_grids[idx] * (volume_grids[idx] >= 0.0)
             if filter:
                 volume_grids[idx] = gaussian_filter(volume_grids[idx], sigma=1)
+                volume_grids[idx] = filterVol(volume_grids[idx])
+                volume_grids[idx] = richardsonLucyDeconvolver(volume_grids[idx])
 
         return volume_grids.astype(np.float32)
 
@@ -184,16 +254,18 @@ class Decoder(Model):
 
 class AutoEncoder(Model):
     def __init__(self, generator, het_dim=10, architecture="convnn", CTF="wiener", refPose=True,
-                 l1_lambda=0.5, mode=None, **kwargs):
+                 l1_lambda=0.5, mode=None, train_size=None, **kwargs):
         super(AutoEncoder, self).__init__(**kwargs)
         self.CTF = CTF if generator.applyCTF == 1 else None
         self.mode = generator.mode if mode is None else mode
-        self.encoder = Encoder(het_dim, generator.xsize, architecture=architecture,
+        self.xsize = generator.metadata.getMetaDataImage(0).shape[1] if generator.metadata.binaries else generator.xsize
+        self.encoder = Encoder(het_dim, self.xsize, architecture=architecture,
                                refPose=refPose, mode=self.mode)
         self.decoder = Decoder(het_dim, generator, CTF=CTF)
         self.refPose = 1.0 if refPose else 0.0
         self.l1_lambda = l1_lambda
         self.het_dim = het_dim
+        self.train_size = train_size if train_size is not None else self.xsize
         self.total_loss_tracker = tf.keras.metrics.Mean(name="total_loss")
         self.test_loss_tracker = tf.keras.metrics.Mean(name="test_loss")
         self.loss_het_tracker = tf.keras.metrics.Mean(name="rec_het")
@@ -260,18 +332,47 @@ class AutoEncoder(Model):
             l1_loss_het = tf.reduce_mean(tf.reduce_sum(tf.abs(delta_het), axis=1))
             l1_loss_het = self.l1_lambda * l1_loss_het / self.decoder.generator.total_voxels
 
-            loss_het = self.decoder.generator.cost_function(images, decoded_het)
+            # Negative loss
+            mask = tf.less(delta_het, 0.0)
+            delta_neg = tf.boolean_mask(delta_het, mask)
+            delta_neg_size = tf.cast(tf.shape(delta_neg)[-1], dtype=tf.float32)
+            delta_neg = tf.reduce_mean(tf.abs(delta_neg))
+            neg_loss_het = self.l1_lambda * delta_neg / delta_neg_size
 
-            total_loss = 0.5 * loss_het + 0.5 * l1_loss_het
+            # Reconstruction mask for projections (Decoder size)
+            mask_imgs = self.decoder.generator.resizeImageFourier(self.decoder.generator.mask_imgs,
+                                                                  self.decoder.generator.xsize)
+            mask_imgs = tf.abs(mask_imgs)
+            mask_imgs = tf.math.divide_no_nan(mask_imgs, mask_imgs)
+
+            # Reconstruction loss for original size images
+            images_masked = mask_imgs * self.decoder.generator.resizeImageFourier(images, self.decoder.generator.xsize)
+            loss_het_ori = self.decoder.generator.cost_function(images_masked, decoded_het)
+
+            # Reconstruction mask for projections (Train size)
+            mask_imgs = self.decoder.generator.resizeImageFourier(self.decoder.generator.mask_imgs, self.train_size)
+            mask_imgs = tf.abs(mask_imgs)
+            mask_imgs = tf.math.divide_no_nan(mask_imgs, mask_imgs)
+
+            # Reconstruction loss for downscaled images
+            images_masked = mask_imgs * self.decoder.generator.resizeImageFourier(images, self.train_size)
+            decoded_het_scl = self.decoder.generator.resizeImageFourier(decoded_het, self.train_size)
+            loss_het_scl = self.decoder.generator.cost_function(images_masked, decoded_het_scl)
+
+            # Final losses
+            rec_loss = loss_het_ori + loss_het_scl
+            reg_loss = l1_loss_het + neg_loss_het
+
+            total_loss = 0.5 * rec_loss + 0.5 * reg_loss
 
         grads = tape.gradient(total_loss, self.trainable_weights)
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
 
         self.total_loss_tracker.update_state(total_loss)
-        self.loss_het_tracker.update_state(loss_het)
+        self.loss_het_tracker.update_state(rec_loss)
         return {
             "loss": self.total_loss_tracker.result(),
-            "rec_het": self.loss_het_tracker.result(),
+            "rec_loss": self.loss_het_tracker.result(),
         }
 
     def test_step(self, data):
@@ -327,15 +428,44 @@ class AutoEncoder(Model):
         l1_loss_het = tf.reduce_mean(tf.reduce_sum(tf.abs(delta_het), axis=1))
         l1_loss_het = self.l1_lambda * l1_loss_het / self.decoder.generator.total_voxels
 
-        loss_het = self.decoder.generator.cost_function(images, decoded_het)
+        # Negative loss
+        mask = tf.less(delta_het, 0.0)
+        delta_neg = tf.boolean_mask(delta_het, mask)
+        delta_neg_size = tf.cast(tf.shape(delta_neg)[-1], dtype=tf.float32)
+        delta_neg = tf.reduce_mean(tf.abs(delta_neg))
+        neg_loss_het = self.l1_lambda * delta_neg / delta_neg_size
 
-        total_loss = 0.5 * loss_het + 0.5 * l1_loss_het
+        # Reconstruction mask for projections (Decoder size)
+        mask_imgs = self.decoder.generator.resizeImageFourier(self.decoder.generator.mask_imgs,
+                                                              self.decoder.generator.xsize)
+        mask_imgs = tf.abs(mask_imgs)
+        mask_imgs = tf.math.divide_no_nan(mask_imgs, mask_imgs)
+
+        # Reconstruction loss for original size images
+        images_masked = mask_imgs * self.decoder.generator.resizeImageFourier(images, self.decoder.generator.xsize)
+        loss_het_ori = self.decoder.generator.cost_function(images_masked, decoded_het)
+
+        # Reconstruction mask for projections (Train size)
+        mask_imgs = self.decoder.generator.resizeImageFourier(self.decoder.generator.mask_imgs, self.train_size)
+        mask_imgs = tf.abs(mask_imgs)
+        mask_imgs = tf.math.divide_no_nan(mask_imgs, mask_imgs)
+
+        # Reconstruction loss for downscaled images
+        images_masked = mask_imgs * self.decoder.generator.resizeImageFourier(images, self.train_size)
+        decoded_het_scl = self.decoder.generator.resizeImageFourier(decoded_het, self.train_size)
+        loss_het_scl = self.decoder.generator.cost_function(images_masked, decoded_het_scl)
+
+        # Final losses
+        rec_loss = loss_het_ori + loss_het_scl
+        reg_loss = l1_loss_het + neg_loss_het
+
+        total_loss = 0.5 * rec_loss + 0.5 * reg_loss
 
         self.total_loss_tracker.update_state(total_loss)
-        self.loss_het_tracker.update_state(loss_het)
+        self.loss_het_tracker.update_state(rec_loss)
         return {
             "loss": self.total_loss_tracker.result(),
-            "rec_het": self.loss_het_tracker.result(),
+            "rec_loss": self.loss_het_tracker.result(),
         }
 
     def eval_encoder(self, x):

@@ -52,7 +52,7 @@ class Generator(DataGeneratorBase):
 
         # Coords preprocessing
         self.group_coords = self.getCoordsGroups()
-        self.indices = tf.constant(self.indices[::self.step], dtype=tf.int32)
+        self.indices = self.indices[::self.step].astype(int)
         if self.step > 1:
             self.all_coords = self.coords / self.scale_factor
         self.coords = self.coords[::self.step] / self.scale_factor
@@ -63,6 +63,12 @@ class Generator(DataGeneratorBase):
         self.tilt_batch = np.zeros(self.batch_size)
         self.psi_batch = np.zeros(self.batch_size)
         self.shifts_batch = [np.zeros(self.batch_size), np.zeros(self.batch_size)]
+
+        # B-Spline kernel (order 1)
+        # b_spline_1d = np.asarray([0.0, 0.5, 1.0, 0.5, 1.0])
+        b_spline_1d = np.asarray([0.0, 0.25, 0.5, 1.0, 0.5, 0.25, 1.0])
+        b_spline_kernel = np.einsum('i,j->ij', b_spline_1d, b_spline_1d)
+        self.b_spline_kernel = tf.constant(b_spline_kernel, dtype=tf.float32)[..., None, None]
 
 
     # ----- Utils -----#
@@ -145,12 +151,35 @@ class Generator(DataGeneratorBase):
 
         imgs = tf.reshape(imgs, [-1, self.xsize, self.xsize, 1])
 
+        # Create projection mask (to improve cost accuracy)
+        self.mask_imgs = tf.zeros((batch_size_scope, self.xsize, self.xsize), dtype=tf.float32)
+        mask_values = tf.ones([batch_size_scope, self.coords.shape[0]], dtype=tf.float32)
+        self.mask_imgs = tf.map_fn(fn, [self.mask_imgs, bposi, mask_values], fn_output_signature=tf.float32)
+        self.mask_imgs = tf.reshape(self.mask_imgs, [-1, self.xsize, self.xsize, 1])
+        self.mask_imgs = tfa.image.gaussian_filter2d(self.mask_imgs, 3, 1)
+        self.mask_imgs = tf.math.divide_no_nan(self.mask_imgs, self.mask_imgs)
+
+        # TODO: Do we need to comply with line integral?
+        # self.mask_imgs = tf.zeros((batch_size_scope, self.xsize, self.xsize), dtype=tf.float32)
+        # mask_values = tf.exp(-num / (sigma ** 2.))
+        # # mask_values = tf.ones([batch_size_scope, self.coords.shape[0]], dtype=tf.float32)
+        # self.mask_imgs = tf.map_fn(fn, [self.mask_imgs, bposi, mask_values], fn_output_signature=tf.float32)
+        # self.mask_imgs = tf.reshape(self.mask_imgs, [-1, self.xsize, self.xsize, 1])
+        # self.mask_imgs = tfa.image.gaussian_filter2d(self.mask_imgs, 3, 1)
+        # # self.mask_imgs = self.mask_imgs ** 2.0
+        # # self.mask_imgs = tf.math.divide_no_nan(self.mask_imgs, self.mask_imgs)
+        # imgs = tf.math.divide_no_nan(imgs, self.mask_imgs)
+
         return imgs
 
     def gaussianFilterImage(self, images):
         # This method is redifined as we will fix the step values to 1 or 2 (experimental)
         # For this values, sigma=1 works better
         images = tfa.image.gaussian_filter2d(images, 3, 1)
+        return images
+
+    def bSplineFilterImage(self, images):
+        images = tf.nn.conv2d(images, self.b_spline_kernel, 1, "SAME")
         return images
 
     # ----- -------- -----#

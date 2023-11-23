@@ -49,14 +49,14 @@ from tensorflow_toolkit.utils import epochs_from_iterations
 def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
           radius_mask, smooth_mask, refinePose, architecture="convnn", weigths_file=None,
           ctfType="apply", pad=2, sr=1.0, applyCTF=1, hetDim=10, l1Reg=0.5, lr=1e-5,
-          jit_compile=True):
+          jit_compile=True, trainSize=None, outSize=None,):
 
     try:
         # Create data generator
         generator = Generator(md_file=md_file, shuffle=shuffle, batch_size=batch_size,
                               step=step, splitTrain=splitTrain, cost=cost, radius_mask=radius_mask,
                               smooth_mask=smooth_mask, pad_factor=pad, sr=sr,
-                              applyCTF=applyCTF)
+                              applyCTF=applyCTF, xsize=outSize)
 
 
         # Create validation generator
@@ -64,7 +64,7 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
             generator_val = Generator(md_file=md_file, shuffle=shuffle, batch_size=batch_size,
                                       step=step, splitTrain=(splitTrain - 1.0), cost=cost, radius_mask=radius_mask,
                                       smooth_mask=smooth_mask, pad_factor=pad, sr=sr,
-                                      applyCTF=applyCTF)
+                                      applyCTF=applyCTF, xsize=outSize)
         else:
             generator_val = None
 
@@ -74,11 +74,15 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
 
         # Train model
         autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
-                                  het_dim=hetDim, l1_lambda=l1Reg)
+                                  het_dim=hetDim, l1_lambda=l1Reg, train_size=trainSize)
 
         # Fine tune a previous model
         if weigths_file:
-            autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
+            if generator.mode == "spa":
+                autoencoder.build(input_shape=(None, autoencoder.xsize, autoencoder.xsize, 1))
+            elif generator.mode == "tomo":
+                autoencoder.build(input_shape=[(None, autoencoder.xsize, autoencoder.xsize, 1),
+                                               [None, generator.sinusoid_table.shape[1]]])
             autoencoder.load_weights(weigths_file)
 
         optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
@@ -157,6 +161,8 @@ def main():
     parser.add_argument('--refine_pose', action='store_true')
     parser.add_argument('--weigths_file', type=str, required=False, default=None)
     parser.add_argument('--sr', type=float, required=True)
+    parser.add_argument('--trainSize', type=int, required=True)
+    parser.add_argument('--outSize', type=int, required=True)
     parser.add_argument('--apply_ctf', type=int, required=True)
     parser.add_argument('--jit_compile', action='store_true')
     parser.add_argument('--gpu', type=str)
@@ -185,7 +191,8 @@ def main():
               "refinePose": args.refine_pose, "architecture": args.architecture,
               "weigths_file": args.weigths_file, "ctfType": args.ctf_type, "pad": args.pad,
               "sr": args.sr, "applyCTF": args.apply_ctf, "hetDim": args.het_dim,
-              "l1Reg": args.l1_reg, "lr": args.lr, "jit_compile": args.jit_compile}
+              "l1Reg": args.l1_reg, "lr": args.lr, "jit_compile": args.jit_compile,
+              "trainSize": args.trainSize, "outSize": args.outSize}
 
     # Initialize volume slicer
     train(**inputs)

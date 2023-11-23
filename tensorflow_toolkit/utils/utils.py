@@ -253,6 +253,18 @@ def ifft_pad(ft_imgs, size_x, size_y):
     imgs = tf.image.resize_with_crop_or_pad(padded_imgs, size_x, size_y)
     return imgs
 
+def full_fft_pad(imgs, size_x, size_y):
+    padded_imgs = tf.image.resize_with_crop_or_pad(imgs, size_x, size_y)
+    padded_imgs = tf.cast(padded_imgs, dtype=tf.complex64)
+    ft_images = tf.signal.fftshift(tf.signal.fft2d(padded_imgs[:, :, :, 0]))
+    return ft_images
+
+def full_ifft_pad(ft_imgs, size_x, size_y):
+    padded_imgs = tf.signal.ifft2d(tf.signal.ifftshift(ft_imgs))[..., None]
+    padded_imgs = tf.math.real(padded_imgs)
+    imgs = tf.image.resize_with_crop_or_pad(padded_imgs, size_x, size_y)
+    return imgs
+
 def gramSchmidt(r):
     c1 = tf.nn.l2_normalize(r[:, :3], axis=-1)
     c2 = tf.nn.l2_normalize(r[:, 3:] - dot(c1, r[:, 3:]) * c1, axis=-1)

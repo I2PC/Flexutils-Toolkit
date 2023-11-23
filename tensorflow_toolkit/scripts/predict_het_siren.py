@@ -48,11 +48,11 @@ from tensorflow_toolkit.networks.het_siren import AutoEncoder
 
 
 def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=1.0,
-            applyCTF=1, filter=False, hetDim=10, numVol=20):
+            applyCTF=1, filter=False, hetDim=10, numVol=20, trainSize=None, outSize=None):
     # Create data generator
     generator = Generator(md_file=md_file, shuffle=False, batch_size=16,
                           step=1, splitTrain=1.0, pad_factor=pad, sr=sr,
-                          applyCTF=applyCTF)
+                          applyCTF=applyCTF, xsize=outSize)
 
     # Tensorflow data pipeline
     # generator_dataset, generator = sequence_to_data_pipeline(generator)
@@ -60,11 +60,11 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
 
     # Load model
     autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
-                              het_dim=hetDim)
+                              het_dim=hetDim, train_size=trainSize)
     if generator.mode == "spa":
-        autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
+        autoencoder.build(input_shape=(None, autoencoder.xsize, autoencoder.xsize, 1))
     elif generator.mode == "tomo":
-        autoencoder.build(input_shape=[(None, generator.xsize, generator.xsize, 1),
+        autoencoder.build(input_shape=[(None, autoencoder.xsize, autoencoder.xsize, 1),
                                        [None, generator.sinusoid_table.shape[1]]])
     autoencoder.load_weights(weigths_file)
 
@@ -128,6 +128,8 @@ def main():
     parser.add_argument('--apply_ctf', type=int, required=True)
     parser.add_argument('--apply_filter', action='store_true')
     parser.add_argument('--num_vol', type=int, required=True)
+    parser.add_argument('--trainSize', type=int, required=True)
+    parser.add_argument('--outSize', type=int, required=True)
     parser.add_argument('--gpu', type=str)
 
     args = parser.parse_args()
@@ -142,7 +144,8 @@ def main():
               "refinePose": args.refine_pose, "architecture": args.architecture,
               "ctfType": args.ctf_type, "pad": args.pad, "sr": args.sr,
               "applyCTF": args.apply_ctf, "filter": args.apply_filter,
-              "hetDim": args.het_dim, "numVol": args.num_vol}
+              "hetDim": args.het_dim, "numVol": args.num_vol,
+              "trainSize": args.trainSize, "outSize": args.outSize}
 
     # Initialize volume slicer
     predict(**inputs)
