@@ -47,7 +47,8 @@ from tensorflow_toolkit.utils import epochs_from_iterations
 
 def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epochs, cost,
           radius_mask, smooth_mask, refinePose, architecture="convnn", ctfType="apply", pad=2,
-          sr=1.0, applyCTF=1, lr=1e-5, jit_compile=True, regBond=0.01, regAngle=0.01):
+          sr=1.0, applyCTF=1, lr=1e-5, jit_compile=True, regBond=0.01, regAngle=0.01,
+          tensorboard=True, weigths_file=None):
 
     try:
         # Create data generator
@@ -73,6 +74,15 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
         # strategy = tf.distribute.MirroredStrategy()
         # with strategy.scope():
         autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, l_bond=regBond, l_angle=regAngle)
+
+        # Fine tune a previous model
+        if weigths_file:
+            if generator.mode == "spa":
+                autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
+            elif generator.mode == "tomo":
+                autoencoder.build(input_shape=[(None, generator.xsize, generator.xsize, 1),
+                                               [None, generator.sinusoid_table.shape[1]]])
+            autoencoder.load_weights(weigths_file)
 
         optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
 
@@ -103,14 +113,19 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1,
                                                               write_graph=True, write_steps_per_second=True)
 
+        # Callbacks list
+        callbacks = [cp_callback]
+        if tensorboard:
+            callbacks.append(tensorboard_callback)
+
         autoencoder.compile(optimizer=optimizer, jit_compile=jit_compile)
 
         if generator_val is not None:
             autoencoder.fit(generator, validation_data=generator_val, epochs=epochs, validation_freq=2,
-                            callbacks=[cp_callback, tensorboard_callback], initial_epoch=initial_epoch)
+                            callbacks=callbacks, initial_epoch=initial_epoch)
         else:
             autoencoder.fit(generator, epochs=epochs,
-                            callbacks=[cp_callback, tensorboard_callback], initial_epoch=initial_epoch)
+                            callbacks=callbacks, initial_epoch=initial_epoch)
     except tf.errors.ResourceExhaustedError as error:
         msg = "GPU memory has been exhausted. Usually this can be solved by " \
               "downsampling further your particles or by decreasing the batch size. " \
@@ -148,11 +163,13 @@ def main():
     parser.add_argument('--radius_mask', type=float, required=False, default=2)
     parser.add_argument('--smooth_mask', action='store_true')
     parser.add_argument('--refine_pose', action='store_true')
+    parser.add_argument('--weigths_file', type=str, required=False, default=None)
     parser.add_argument('--sr', type=float, required=True)
     parser.add_argument('--apply_ctf', type=int, required=True)
     parser.add_argument('--jit_compile', action='store_true')
     parser.add_argument('--regBond', type=float, default=0.01)
     parser.add_argument('--regAngle', type=float, default=0.01)
+    parser.add_argument('--tensorboard', action='store_true')
     parser.add_argument('--gpu', type=str)
 
     args = parser.parse_args()
@@ -179,7 +196,8 @@ def main():
               "refinePose": args.refine_pose, "architecture": args.architecture,
               "ctfType": args.ctf_type, "pad": args.pad, "sr": args.sr,
               "applyCTF": args.apply_ctf, "lr": args.lr, "jit_compile": args.jit_compile,
-              "regBond": args.regBond, "regAngle": args.regAngle}
+              "regBond": args.regBond, "regAngle": args.regAngle,
+              "tensorboard": args.tensorboard, "weigths_file": args.weigths_file}
 
     # Initialize volume slicer
     train(**inputs)

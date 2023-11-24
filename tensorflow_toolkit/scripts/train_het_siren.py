@@ -49,7 +49,7 @@ from tensorflow_toolkit.utils import epochs_from_iterations
 def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
           radius_mask, smooth_mask, refinePose, architecture="convnn", weigths_file=None,
           ctfType="apply", pad=2, sr=1.0, applyCTF=1, hetDim=10, l1Reg=0.5, lr=1e-5,
-          jit_compile=True, trainSize=None, outSize=None,):
+          jit_compile=True, trainSize=None, outSize=None, tensorboard=True):
 
     try:
         # Create data generator
@@ -114,14 +114,19 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
                 latest = os.path.basename(latest)
                 initial_epoch = int(re.findall(r'\d+', latest)[0]) - 1
 
+        # Callbacks list
+        callbacks = [cp_callback]
+        if tensorboard:
+            callbacks.append(tensorboard_callback)
+
         autoencoder.compile(optimizer=optimizer, jit_compile=jit_compile)
 
         if generator_val is not None:
             autoencoder.fit(generator, validation_data=generator_val, epochs=epochs, validation_freq=2,
-                            callbacks=[cp_callback, tensorboard_callback], initial_epoch=initial_epoch)
+                            callbacks=callbacks, initial_epoch=initial_epoch)
         else:
             autoencoder.fit(generator, epochs=epochs,
-                            callbacks=[cp_callback, tensorboard_callback], initial_epoch=initial_epoch)
+                            callbacks=callbacks, initial_epoch=initial_epoch)
     except tf.errors.ResourceExhaustedError as error:
         msg = "GPU memory has been exhausted. Usually this can be solved by " \
               "downsampling further your particles or by decreasing the batch size. " \
@@ -165,6 +170,7 @@ def main():
     parser.add_argument('--outSize', type=int, required=True)
     parser.add_argument('--apply_ctf', type=int, required=True)
     parser.add_argument('--jit_compile', action='store_true')
+    parser.add_argument('--tensorboard', action='store_true')
     parser.add_argument('--gpu', type=str)
 
     args = parser.parse_args()
@@ -192,7 +198,7 @@ def main():
               "weigths_file": args.weigths_file, "ctfType": args.ctf_type, "pad": args.pad,
               "sr": args.sr, "applyCTF": args.apply_ctf, "hetDim": args.het_dim,
               "l1Reg": args.l1_reg, "lr": args.lr, "jit_compile": args.jit_compile,
-              "trainSize": args.trainSize, "outSize": args.outSize}
+              "trainSize": args.trainSize, "outSize": args.outSize, "tensorboard": args.tensorboard}
 
     # Initialize volume slicer
     train(**inputs)
