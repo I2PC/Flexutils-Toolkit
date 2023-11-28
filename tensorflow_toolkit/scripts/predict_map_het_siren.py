@@ -46,7 +46,7 @@ from tensorflow_toolkit.networks.het_siren import AutoEncoder
 #     tf.config.experimental.set_memory_growth(gpu_instance, True)
 
 
-def predict(weigths_file, het_file, out_path, allCoords=False, filter=False, **kwargs):
+def predict(weigths_file, het_file, out_path, allCoords=False, filter=False, architecture="convnn", **kwargs):
     x_het = np.loadtxt(het_file)
     if len(x_het.shape) == 1:
         x_het = x_het.reshape((1, -1))
@@ -61,7 +61,7 @@ def predict(weigths_file, het_file, out_path, allCoords=False, filter=False, **k
                           xsize=xsize)
 
     # Load model
-    autoencoder = AutoEncoder(generator, het_dim=x_het.shape[1], **kwargs)
+    autoencoder = AutoEncoder(generator, het_dim=x_het.shape[1], architecture=architecture, **kwargs)
     if generator.mode == "spa":
         autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
     elif generator.mode == "tomo":
@@ -85,6 +85,7 @@ def main():
     parser.add_argument('--het_file', type=str, required=True)
     parser.add_argument('--out_path', type=str, required=True)
     parser.add_argument('--step', type=int, required=True)
+    parser.add_argument('--architecture', type=str, required=True)
 
     args = parser.parse_args()
 
@@ -95,7 +96,7 @@ def main():
         tf.config.experimental.set_memory_growth(gpu_instance, True)
 
     inputs = {"weigths_file": args.weigths_file, "het_file": args.het_file,
-              "out_path": args.out_path, "step": args.step}
+              "out_path": args.out_path, "step": args.step, "architecture": args.architecture}
 
     # Initialize volume slicer
     predict(**inputs)
