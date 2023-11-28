@@ -90,6 +90,9 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
         #     optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4)
         optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
 
+        # Callbacks list
+        callbacks = []
+
         # Create a callback that saves the model's weights
         initial_epoch = 0
         checkpoint_path = os.path.join(outPath, "training", "cp-{epoch:04d}.hdf5")
@@ -98,13 +101,18 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
         cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
                                                          save_weights_only=True,
                                                          verbose=1)
+        callbacks.append(cp_callback)
 
-        # Tensorboard callback
-        log_dir = os.path.join(outPath, "logs")
-        if not os.path.isdir(log_dir):
-            os.mkdir(log_dir)
-        tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1,
-                                                              write_graph=True, write_steps_per_second=True)
+        # Callbacks list
+        if tensorboard:
+            # Tensorboard callback
+            log_dir = os.path.join(outPath, "logs")
+            if not os.path.isdir(log_dir):
+                os.mkdir(log_dir)
+            tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1,
+                                                                  write_graph=True, write_steps_per_second=True)
+
+            callbacks.append(tensorboard_callback)
 
         checkpoint = os.path.join(outPath, "training")
         if os.path.isdir(checkpoint):

@@ -86,6 +86,9 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
 
         optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
 
+        # Callbacks list
+        callbacks = []
+
         # Create a callback that saves the model's weights
         initial_epoch = 0
         checkpoint_path = os.path.join(outPath, "training", "cp-{epoch:04d}.hdf5")
@@ -94,6 +97,18 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
         cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
                                                          save_weights_only=True,
                                                          verbose=1)
+        callbacks.append(cp_callback)
+
+        # Callbacks list
+        if tensorboard:
+            # Tensorboard callback
+            log_dir = os.path.join(outPath, "logs")
+            if not os.path.isdir(log_dir):
+                os.mkdir(log_dir)
+            tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1,
+                                                                  write_graph=True, write_steps_per_second=True)
+
+            callbacks.append(tensorboard_callback)
 
         checkpoint = os.path.join(outPath, "training")
         if os.path.isdir(checkpoint):
@@ -101,22 +116,14 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
             if len(files) > 1:
                 files.sort()
                 latest = files[-2]
-                autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
+                if generator.mode == "spa":
+                    autoencoder.build(input_shape=(None, autoencoder.xsize, autoencoder.xsize, 1))
+                elif generator.mode == "tomo":
+                    autoencoder.build(input_shape=[(None, autoencoder.xsize, autoencoder.xsize, 1),
+                                                   [None, generator.sinusoid_table.shape[1]]])
                 autoencoder.load_weights(latest)
                 latest = os.path.basename(latest)
                 initial_epoch = int(re.findall(r'\d+', latest)[0]) - 1
-
-        # Tensorboard callback
-        log_dir = os.path.join(outPath, "logs")
-        if not os.path.isdir(log_dir):
-            os.mkdir(log_dir)
-        tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1,
-                                                              write_graph=True, write_steps_per_second=True)
-
-        # Callbacks list
-        callbacks = [cp_callback]
-        if tensorboard:
-            callbacks.append(tensorboard_callback)
 
         autoencoder.compile(optimizer=optimizer, jit_compile=jit_compile)
 
