@@ -283,8 +283,11 @@ class AutoEncoder(tf.keras.Model):
             img_loss = self.decoder.generator.cost_function(images, decoded)
 
             # Bond and angle losses
-            bond_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.decoder.generator.bond0, bondk)))
-            angle_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.decoder.generator.angle0, anglek)))
+            if self.decoder.generator.ref_is_struct:
+                bond_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.decoder.generator.bond0, bondk)))
+                angle_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.decoder.generator.angle0, anglek)))
+            else:
+                bond_loss, angle_loss = 0.0, 0.0
 
             total_loss = img_loss + self.l_bond * bond_loss + self.l_angle * angle_loss
 
@@ -372,8 +375,11 @@ class AutoEncoder(tf.keras.Model):
         img_loss = self.decoder.generator.cost_function(images, decoded)
 
         # Bond and angle losses
-        bond_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.decoder.generator.bond0, bondk)))
-        angle_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.decoder.generator.angle0, anglek)))
+        if self.decoder.generator.ref_is_struct:
+            bond_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.decoder.generator.bond0, bondk)))
+            angle_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.decoder.generator.angle0, anglek)))
+        else:
+            bond_loss, angle_loss = 0.0, 0.0
 
         total_loss = img_loss + self.l_bond * bond_loss + self.l_angle * angle_loss
 
