@@ -45,6 +45,7 @@ def richardsonLucyDeconvolver(volume, iter=5):
     std = np.pi * np.sqrt(volume.shape[1])
     gauss_1d = signal.windows.gaussian(volume.shape[1], std)
     kernel = np.einsum('i,j,k->ijk', gauss_1d, gauss_1d, gauss_1d)
+    kernel = tf.constant(kernel, dtype=tf.float32)
 
     def applyKernelFourier(x):
         x = tf.cast(x, dtype=tf.complex64)
@@ -69,6 +70,53 @@ def richardsonLucyDeconvolver(volume, iter=5):
         volume = tf.constant(volume, dtype=tf.float32)
 
     return volume.numpy()
+
+def richardsonLucyBlindDeconvolver(volume, global_iter=5, iter=20):
+    original_volume = volume.copy()
+    volume = tf.constant(volume, dtype=tf.float32)
+    original_volume = tf.constant(original_volume, dtype=tf.float32)
+
+    # Create a gaussian kernel that will be used to blur the original acquisition
+    std = 1.0
+    gauss_1d = signal.windows.gaussian(volume.shape[1], std)
+    kernel = np.einsum('i,j,k->ijk', gauss_1d, gauss_1d, gauss_1d)
+    kernel = tf.constant(kernel, dtype=tf.float32)
+
+    def applyKernelFourier(x, y):
+        x = tf.cast(x, dtype=tf.complex64)
+        y = tf.cast(y, dtype=tf.complex64)
+        ft_x = tf.signal.fftshift(tf.signal.fft3d(x))
+        ft_y = tf.abs(tf.signal.fftshift(tf.signal.fft3d(y)))
+        ft_x_real = tf.math.real(ft_x) * ft_y
+        ft_x_imag = tf.math.imag(ft_x) * ft_y
+        ft_x = tf.complex(ft_x_real, ft_x_imag)
+        return tf.math.real(tf.signal.ifft3d(tf.signal.fftshift(ft_x)))
+
+    for _ in range(global_iter):
+        for _ in range(iter):
+            # Deconvolve image (update)
+            conv_1 = applyKernelFourier(volume, kernel)
+            conv_1_2 = conv_1 * conv_1
+            epsilon = 1e-6 * tf.reduce_mean(conv_1_2)
+            update = original_volume * conv_1 / (conv_1_2 + epsilon)
+            update = applyKernelFourier(update, tf.reverse(kernel, axis=[0, 1, 2]))
+            volume = volume * update
+
+            # volume = volume.numpy()
+            # thr = 1e-6
+            # volume = volume - (volume > thr) * thr + (volume < -thr) * thr - (volume == thr) * volume
+            # volume = tf.constant(volume, dtype=tf.float32)
+
+        for _ in range(iter):
+            # Update kernel
+            conv_1 = applyKernelFourier(kernel, volume)
+            conv_1_2 = conv_1 * conv_1
+            epsilon = 1e-6 * tf.reduce_mean(conv_1_2)
+            update = original_volume * conv_1 / (conv_1_2 + epsilon)
+            update = applyKernelFourier(update, tf.reverse(volume, axis=[0, 1, 2]))
+            kernel = kernel * update
+
+    return volume
 
 def filterVol(volume):
     size = volume.shape[1]
@@ -225,7 +273,7 @@ class Decoder(Model):
         self.decode_het = Model(latent, delta_het, name="decoder_het")
         self.decoder = Model([rows, shifts, latent], decoded_het, name="decoder")
 
-    def eval_volume_het(self, x_het, filter=True):
+    def eval_volume_het(self, x_het, filter=True, only_pos=False):
         batch_size = x_het.shape[0]
 
         values = self.generator.values[None, :] + self.decode_het(x_het)
@@ -239,11 +287,16 @@ class Decoder(Model):
         volume_grids = np.zeros((batch_size, self.generator.xsize, self.generator.xsize, self.generator.xsize))
         for idx in range(batch_size):
             volume_grids[idx, o_z, o_y, o_x] = values[idx]
+            if not only_pos:
+                neg_part = volume_grids[idx] * (volume_grids[idx] < 0.0)
             volume_grids[idx] = volume_grids[idx] * (volume_grids[idx] >= 0.0)
             if filter:
                 volume_grids[idx] = gaussian_filter(volume_grids[idx], sigma=1)
                 volume_grids[idx] = filterVol(volume_grids[idx])
-                volume_grids[idx] = richardsonLucyDeconvolver(volume_grids[idx])
+                # volume_grids[idx] = richardsonLucyDeconvolver(volume_grids[idx])
+                volume_grids[idx] = richardsonLucyBlindDeconvolver(volume_grids[idx], global_iter=5, iter=5)
+                if not only_pos:
+                    volume_grids[idx] += neg_part
 
         return volume_grids.astype(np.float32)
 
@@ -254,7 +307,7 @@ class Decoder(Model):
 
 class AutoEncoder(Model):
     def __init__(self, generator, het_dim=10, architecture="convnn", CTF="wiener", refPose=True,
-                 l1_lambda=0.5, mode=None, train_size=None, **kwargs):
+                 l1_lambda=0.5, mode=None, train_size=None, only_pos=True, **kwargs):
         super(AutoEncoder, self).__init__(**kwargs)
         self.CTF = CTF if generator.applyCTF == 1 else None
         self.mode = generator.mode if mode is None else mode
@@ -265,6 +318,7 @@ class AutoEncoder(Model):
         self.refPose = 1.0 if refPose else 0.0
         self.l1_lambda = l1_lambda
         self.het_dim = het_dim
+        self.only_pos = only_pos
         self.train_size = train_size if train_size is not None else self.xsize
         self.total_loss_tracker = tf.keras.metrics.Mean(name="total_loss")
         self.test_loss_tracker = tf.keras.metrics.Mean(name="test_loss")
@@ -333,11 +387,14 @@ class AutoEncoder(Model):
             l1_loss_het = self.l1_lambda * l1_loss_het / self.decoder.generator.total_voxels
 
             # Negative loss
-            mask = tf.less(delta_het, 0.0)
-            delta_neg = tf.boolean_mask(delta_het, mask)
-            delta_neg_size = tf.cast(tf.shape(delta_neg)[-1], dtype=tf.float32)
-            delta_neg = tf.reduce_mean(tf.abs(delta_neg))
-            neg_loss_het = self.l1_lambda * delta_neg / delta_neg_size
+            if self.only_pos:
+                mask = tf.less(delta_het, 0.0)
+                delta_neg = tf.boolean_mask(delta_het, mask)
+                delta_neg_size = tf.cast(tf.shape(delta_neg)[-1], dtype=tf.float32)
+                delta_neg = tf.reduce_mean(tf.abs(delta_neg))
+                neg_loss_het = self.l1_lambda * delta_neg / delta_neg_size
+            else:
+                neg_loss_het = 0.0
 
             # Reconstruction mask for projections (Decoder size)
             mask_imgs = self.decoder.generator.resizeImageFourier(self.decoder.generator.mask_imgs,
@@ -429,11 +486,14 @@ class AutoEncoder(Model):
         l1_loss_het = self.l1_lambda * l1_loss_het / self.decoder.generator.total_voxels
 
         # Negative loss
-        mask = tf.less(delta_het, 0.0)
-        delta_neg = tf.boolean_mask(delta_het, mask)
-        delta_neg_size = tf.cast(tf.shape(delta_neg)[-1], dtype=tf.float32)
-        delta_neg = tf.reduce_mean(tf.abs(delta_neg))
-        neg_loss_het = self.l1_lambda * delta_neg / delta_neg_size
+        if self.only_pos:
+            mask = tf.less(delta_het, 0.0)
+            delta_neg = tf.boolean_mask(delta_het, mask)
+            delta_neg_size = tf.cast(tf.shape(delta_neg)[-1], dtype=tf.float32)
+            delta_neg = tf.reduce_mean(tf.abs(delta_neg))
+            neg_loss_het = self.l1_lambda * delta_neg / delta_neg_size
+        else:
+            neg_loss_het = 0.0
 
         # Reconstruction mask for projections (Decoder size)
         mask_imgs = self.decoder.generator.resizeImageFourier(self.decoder.generator.mask_imgs,
@@ -488,7 +548,7 @@ class AutoEncoder(Model):
 
         return self.refPose * rot.numpy(), self.refPose * shift.numpy(), het.numpy()
 
-    def eval_volume_het(self, x_het, allCoords=False, filter=True):
+    def eval_volume_het(self, x_het, allCoords=False, filter=True, only_pos=False):
         batch_size = x_het.shape[0]
 
         if allCoords and self.decoder.generator.step > 1:
@@ -503,7 +563,7 @@ class AutoEncoder(Model):
                            self.decoder.generator.xsize), dtype=np.float32)
         for coords in new_coords:
             self.decoder.generator.coords = coords
-            volume += self.decoder.eval_volume_het(x_het, filter=filter)
+            volume += self.decoder.eval_volume_het(x_het, filter=filter, only_pos=only_pos)
 
         if allCoords and self.decoder.generator.step > 1:
             self.decoder.generator.coords = prev_coords

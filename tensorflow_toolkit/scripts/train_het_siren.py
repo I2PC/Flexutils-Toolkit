@@ -48,7 +48,7 @@ from tensorflow_toolkit.utils import epochs_from_iterations
 
 def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
           radius_mask, smooth_mask, refinePose, architecture="convnn", weigths_file=None,
-          ctfType="apply", pad=2, sr=1.0, applyCTF=1, hetDim=10, l1Reg=0.5, lr=1e-5,
+          ctfType="apply", pad=2, sr=1.0, applyCTF=1, hetDim=10, l1Reg=0.5, lr=1e-5, only_pos=False,
           jit_compile=True, trainSize=None, outSize=None, tensorboard=True):
 
     try:
@@ -74,7 +74,7 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
 
         # Train model
         autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
-                                  het_dim=hetDim, l1_lambda=l1Reg, train_size=trainSize)
+                                  het_dim=hetDim, l1_lambda=l1Reg, train_size=trainSize, only_pos=True)
 
         # Fine tune a previous model
         if weigths_file:
@@ -171,6 +171,7 @@ def main():
     parser.add_argument('--radius_mask', type=float, required=False, default=2)
     parser.add_argument('--smooth_mask', action='store_true')
     parser.add_argument('--refine_pose', action='store_true')
+    parser.add_argument('--only_pos', action='store_true')
     parser.add_argument('--weigths_file', type=str, required=False, default=None)
     parser.add_argument('--sr', type=float, required=True)
     parser.add_argument('--trainSize', type=int, required=True)
@@ -205,7 +206,8 @@ def main():
               "weigths_file": args.weigths_file, "ctfType": args.ctf_type, "pad": args.pad,
               "sr": args.sr, "applyCTF": args.apply_ctf, "hetDim": args.het_dim,
               "l1Reg": args.l1_reg, "lr": args.lr, "jit_compile": args.jit_compile,
-              "trainSize": args.trainSize, "outSize": args.outSize, "tensorboard": args.tensorboard}
+              "trainSize": args.trainSize, "outSize": args.outSize, "tensorboard": args.tensorboard,
+              "only_pos": args.only_pos}
 
     # Initialize volume slicer
     train(**inputs)

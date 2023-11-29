@@ -48,7 +48,7 @@ from tensorflow_toolkit.networks.het_siren import AutoEncoder
 
 
 def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=1.0,
-            applyCTF=1, filter=False, hetDim=10, numVol=20, trainSize=None, outSize=None):
+            applyCTF=1, filter=False, only_pos=False, hetDim=10, numVol=20, trainSize=None, outSize=None):
     # Create data generator
     generator = Generator(md_file=md_file, shuffle=False, batch_size=16,
                           step=1, splitTrain=1.0, pad_factor=pad, sr=sr,
@@ -60,7 +60,7 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
 
     # Load model
     autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
-                              het_dim=hetDim, train_size=trainSize)
+                              het_dim=hetDim, train_size=trainSize, only_pos=True)
     if generator.mode == "spa":
         autoencoder.build(input_shape=(None, autoencoder.xsize, autoencoder.xsize, 1))
     elif generator.mode == "tomo":
@@ -78,7 +78,7 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
         kmeans = KMeans(n_clusters=numVol).fit(het)
     centers = kmeans.cluster_centers_
     print("------------------ Decoding volume... ------------------")
-    decoded_maps = autoencoder.eval_volume_het(centers, filter=filter, allCoords=True)
+    decoded_maps = autoencoder.eval_volume_het(centers, filter=filter, only_pos=only_pos, allCoords=True)
 
     # Tensorboard projector
     log_dir = os.path.join(os.path.dirname(md_file), "network", "logs")
@@ -127,6 +127,7 @@ def main():
     parser.add_argument('--sr', type=float, required=True)
     parser.add_argument('--apply_ctf', type=int, required=True)
     parser.add_argument('--apply_filter', action='store_true')
+    parser.add_argument('--only_pos', action='store_true')
     parser.add_argument('--num_vol', type=int, required=True)
     parser.add_argument('--trainSize', type=int, required=True)
     parser.add_argument('--outSize', type=int, required=True)
@@ -144,7 +145,7 @@ def main():
               "refinePose": args.refine_pose, "architecture": args.architecture,
               "ctfType": args.ctf_type, "pad": args.pad, "sr": args.sr,
               "applyCTF": args.apply_ctf, "filter": args.apply_filter,
-              "hetDim": args.het_dim, "numVol": args.num_vol,
+              "only_pos": args.only_pos, "hetDim": args.het_dim, "numVol": args.num_vol,
               "trainSize": args.trainSize, "outSize": args.outSize}
 
     # Initialize volume slicer
