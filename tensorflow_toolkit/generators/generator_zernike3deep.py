@@ -232,25 +232,58 @@ class Generator(DataGeneratorBase):
 
         return tf.stack([dst_1, dst_2], axis=2)
 
+    # def calcAngle(self, coords):
+    #     coords = [tf.transpose(coords[0]), tf.transpose(coords[1]), tf.transpose(coords[2])]
+    #     coords = tf.stack(coords, axis=2)
+    #     p0 = tf.gather(coords, self.connectivity[:, 0], axis=1)
+    #     p1 = tf.gather(coords, self.connectivity[:, 1], axis=1)
+    #     p2 = tf.gather(coords, self.connectivity[:, 2], axis=1)
+    #     b0 = p0 - p1
+    #     b1 = p2 - p1
+    #     b0 = b0 / tf.sqrt(tf.reduce_sum(b0 ** 2.0, axis=2, keepdims=True))
+    #     b1 = b1 / tf.reduce_sum(b1 ** 2.0, axis=2, keepdims=True)
+    #     ang = tf.reduce_sum(b0 * b1, axis=2)
+    #     n0 = tf.linalg.norm(b0, axis=2) * tf.linalg.norm(b1, axis=2)
+    #     ang = tf.math.divide_no_nan(ang, n0)
+    #     epsilon = 1.0 - 1e-6
+    #     ang = tf.minimum(tf.maximum(ang, -epsilon), epsilon)
+    #     # ang = np.min(np.max(ang, axis=1), axis=0)
+    #     ang = tf.acos(ang)
+    #     ang *= 180 / np.pi
+    #
+    #     return ang
+
     def calcAngle(self, coords):
         coords = [tf.transpose(coords[0]), tf.transpose(coords[1]), tf.transpose(coords[2])]
         coords = tf.stack(coords, axis=2)
+
         p0 = tf.gather(coords, self.connectivity[:, 0], axis=1)
         p1 = tf.gather(coords, self.connectivity[:, 1], axis=1)
         p2 = tf.gather(coords, self.connectivity[:, 2], axis=1)
-        b0 = p0 - p1
-        b1 = p2 - p1
-        b0 = b0 / tf.sqrt(tf.reduce_sum(b0 ** 2.0, axis=2, keepdims=True))
-        b1 = b1 / tf.reduce_sum(b1 ** 2.0, axis=2, keepdims=True)
-        ang = tf.reduce_sum(b0 * b1, axis=2)
-        n0 = tf.linalg.norm(b0, axis=2) * tf.linalg.norm(b1, axis=2)
-        ang = tf.math.divide_no_nan(ang, n0)
-        epsilon = 1.0 - 1e-6
-        ang = tf.minimum(tf.maximum(ang, -epsilon), epsilon)
-        # ang = np.min(np.max(ang, axis=1), axis=0)
-        ang = tf.acos(ang)
-        ang *= 180 / np.pi
+        p3 = tf.gather(coords, self.connectivity[:, 3], axis=1)
 
-        return ang
+        # Assuming positions is a 4x3 array: [a, b, c, d]
+        b1 = p1 - p0  # b - a
+        b2 = p2 - p1  # c - b
+        b3 = p3 - p2  # d - c
+
+        # Compute normals
+        n1 = tf.linalg.cross(b1, b2)
+        n2 = tf.linalg.cross(b2, b3)
+
+        # Normalize normals
+        n1 = tf.nn.l2_normalize(n1)
+        n2 = tf.nn.l2_normalize(n2)
+
+        # Compute angle
+        angle = tf.acos(tf.reduce_sum(n1 * n2, axis=2))
+
+        # Adjust sign
+        angle = tf.where(tf.reduce_sum(n2 * n1, axis=2) < 0.0, tf.abs(angle), angle)
+
+        # Convert to degrees
+        angle *= 180.0 / np.pi
+
+        return angle
 
     # ----- -------- -----#
