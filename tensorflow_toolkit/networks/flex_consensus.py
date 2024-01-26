@@ -30,7 +30,8 @@ import numpy as np
 
 
 class SpaceEncoder(tf.keras.Model):
-    def __init__(self, input_dim, latent_dim):
+    # def __init__(self, input_dim, latent_dim):
+    def __init__(self, input_dim, latent_space):
         super(SpaceEncoder, self).__init__()
         input_data = tf.keras.Input(shape=(input_dim,))
 
@@ -39,7 +40,8 @@ class SpaceEncoder(tf.keras.Model):
             aux_x = tf.keras.layers.Dense(1024, activation="relu")(x)
             x = tf.keras.layers.Add()([x, aux_x])
 
-        x = tf.keras.layers.Dense(latent_dim, activation="linear")(x)
+        # x = tf.keras.layers.Dense(latent_dim, activation="linear")(x)
+        x = latent_space(x)
 
         self.encoder = tf.keras.Model(input_data, x)
 
@@ -71,7 +73,8 @@ class AutoEncoder(tf.keras.Model):
     def __init__(self, generator, **kwargs):
         super(AutoEncoder, self).__init__(**kwargs)
         self.generator = generator
-        self.space_encoders = [SpaceEncoder(input_dim, generator.lat_dim) for input_dim in generator.space_dims]
+        self.latent_space = tf.keras.layers.Dense(generator.lat_dim, activation="linear")
+        self.space_encoders = [SpaceEncoder(input_dim, self.latent_space) for input_dim in generator.space_dims]
         self.space_decoders = [SpaceDecoder(input_dim, generator.lat_dim) for input_dim in generator.space_dims]
         self.loss_tracker = [tf.keras.metrics.Mean(name="total_loss"), tf.keras.metrics.Mean(name="encoder_loss")]
         self.decoder_loss_tracker = [tf.keras.metrics.Mean(name="space_decoder_%d" % idx)
