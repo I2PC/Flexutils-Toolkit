@@ -78,7 +78,8 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
         kmeans = KMeans(n_clusters=numVol).fit(het)
     centers = kmeans.cluster_centers_
     print("------------------ Decoding volume... ------------------")
-    decoded_maps = autoencoder.eval_volume_het(centers, filter=filter, only_pos=only_pos, allCoords=True)
+    decoded_maps = autoencoder.eval_volume_het(centers, filter=filter, only_pos=only_pos, allCoords=True,
+                                               add_to_original=True)
 
     # Tensorboard projector
     log_dir = os.path.join(os.path.dirname(md_file), "network", "logs")

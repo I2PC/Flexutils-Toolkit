@@ -48,8 +48,8 @@ from tensorflow_toolkit.utils import epochs_from_iterations
 
 def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
           radius_mask, smooth_mask, refinePose, architecture="convnn", weigths_file=None,
-          ctfType="apply", pad=2, sr=1.0, applyCTF=1, hetDim=10, l1Reg=0.5, lr=1e-5, only_pos=False,
-          jit_compile=True, trainSize=None, outSize=None, tensorboard=True):
+          ctfType="apply", pad=2, sr=1.0, applyCTF=1, hetDim=10, l1Reg=0.5, tvReg=0.1, mseReg=0.1,
+          lr=1e-5, only_pos=False, multires=None, jit_compile=True, trainSize=None, outSize=None, tensorboard=True):
 
     try:
         # Create data generator
@@ -74,7 +74,8 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
 
         # Train model
         autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
-                                  het_dim=hetDim, l1_lambda=l1Reg, train_size=trainSize, only_pos=True)
+                                  het_dim=hetDim, l1_lambda=l1Reg, tv_lambda=tvReg, mse_lambda=mseReg,
+                                  train_size=trainSize, only_pos=only_pos, multires_levels=multires)
 
         # Fine tune a previous model
         if weigths_file:
@@ -164,6 +165,9 @@ def main():
     parser.add_argument('--max_samples_seen', type=int, required=False)
     parser.add_argument('--cost', type=str, required=True)
     parser.add_argument('--l1_reg', type=float, required=True)
+    parser.add_argument('--tv_reg', type=float, required=True)
+    parser.add_argument('--mse_reg', type=float, required=True)
+    parser.add_argument('--multires', type=int, required=False)
     parser.add_argument('--het_dim', type=int, required=True)
     parser.add_argument('--architecture', type=str, required=True)
     parser.add_argument('--ctf_type', type=str, required=True)
@@ -205,7 +209,8 @@ def main():
               "refinePose": args.refine_pose, "architecture": args.architecture,
               "weigths_file": args.weigths_file, "ctfType": args.ctf_type, "pad": args.pad,
               "sr": args.sr, "applyCTF": args.apply_ctf, "hetDim": args.het_dim,
-              "l1Reg": args.l1_reg, "lr": args.lr, "jit_compile": args.jit_compile,
+              "l1Reg": args.l1_reg, "tvReg": args.tv_reg, "mseReg": args.mse_reg, "lr": args.lr,
+              "multires": args.multires, "jit_compile": args.jit_compile,
               "trainSize": args.trainSize, "outSize": args.outSize, "tensorboard": args.tensorboard,
               "only_pos": args.only_pos}
 

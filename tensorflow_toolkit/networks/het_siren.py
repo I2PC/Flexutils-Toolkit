@@ -28,11 +28,14 @@
 import tensorflow as tf
 from tensorflow.keras import layers, models, Input, Model
 
+from pathlib import Path
 import numpy as np
 from scipy.ndimage import gaussian_filter
 from scipy import signal
+import scipy.stats as st
+from xmipp_metadata.image_handler import ImageHandler
 
-from tensorflow_toolkit.utils import computeCTF
+from tensorflow_toolkit.utils import computeCTF, full_fft_pad, full_ifft_pad
 from tensorflow_toolkit.layers.siren import SIRENFirstLayerInitializer, SIRENInitializer, MetaDenseWrapper
 
 
@@ -116,7 +119,176 @@ def richardsonLucyBlindDeconvolver(volume, global_iter=5, iter=20):
             update = applyKernelFourier(update, tf.reverse(volume, axis=[0, 1, 2]))
             kernel = kernel * update
 
+            # kernel = kernel.numpy()
+            # thr = 1e-6
+            # kernel = kernel - (kernel > thr) * thr + (kernel < -thr) * thr - (kernel == thr) * kernel
+            # kernel = tf.constant(kernel, dtype=tf.float32)
+
     return volume
+
+def deconvolveTV(volume, iterations, regularization_weight, lr=0.01):
+    original = tf.Variable(volume, dtype=tf.float32)
+
+    # Create a gaussian kernel that will be used to blur the original acquisition
+    std = 1.0
+    gauss_1d = signal.windows.gaussian(volume.shape[1], std)
+    psf = np.einsum('i,j,k->ijk', gauss_1d, gauss_1d, gauss_1d)
+    psf = tf.constant(psf, dtype=tf.float32)
+
+    def applyKernelFourier(x, y):
+        x = tf.cast(x, dtype=tf.complex64)
+        y = tf.cast(y, dtype=tf.complex64)
+        ft_x = tf.signal.fftshift(tf.signal.fft3d(x))
+        ft_y = tf.abs(tf.signal.fftshift(tf.signal.fft3d(y)))
+        ft_x_real = tf.math.real(ft_x) * ft_y
+        ft_x_imag = tf.math.imag(ft_x) * ft_y
+        ft_x = tf.complex(ft_x_real, ft_x_imag)
+        return tf.math.real(tf.signal.ifft3d(tf.signal.fftshift(ft_x)))
+
+    for i in range(iterations):
+        with tf.GradientTape() as tape:
+            # Convolve with PSF
+            # convolved = tf.nn.conv2d(tf.expand_dims(original, axis=0), tf.expand_dims(psf, axis=0), strides=[1, 1, 1, 1], padding='SAME')
+            # convolved = tf.squeeze(convolved)
+            convolved = applyKernelFourier(volume, psf)
+
+            # Calculate the loss (data fidelity term + TV regularization)
+            loss = tf.reduce_mean(tf.square(convolved - volume)) + regularization_weight * tf.reduce_sum(tf.image.total_variation(original))
+
+        # Perform a gradient descent step
+        grads = tape.gradient(loss, [original])
+        # grads = tf.gradients(loss, [original])
+        original.assign_sub(lr * grads[0])
+
+    return original.numpy()
+
+def tv_deconvolution_bregman(volume, iterations, regularization_weight, lr=0.01):
+    deconvolved = tf.Variable(volume, dtype=tf.float32)
+    bregman = tf.Variable(tf.zeros_like(volume), dtype=tf.float32)
+
+    # Create a gaussian kernel that will be used to blur the original acquisition
+    std = 1.0
+    gauss_1d = signal.windows.gaussian(volume.shape[1], std)
+    psf = np.einsum('i,j,k->ijk', gauss_1d, gauss_1d, gauss_1d)
+    psf_tf = tf.constant(psf, dtype=tf.float32)
+    # psf_mirror = tf.reverse(tf.reverse(psf_tf, axis=[0]), axis=[1])
+
+    def applyKernelFourier(x, y):
+        x = tf.cast(x, dtype=tf.complex64)
+        y = tf.cast(y, dtype=tf.complex64)
+        ft_x = tf.signal.fftshift(tf.signal.fft3d(x))
+        ft_y = tf.abs(tf.signal.fftshift(tf.signal.fft3d(y)))
+        ft_x_real = tf.math.real(ft_x) * ft_y
+        ft_x_imag = tf.math.imag(ft_x) * ft_y
+        ft_x = tf.complex(ft_x_real, ft_x_imag)
+        return tf.math.real(tf.signal.ifft3d(tf.signal.fftshift(ft_x)))
+
+    for i in range(iterations):
+        with tf.GradientTape() as tape:
+            # Convolve with PSF
+            # convolved = tf.nn.conv2d(tf.expand_dims(original, axis=0), tf.expand_dims(psf, axis=0), strides=[1, 1, 1, 1], padding='SAME')
+            # convolved = tf.squeeze(convolved)
+            convolved = applyKernelFourier(volume, psf)
+
+            # Calculate the loss (data fidelity term + TV regularization)
+            loss = tf.reduce_mean(tf.square(convolved - volume)) + regularization_weight * tf.reduce_sum(tf.image.total_variation(deconvolved - bregman))
+
+        # Perform a gradient descent step
+        grads = tape.gradient(loss, [deconvolved])
+        # grads = tf.gradients(loss, [deconvolved])
+        deconvolved.assign_sub(lr * grads[0])
+
+        # Bregman Update
+        bregman.assign(bregman + deconvolved - tv_minimization_step(deconvolved, lr))
+
+    return deconvolved.numpy()
+
+def tv_minimization_step(image, lr):
+    # Implement the TV minimization step
+    # This is a placeholder function, in practice, you'll need a proper implementation
+    return image - lr * tf.image.total_variation(image)
+
+
+### Image smoothness with TV ###
+def total_variation_loss(volume, diff1, diff2, diff3):
+    """
+    Computes the Total Variation Loss.
+    Encourages spatial smoothness in the image output.
+
+    Parameters:
+    volume (Tensor): The image tensor of shape (batch_size, depth, height, width)
+    diff1 (Tensor): Voxel value differences of shape (batch_size, depth - 1, height, width)
+    diff2 (Tensor): Voxel value differences of shape (batch_size, depth, height - 1, width)
+    diff3 (Tensor): Voxel value differences of shape (batch_size, depth, height, width - 1)
+
+    Returns:
+    Tensor: The total variation loss.
+    """
+
+    # Sum for both directions.
+    sum_axis = [1, 2, 3]
+    loss = tf.reduce_sum(tf.abs(diff1), axis=sum_axis) + \
+           tf.reduce_sum(tf.abs(diff2), axis=sum_axis) + \
+           tf.reduce_sum(tf.abs(diff3), axis=sum_axis)
+
+    # Normalize by the volume size
+    num_pixels = tf.cast(tf.reduce_prod(volume.shape[1:]), tf.float32)
+    loss /= num_pixels
+
+    return loss
+
+
+def mse_smoothness_loss(volume, diff1, diff2, diff3):
+    """
+    Computes an MSE-based smoothness loss.
+    This loss penalizes large intensity differences between adjacent pixels.
+
+    Parameters:
+    volume (Tensor): The image tensor of shape (batch_size, depth, height, width)
+    diff1 (Tensor): Voxel value differences of shape (batch_size, depth - 1, height, width)
+    diff2 (Tensor): Voxel value differences of shape (batch_size, depth, height - 1, width)
+    diff3 (Tensor): Voxel value differences of shape (batch_size, depth, height, width - 1)
+
+    Returns:
+    Tensor: The MSE-based smoothness loss.
+    """
+
+    # Square differences
+    diff1 = tf.square(diff1)
+    diff2 = tf.square(diff2)
+    diff3 = tf.square(diff3)
+
+    # Sum the squared differences
+    sum_axis = [1, 2, 3]
+    loss = tf.reduce_sum(diff1, axis=sum_axis) + tf.reduce_sum(diff2, axis=sum_axis) + tf.reduce_sum(diff3, axis=sum_axis)
+
+    # Normalize by the number of pixel pairs
+    num_pixel_pairs = tf.cast(2 * tf.reduce_prod(volume.shape[1:3]) - volume.shape[1] - volume.shape[2], tf.float32)
+    loss /= num_pixel_pairs
+
+    return loss
+
+def densitySmoothnessVolume(xsize, indices, values):
+    B = tf.shape(values)[0]
+
+    grid = tf.zeros((B, xsize, xsize, xsize), dtype=tf.float32)
+    indices = tf.tile(tf.cast(indices[None, ...], dtype=tf.int32), (B, 1, 1))
+
+    # Scatter in volumes
+    fn = lambda inp: tf.tensor_scatter_nd_add(inp[0], inp[1], inp[2])
+    grid = tf.map_fn(fn, [grid, indices, values], fn_output_signature=tf.float32)
+
+    # Calculate the differences of neighboring pixel-values.
+    # The total variation loss is the sum of absolute differences of neighboring pixels
+    # in both dimensions.
+    pixel_diff1 = grid[:, 1:, :, :] - grid[:, :-1, :, :]
+    pixel_diff2 = grid[:, :, 1:, :] - grid[:, :, :-1, :]
+    pixel_diff3 = grid[:, :, :, 1:] - grid[:, :, :, :-1]
+
+    # Compute total variation and density MSE losses
+    return (total_variation_loss(grid, pixel_diff1, pixel_diff2, pixel_diff3),
+            mse_smoothness_loss(grid, pixel_diff1, pixel_diff2, pixel_diff3))
+
 
 def filterVol(volume):
     size = volume.shape[1]
@@ -146,11 +318,152 @@ def filterVol(volume):
 
     return volume
 
+def gaussian_kernel(size: int, std: float):
+    """
+    Creates a 2D Gaussian kernel with specified size and standard deviation.
+
+    Args:
+    - size: The size of the kernel (will be square).
+    - std: The standard deviation of the Gaussian.
+
+    Returns:
+    - A 2D numpy array representing the Gaussian kernel.
+    """
+    interval = (2 * std + 1.) / size
+    x = np.linspace(-std - interval / 2., std + interval / 2., size)
+    kern1d = np.diff(st.norm.cdf(x))
+    kernel_raw = np.sqrt(np.outer(kern1d, kern1d))
+    kernel = kernel_raw / kernel_raw.sum()
+    return kernel
+
+def create_blur_filters(num_filters, max_std, filter_size):
+    """
+    Create a set of Gaussian blur filters with varying standard deviations.
+
+    Args:
+    - num_filters: The number of blur filters to create.
+    - max_std: The maximum standard deviation for the Gaussian blur.
+    - filter_size: The size of each filter.
+
+    Returns:
+    - A tensor containing the filters.
+    """
+    std_intervals = np.linspace(0.1, max_std, num_filters)
+    filters = []
+    for std in std_intervals:
+        kernel = gaussian_kernel(filter_size, std)
+        kernel = np.expand_dims(kernel, axis=-1)
+        filters.append(kernel)
+
+    filters = np.stack(filters, axis=-1)
+    return tf.constant(filters, dtype=tf.float32)
+
+
+def apply_blur_filters_to_batch(images, filters):
+    """
+    Apply a set of Gaussian blur filters to a batch of images.
+
+    Args:
+    - images: Batch of images with shape (B, W, H, 1).
+    - filters: Filters to apply, with shape (filter_size, filter_size, 1, N).
+
+    Returns:
+    - Batch of blurred images with shape (B, W, H, N).
+    """
+    # Apply the filters
+    blurred_images = tf.nn.depthwise_conv2d(images, filters, strides=[1, 1, 1, 1], padding='SAME')
+    return blurred_images
+
+def resizeImageFourier(images, out_size, pad_factor=1):
+    # Sizes
+    xsize = tf.shape(images)[1]
+    pad_size = pad_factor * xsize
+    pad_out_size = pad_factor * out_size
+
+    # Fourier transform
+    ft_images = full_fft_pad(images, pad_size, pad_size)
+
+    # Normalization constant
+    norm = tf.cast(pad_out_size, dtype=tf.float32) / tf.cast(pad_size, dtype=tf.float32)
+
+    # Resizing
+    ft_images = tf.image.resize_with_crop_or_pad(ft_images[..., None], pad_out_size, pad_out_size)[..., 0]
+
+    # Inverse transform
+    images = full_ifft_pad(ft_images, out_size, out_size)
+    images *= norm * norm
+
+    return images
+
+def normalize_to_other_volumes(batch1, batch2):
+    """
+    Normalize volumes in batch2 to have the same mean and std as the corresponding volumes in batch1.
+
+    Parameters:
+    batch1, batch2: numpy arrays of shape (B, W, H, D) representing batches of volumes.
+
+    Returns:
+    normalized_batch2: numpy array of normalized images.
+    """
+    # Calculate mean and std for each image in batch1
+    means1 = batch1.mean(axis=(1, 2, 3), keepdims=True)
+    stds1 = batch1.std(axis=(1, 2, 3), keepdims=True)
+
+    # Calculate mean and std for each image in batch2
+    means2 = batch2.mean(axis=(1, 2, 3), keepdims=True)
+    stds2 = batch2.std(axis=(1, 2, 3), keepdims=True)
+
+    # Normalize batch2 to have the same mean and std as batch1
+    normalized_batch2 = ((batch2 - means2) / stds2) * stds1 + means1
+
+    return normalized_batch2
+
+
+def match_histograms(source, reference):
+    """
+    Adjust the pixel values of a N-D source volume to match the histogram of a reference volume.
+
+    Parameters:
+    - source: ndarray
+      Input volume. Can be of shape (B, W, H, D).
+    - reference: ndarray
+      Reference volume. Must have the same shape as the source.
+
+    Returns:
+    - matched: ndarray
+      The source volume after histogram matching.
+    """
+    matched = np.zeros_like(source)
+
+    for b in range(source.shape[0]):
+        # Flatten the volumes
+        s_values = source[b].ravel()
+        r_values = reference[b].ravel()
+
+        # Get unique values and their corresponding indices for both source and reference
+        s_values_unique, s_inverse = np.unique(s_values, return_inverse=True)
+        r_values_unique, r_counts = np.unique(r_values, return_counts=True)
+
+        # Calculate the CDF for the source and reference
+        s_quantiles = np.cumsum(np.bincount(s_inverse, minlength=s_values_unique.size))
+        s_quantiles = s_quantiles / s_quantiles[-1]
+        r_quantiles = np.cumsum(r_counts)
+        r_quantiles = r_quantiles / r_quantiles[-1]
+
+        # Interpolate
+        interp_r_values = np.interp(s_quantiles, r_quantiles, r_values_unique)
+
+        # Map the source pixels to the reference pixels
+        matched[b] = interp_r_values[s_inverse].reshape(source[b].shape)
+
+    return matched
+
 
 class Encoder(Model):
     def __init__(self, latent_dim, input_dim, architecture="convnn", refPose=True,
                  mode="spa"):
         super(Encoder, self).__init__()
+        filters = create_blur_filters(5, 5, 15)
 
         images = Input(shape=(input_dim, input_dim, 1))
         subtomo_pe = Input(shape=(100,))
@@ -191,6 +504,44 @@ class Encoder(Model):
             x = layers.Flatten()(x)
             for _ in range(4):
                 x = layers.Dense(256, activation='relu')(x)
+
+        elif architecture == "deepconv":
+            x = resizeImageFourier(images, 64)
+            x = apply_blur_filters_to_batch(x, filters)
+
+            x = tf.keras.layers.Conv2D(64, 5, activation="relu", strides=(2, 2), padding="same")(x)
+            b1_out = tf.keras.layers.Conv2D(128, 5, activation="relu", strides=(2, 2), padding="same")(x)
+
+            b2_x = tf.keras.layers.Conv2D(128, 1, activation="relu", strides=(1, 1), padding="same")(b1_out)
+            b2_x = tf.keras.layers.Conv2D(128, 1, activation="linear", strides=(1, 1), padding="same")(b2_x)
+            b2_add = layers.Add()([b1_out, b2_x])
+            b2_add = layers.ReLU()(b2_add)
+
+            for _ in range(12):
+                b2_x = tf.keras.layers.Conv2D(128, 1, activation="linear", strides=(1, 1), padding="same")(b2_add)
+                b2_add = layers.Add()([b2_add, b2_x])
+                b2_add = layers.ReLU()(b2_add)
+
+            b2_out = tf.keras.layers.Conv2D(256, 3, activation="relu", strides=(2, 2), padding="same")(b2_add)
+
+            b3_x = tf.keras.layers.Conv2D(256, 1, activation="relu", strides=(1, 1), padding="same")(b2_out)
+            b3_x = tf.keras.layers.Conv2D(256, 1, activation="linear", strides=(1, 1), padding="same")(b3_x)
+            b3_add = layers.Add()([b2_out, b3_x])
+            b3_add = layers.ReLU()(b3_add)
+
+            for _ in range(12):
+                b3_x = tf.keras.layers.Conv2D(256, 1, activation="linear", strides=(1, 1), padding="same")(b3_add)
+                b3_add = layers.Add()([b3_add, b3_x])
+                b3_add = layers.ReLU()(b3_add)
+
+            b3_out = tf.keras.layers.Conv2D(512, 3, activation="relu", strides=(2, 2), padding="same")(b3_add)
+            x = tf.keras.layers.Flatten()(b3_out)
+
+            x = layers.Flatten()(x)
+            x = layers.Dense(512, activation='relu')(x)
+            for _ in range(4):
+                aux = layers.Dense(512, activation='relu')(x)
+                x = layers.Add()([x, aux])
 
         elif architecture == "mlpnn":
             x = layers.Flatten()(images)
@@ -284,19 +635,26 @@ class Decoder(Model):
 
         # Get numpy volumes
         values = values.numpy()
-        volume_grids = np.zeros((batch_size, self.generator.xsize, self.generator.xsize, self.generator.xsize))
+        volume_grids = np.zeros((batch_size, self.generator.xsize, self.generator.xsize, self.generator.xsize), dtype=np.float32)
         for idx in range(batch_size):
             volume_grids[idx, o_z, o_y, o_x] = values[idx]
+            if filter:
+                volume_grids[idx] = filterVol(volume_grids[idx])
+
+            # Only for deconvolvers
             if not only_pos:
                 neg_part = volume_grids[idx] * (volume_grids[idx] < 0.0)
             volume_grids[idx] = volume_grids[idx] * (volume_grids[idx] >= 0.0)
-            if filter:
-                volume_grids[idx] = gaussian_filter(volume_grids[idx], sigma=1)
-                volume_grids[idx] = filterVol(volume_grids[idx])
-                # volume_grids[idx] = richardsonLucyDeconvolver(volume_grids[idx])
-                volume_grids[idx] = richardsonLucyBlindDeconvolver(volume_grids[idx], global_iter=5, iter=5)
-                if not only_pos:
-                    volume_grids[idx] += neg_part
+
+            # Deconvolvers
+            volume_grids[idx] = richardsonLucyDeconvolver(volume_grids[idx])
+            # volume_grids[idx] = richardsonLucyBlindDeconvolver(volume_grids[idx], global_iter=5, iter=5)
+            # volume_grids[idx] = deconvolveTV(volume_grids[idx], iterations=50, regularization_weight=0.001, lr=0.01)
+            # volume_grids[idx] = tv_deconvolution_bregman(volume_grids[idx], iterations=50,
+            #                                              regularization_weight=0.1, lr=0.01)
+
+            if not only_pos:
+                volume_grids[idx] += neg_part
 
         return volume_grids.astype(np.float32)
 
@@ -307,7 +665,8 @@ class Decoder(Model):
 
 class AutoEncoder(Model):
     def __init__(self, generator, het_dim=10, architecture="convnn", CTF="wiener", refPose=True,
-                 l1_lambda=0.5, mode=None, train_size=None, only_pos=True, **kwargs):
+                 l1_lambda=0.5, tv_lambda=0.5, mse_lambda=0.5, mode=None, train_size=None, only_pos=True,
+                 multires_levels=None, **kwargs):
         super(AutoEncoder, self).__init__(**kwargs)
         self.CTF = CTF if generator.applyCTF == 1 else None
         self.mode = generator.mode if mode is None else mode
@@ -317,9 +676,16 @@ class AutoEncoder(Model):
         self.decoder = Decoder(het_dim, generator, CTF=CTF)
         self.refPose = 1.0 if refPose else 0.0
         self.l1_lambda = l1_lambda
+        self.tv_lambda = tv_lambda
+        self.mse_lambda = mse_lambda
         self.het_dim = het_dim
         self.only_pos = only_pos
         self.train_size = train_size if train_size is not None else self.xsize
+        self.multires_levels = multires_levels
+        if multires_levels is None:
+            self.filters = None
+        else:
+            self.filters = create_blur_filters(multires_levels, 10, 30)
         self.total_loss_tracker = tf.keras.metrics.Mean(name="total_loss")
         self.test_loss_tracker = tf.keras.metrics.Mean(name="test_loss")
         self.loss_het_tracker = tf.keras.metrics.Mean(name="rec_het")
@@ -386,6 +752,12 @@ class AutoEncoder(Model):
             l1_loss_het = tf.reduce_mean(tf.reduce_sum(tf.abs(delta_het), axis=1))
             l1_loss_het = self.l1_lambda * l1_loss_het / self.decoder.generator.total_voxels
 
+            # Total variation and MSE losses
+            tv_loss, d_mse_loss = densitySmoothnessVolume(self.decoder.generator.xsize,
+                                                          self.decoder.generator.indices, delta_het)
+            tv_loss *= self.tv_lambda
+            d_mse_loss *= self.mse_lambda
+
             # Negative loss
             if self.only_pos:
                 mask = tf.less(delta_het, 0.0)
@@ -416,9 +788,18 @@ class AutoEncoder(Model):
             decoded_het_scl = self.decoder.generator.resizeImageFourier(decoded_het, self.train_size)
             loss_het_scl = self.decoder.generator.cost_function(images_masked, decoded_het_scl)
 
+            # MR loss
+            if self.filters is not None:
+                filt_images = apply_blur_filters_to_batch(images, self.filters)
+                filt_decoded = apply_blur_filters_to_batch(decoded_het, self.filters)
+                for idx in range(self.multires_levels):
+                    loss_het_ori += self.decoder.generator.cost_function(filt_images[..., idx][..., None],
+                                                                         filt_decoded[..., idx][..., None])
+                loss_het_ori = loss_het_ori / (float(self.multires_levels) + 1)
+
             # Final losses
             rec_loss = loss_het_ori + loss_het_scl
-            reg_loss = l1_loss_het + neg_loss_het
+            reg_loss = l1_loss_het + neg_loss_het + tv_loss + d_mse_loss
 
             total_loss = 0.5 * rec_loss + 0.5 * reg_loss
 
@@ -485,6 +866,12 @@ class AutoEncoder(Model):
         l1_loss_het = tf.reduce_mean(tf.reduce_sum(tf.abs(delta_het), axis=1))
         l1_loss_het = self.l1_lambda * l1_loss_het / self.decoder.generator.total_voxels
 
+        # Total variation and MSE losses
+        tv_loss, d_mse_loss = densitySmoothnessVolume(self.decoder.generator.xsize,
+                                                      self.decoder.generator.indices, delta_het)
+        tv_loss *= self.tv_lambda
+        d_mse_loss *= self.mse_lambda
+
         # Negative loss
         if self.only_pos:
             mask = tf.less(delta_het, 0.0)
@@ -514,6 +901,15 @@ class AutoEncoder(Model):
         images_masked = mask_imgs * self.decoder.generator.resizeImageFourier(images, self.train_size)
         decoded_het_scl = self.decoder.generator.resizeImageFourier(decoded_het, self.train_size)
         loss_het_scl = self.decoder.generator.cost_function(images_masked, decoded_het_scl)
+
+        # MR loss
+        if self.filters is not None:
+            filt_images = apply_blur_filters_to_batch(images, self.filters)
+            filt_decoded = apply_blur_filters_to_batch(decoded_het, self.filters)
+            for idx in range(self.multires_levels):
+                loss_het_ori += self.decoder.generator.cost_function(filt_images[..., idx][..., None],
+                                                                     filt_decoded[..., idx][..., None])
+            loss_het_ori = loss_het_ori / (float(self.multires_levels) + 1)
 
         # Final losses
         rec_loss = loss_het_ori + loss_het_scl
@@ -548,7 +944,7 @@ class AutoEncoder(Model):
 
         return self.refPose * rot.numpy(), self.refPose * shift.numpy(), het.numpy()
 
-    def eval_volume_het(self, x_het, allCoords=False, filter=True, only_pos=False):
+    def eval_volume_het(self, x_het, allCoords=False, filter=True, only_pos=False, add_to_original=False):
         batch_size = x_het.shape[0]
 
         if allCoords and self.decoder.generator.step > 1:
@@ -557,6 +953,14 @@ class AutoEncoder(Model):
         else:
             new_coords = [self.decoder.generator.coords]
 
+        # Read original volume (if needed)
+        volume_path = Path(self.decoder.generator.filename.parent, 'volume.mrc')
+        if add_to_original and volume_path.exists():
+            original_volume = ImageHandler(str(volume_path)).getData()
+            original_volume = np.tile(original_volume[None, ...], (x_het.shape[0], 1, 1, 1))
+        else:
+            original_volume = None
+
         # Volume
         volume = np.zeros((batch_size, self.decoder.generator.xsize,
                            self.decoder.generator.xsize,
@@ -564,6 +968,11 @@ class AutoEncoder(Model):
         for coords in new_coords:
             self.decoder.generator.coords = coords
             volume += self.decoder.eval_volume_het(x_het, filter=filter, only_pos=only_pos)
+
+            if original_volume is not None:
+                original_norm = match_histograms(original_volume, volume)
+                # original_norm = normalize_to_other_volumes(volume, original_volume)
+                volume = original_norm + volume
 
         if allCoords and self.decoder.generator.step > 1:
             self.decoder.generator.coords = prev_coords
