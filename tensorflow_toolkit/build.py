@@ -53,7 +53,10 @@ class Installation:
 
         # If at least one GPU is series 3000 and above, change installation requirements
         for gpu_model in gpu_models:
-            if re.findall(r"40[0-9]+", gpu_model) or re.findall(r"30[0-9]+", gpu_model) or \
+            if version.parse("535.54.03") <= version.parse(driver):
+                cuda_version = "12.2"
+                break
+            elif re.findall(r"40[0-9]+", gpu_model) or re.findall(r"30[0-9]+", gpu_model) or \
                     version.parse("520.56.06") <= version.parse(driver):
                 cuda_version = "11.8"
                 break
@@ -73,16 +76,25 @@ class Installation:
             r"conda env list | grep 'flexutils-tensorflow '",
             shell=True, check=False, stdout=subprocess.PIPE).stdout
         env_installed = bool(env_installed.decode("utf-8").replace('\n', '').replace("*", ""))
-        check_cuda = subprocess.run(
+        check_cuda_conda = subprocess.run(
             r"conda list -n flexutils-tensorflow | grep 'cudatoolkit ' | grep -Eo '[0-9]+\.[0-9]+'",
             shell=True, check=False, stdout=subprocess.PIPE).stdout
+        check_cuda_pip = subprocess.run(
+            r"conda list -n flexutils-tensorflow | grep 'nvidia-cuda-nvcc*' | grep -Eo '[0-9]+\.[0-9]+'",
+            shell=True, check=False, stdout=subprocess.PIPE).stdout
+        check_cuda = check_cuda_conda or check_cuda_pip
         check_cuda = check_cuda.decode("utf-8").replace('\n', '').replace("*", "")
         if check_cuda != cuda_version:
             env_installed = False
 
         # Command: Get installation of new conda env with Cuda, Cudnn, and Tensorflow dependencies
         if not env_installed:
-            if cuda_version == "11.8":
+            if cuda_version == "12.2":
+                tensorflow = "2.15"
+                req_file = os.path.join("requirements", "tensorflow_2_15_requirements.txt")
+                command = "conda env remove -n flexutils-tensorflow && conda create -y -n flexutils-tensorflow " \
+                          "-c conda-forge python=3.10 pyyaml=6.0.1"
+            elif cuda_version == "11.8":
                 tensorflow = "2.12"
                 req_file = os.path.join("requirements", "tensorflow_2_12_requirements.txt")
                 command = "conda env remove -n flexutils-tensorflow && conda create -y -n flexutils-tensorflow " \
@@ -151,7 +163,9 @@ class Installation:
 
         # Set Tensorflow env variables when env is activated
         self.print_flush("Set environment variables in conda env...")
-        if tensorlfow == "2.12":
+        if tensorlfow == "2.15" or "None":
+            commands = []
+        elif tensorlfow == "2.12":
             commands = ['eval "$(%s shell.bash hook) "' % condabin_path,
                         'conda activate flexutils-tensorflow ',
                         'mkdir -p $CONDA_PREFIX/etc/conda/activate.d ',

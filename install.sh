@@ -1,5 +1,19 @@
 echo "-------------- Installing Flexutils-toolkit --------------"
 
+# Name of the Python package to check
+python_package="open3d"
+
+# Function to check if a Python package is installed
+is_python_package_installed() {
+  conda activate flexutils-tensorflow
+    if pip list | grep -F "$1" &> /dev/null; then
+        return 0
+    else
+        return 1
+    fi
+  conda deactivate
+}
+
 # Activate conda in shell
 if which conda | sed 's: ::g' &> /dev/null ; then
   CONDABIN=$(which conda | sed 's: ::g')
@@ -37,3 +51,12 @@ pip install -e . -v
 conda deactivate
 echo "Package flexutils-toolkit succesfully installed in flexutils-tensorlfow env"
 echo "-------------- Flexutils-toolkit installation finished! --------------"
+
+# Install Open3D
+if is_python_package_installed $python_package; then
+  echo "Open3D package is already installed. Skipping..."
+else
+  echo "Installing Open3D..."
+  bash ./install_open3d.sh
+  echo "Done..."
+fi
