@@ -25,14 +25,27 @@
 # **************************************************************************
 
 
+from packaging import version
 import numpy as np
 import mrcfile
 from pathlib import Path
 
 import tensorflow as tf
+tf_version = tf.__version__
+allow_open3d = version.parse(tf_version) >= version.parse("2.15.0")
+
+if allow_open3d:
+    import open3d.ml.tf as ml3d
 
 from tensorflow_toolkit.generators.generator_template import DataGeneratorBase
-from tensorflow_toolkit.utils import basisDegreeVectors, computeBasis, euler_matrix_batch
+from tensorflow_toolkit.utils import basisDegreeVectors, computeBasis, euler_matrix_batch, fft_pad, ifft_pad
+
+
+@tf.function
+def compute_energy(conv, points, queries, extent):
+    fn = lambda x: conv(x[0], x[1], x[2], extent)
+    energy = tf.map_fn(fn, [points, points, queries], fn_output_signature=tf.float32)
+    return energy
 
 
 class Generator(DataGeneratorBase):
@@ -84,7 +97,8 @@ class Generator(DataGeneratorBase):
 
         # Initial bonds and angles
         if self.ref_is_struct:
-            coords = [self.atom_coords[:, 0][..., None], self.atom_coords[:, 1][..., None], self.atom_coords[:, 2][..., None]]
+            coords = [self.atom_coords[:, 0][..., None], self.atom_coords[:, 1][..., None],
+                      self.atom_coords[:, 2][..., None]]
             self.angle0 = self.calcAngle(coords)
             self.bond0 = self.calcBond(coords)
         else:
@@ -106,10 +120,46 @@ class Generator(DataGeneratorBase):
             groups, centers = None, None
 
         return groups, centers
+
     # ----- -------- -----#
 
-
     # ----- Utils -----#
+
+    def ctfFilterImage(self, images, ctf):
+        # Get current batch size (function scope)
+        batch_size_scope = tf.shape(images)[0]
+
+        # Sizes
+        pad_size = tf.constant(int(self.pad_factor * self.xsize), dtype=tf.int32)
+        size = tf.constant(int(self.xsize), dtype=tf.int32)
+
+        # ft_images = tf.signal.fftshift(tf.signal.rfft2d(images[:, :, :, 0]))
+        ft_images = fft_pad(images, pad_size, pad_size)
+        ft_ctf_images_real = tf.multiply(tf.math.real(ft_images), ctf)
+        ft_ctf_images_imag = tf.multiply(tf.math.imag(ft_images), ctf)
+        ft_ctf_images = tf.complex(ft_ctf_images_real, ft_ctf_images_imag)
+        # ctf_images = tf.signal.irfft2d(tf.signal.ifftshift(ft_ctf_images))
+        ctf_images = ifft_pad(ft_ctf_images, size, size)
+        return tf.reshape(ctf_images, [batch_size_scope, self.xsize, self.xsize, 1])
+
+    def wiener2DFilter(self, images, ctf):
+        # Get current batch size (function scope)
+        batch_size_scope = tf.shape(images)[0]
+
+        # Sizes
+        pad_size = tf.constant(int(self.pad_factor * self.xsize), dtype=tf.int32)
+        size = tf.constant(int(self.xsize), dtype=tf.int32)
+
+        ctf_2 = ctf * ctf
+        # epsilon = 1e-5
+        epsilon = 0.1 * tf.reduce_mean(ctf_2)
+
+        ft_images = fft_pad(images, pad_size, pad_size)
+        ft_w_images_real = tf.math.real(ft_images) * ctf / (ctf_2 + epsilon)
+        ft_w_images_imag = tf.math.imag(ft_images) * ctf / (ctf_2 + epsilon)
+        ft_w_images = tf.complex(ft_w_images_real, ft_w_images_imag)
+        w_images = ifft_pad(ft_w_images, size, size)
+        return tf.reshape(w_images, [batch_size_scope, self.xsize, self.xsize, 1])
 
     def computeDeformationFieldVol(self, z):
         Z = tf.constant(self.Z, dtype=tf.float32)
@@ -137,23 +187,43 @@ class Generator(DataGeneratorBase):
         c_r_3 = tf.multiply(c[2], tf.cast(tf.gather(self.r[axis], 2, axis=1), dtype=tf.float32))
         return tf.add(tf.add(c_r_1, c_r_2), c_r_3)
 
-    def applyAlignmentDeltaEuler(self, inputs, axis):
-        r = euler_matrix_batch(self.rot_batch + inputs[3][:, 0],
-                               self.tilt_batch + inputs[3][:, 1],
-                               self.psi_batch + inputs[3][:, 2])
+    def applyAlignmentDeltaEuler(self, inputs, alignments, axis):
+
+        r = euler_matrix_batch(alignments[0] + inputs[3][:, 0],
+                               alignments[1] + inputs[3][:, 1],
+                               alignments[2] + inputs[3][:, 2])
 
         c_r_1 = tf.multiply(inputs[0], tf.cast(tf.gather(r[axis], 0, axis=1), dtype=tf.float32))
         c_r_2 = tf.multiply(inputs[1], tf.cast(tf.gather(r[axis], 1, axis=1), dtype=tf.float32))
         c_r_3 = tf.multiply(inputs[2], tf.cast(tf.gather(r[axis], 2, axis=1), dtype=tf.float32))
         return tf.add(tf.add(c_r_1, c_r_2), c_r_3)
 
-    def applyShifts(self, c, axis):
-        shifts_batch = tf.gather(self.shifts[axis], self.indexes, axis=0)
-        return tf.add(tf.subtract(c, shifts_batch[None, :]), self.xmipp_origin[axis])
+    def applyShifts(self, c, shifts_batch, axis):
+        return tf.add(tf.subtract(c, shifts_batch[axis][None, :]), self.xmipp_origin[axis])
 
-    def applyDeltaShifts(self, c, axis):
-        shifts_batch = tf.gather(self.shifts[axis], self.indexes, axis=0) + c[1][:, axis]
-        return tf.add(tf.subtract(c[0], shifts_batch[None, :]), self.xmipp_origin[axis])
+    def applyDeltaShifts(self, c, shifts_batch, axis):
+        return tf.add(tf.subtract(c[0], shifts_batch[axis][None, :]), self.xmipp_origin[axis])
+
+    def batch_scatter_nd_add(self, ref, indices, updates):
+        # Get batch size
+        batch_size = tf.shape(ref)[0]
+
+        # Create a range tensor for batch indices
+        batch_indices = tf.range(batch_size)
+        batch_indices = tf.reshape(batch_indices, [-1, 1, 1])  # Shape: [B, 1, 1]
+        batch_indices = tf.tile(batch_indices, [1, tf.shape(indices)[1], 1])
+
+        # Expand indices to include batch dimension
+        expanded_indices = tf.concat([batch_indices, indices], axis=-1)  # Shape: [B, M, 3]
+
+        # Flatten the first two dimensions of expanded_indices and updates
+        flat_indices = tf.reshape(expanded_indices, [-1, 3])  # Shape: [B*M, 3]
+        flat_updates = tf.reshape(updates, [-1])  # Shape: [B*M]
+
+        # Perform scatter_nd_add on each item in the batch
+        scattered = tf.tensor_scatter_nd_add(ref, flat_indices, flat_updates)
+
+        return scattered
 
     def scatterImgByPass(self, c):
         # Get current batch size (function scope)
@@ -187,8 +257,9 @@ class Generator(DataGeneratorBase):
         # sigma = 1.
         # bampall = bamp[None, :] * tf.exp(-num / (2. * sigma ** 2.))
 
-        fn = lambda inp: tf.tensor_scatter_nd_add(inp[0], inp[1], inp[2])
-        images = tf.map_fn(fn, [imgs, bposall, bampall], fn_output_signature=tf.float32)
+        # fn = lambda inp: tf.tensor_scatter_nd_add(inp[0], inp[1], inp[2])
+        # images = tf.map_fn(fn, [imgs, bposall, bampall], fn_output_signature=tf.float32)
+        images = self.batch_scatter_nd_add(imgs, bposall, bampall)
         # images = tf.vectorized_map(fn, [imgs, bposall, bampall])
 
         images = tf.reshape(images, [-1, self.xsize, self.xsize, 1])
@@ -285,5 +356,62 @@ class Generator(DataGeneratorBase):
         angle *= 180.0 / np.pi
 
         return angle
+
+    def search_radius(self, points, queries, radius):
+        nsearch = ml3d.layers.FixedRadiusSearch(return_distances=True, ignore_query_point=True)
+        ans = nsearch(points, queries, radius)
+        return (tf.cast(ans.neighbors_index, tf.int32), tf.cast(ans.neighbors_row_splits, tf.int32),
+                tf.cast(ans.neighbors_distance, tf.float32))
+
+    def search_knn(self, points, queries, k):
+        nsearch = ml3d.layers.KNNSearch(return_distances=True, ignore_query_point=True)
+        ans = nsearch(points, queries, k)
+        return tf.cast(ans.neighbors_index, tf.int32), tf.cast(ans.neighbors_distance, tf.float32)
+
+    # def calcClashes(self, coords):
+    #     coords = [tf.transpose(coords[0]), tf.transpose(coords[1]), tf.transpose(coords[2])]
+    #     coords = tf.stack(coords, axis=2)
+    #     coords = tf.transpose(coords, perm=(1, 0, 2))
+    #
+    #     B = tf.shape(coords)[0]
+    #     extent = 8.  # Twice the radius (4A)
+    #
+    #     # To simulate gradient computation
+    #     spread = tf.cast(tf.linspace(0, 1000, B), tf.float32)[..., None, None]
+    #     coords = tf.reshape(coords + spread, (-1, 3))
+    #
+    #     # Compute neighbour distances
+    #     energy = self.conv(tf.ones((tf.shape(coords)[0], 1), tf.float32), coords, coords, extent)
+    #     energy = tf.reduce_mean(tf.reshape(energy, (B, -1)), axis=-1)
+    #
+    #     return energy
+
+    def calcCoords(self, coords):
+        B = tf.shape(coords[0])[1]
+
+        # Clashes
+        coords = [tf.transpose(coords[0]), tf.transpose(coords[1]), tf.transpose(coords[2])]
+        coords = tf.stack(coords, axis=2)
+        coords *= self.sr
+
+        # Correct CA indices
+        ca_indices = tf.tile(self.ca_indices[None, ..., None], (B, 1, 1))
+        indices_B = tf.reshape(tf.range(B), [B, 1, 1])
+        indices_B = tf.tile(indices_B, [1, tf.shape(ca_indices)[1], 1])
+        ca_indices = tf.concat([indices_B, ca_indices], axis=2)
+
+        # Extract CA (only for clashes)
+        coords = tf.gather_nd(coords, ca_indices)
+
+        # B = tf.shape(coords)[0]
+        # N = tf.cast(tf.shape(coords)[1], tf.float32)
+        # extent = 8.  # Twice the radius (4A)
+
+        # To simulate gradient computation
+        # spread = tf.cast(tf.linspace(0, 1000, B), tf.float32)[..., None, None]
+        # coords = tf.reshape(coords + spread, (-1, 3))
+        coords = tf.reshape(coords, (-1, 3))
+
+        return coords
 
     # ----- -------- -----#

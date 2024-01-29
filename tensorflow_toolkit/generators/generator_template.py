@@ -194,6 +194,11 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
         if os.path.isfile(connect_file):
             self.connectivity = np.loadtxt(connect_file).astype(int)
 
+        # CA indices
+        ca_file = str(Path(structure.parent, 'ca_indices.txt'))
+        if os.path.isfile(ca_file):
+            self.ca_indices = tf.constant(np.loadtxt(ca_file).astype(int), tf.int32)
+
         # Flag (reference is structure)
         self.ref_is_struct = True
 
