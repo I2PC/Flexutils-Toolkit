@@ -510,37 +510,22 @@ class AutoEncoder(tf.keras.Model):
 
         if self.mode == "spa":
             indexes = data[1]
-            images = inputs
+            # images = inputs
         elif self.mode == "tomo":
             indexes = data[1][0]
-            images = inputs[0]
-
-        # Update batch_size (in case it is incomplete)
-        batch_size_scope = tf.shape(images)[0]
-
-        # Precompute batch CTFs
-        defocusU_batch = tf.gather(self.decoder.generator.defocusU, indexes, axis=0)
-        defocusV_batch = tf.gather(self.decoder.generator.defocusV, indexes, axis=0)
-        defocusAngle_batch = tf.gather(self.decoder.generator.defocusAngle, indexes, axis=0)
-        cs_batch = tf.gather(self.decoder.generator.cs, indexes, axis=0)
-        kv_batch = self.decoder.generator.kv
-        ctf = computeCTF(defocusU_batch, defocusV_batch, defocusAngle_batch, cs_batch, kv_batch,
-                         self.decoder.generator.sr, self.decoder.generator.pad_factor,
-                         [self.decoder.generator.xsize, int(0.5 * self.decoder.generator.xsize + 1)],
-                         batch_size_scope, self.decoder.generator.applyCTF)
-        self.decoder.generator.ctf = ctf
+            # images = inputs[0]
 
         # Precompute batch zernike coefficients
-        self.decoder.generator.z_x_batch = tf.gather(self.decoder.generator.z_x_space, indexes, axis=0)
-        self.decoder.generator.z_y_batch = tf.gather(self.decoder.generator.z_y_space, indexes, axis=0)
-        self.decoder.generator.z_z_batch = tf.gather(self.decoder.generator.z_z_space, indexes, axis=0)
+        self.decoder.generator.z_x_batch = tf.gather(self.generator.z_x_space, indexes, axis=0)
+        self.decoder.generator.z_y_batch = tf.gather(self.generator.z_y_space, indexes, axis=0)
+        self.decoder.generator.z_z_batch = tf.gather(self.generator.z_z_space, indexes, axis=0)
 
-        if self.CTF == "wiener":
-            images = self.decoder.generator.wiener2DFilter(images)
-            if self.mode == "spa":
-                inputs = images
-            elif self.mode == "tomo":
-                inputs[0] = images
+        # if self.CTF == "wiener":
+        #     images = self.decoder.generator.wiener2DFilter(images)
+        #     if self.mode == "spa":
+        #         inputs = images
+        #     elif self.mode == "tomo":
+        #         inputs[0] = images
 
         encoded = self.encoder(inputs)
         encoded[0] = encoded[0] + self.decoder.generator.z_x_batch
