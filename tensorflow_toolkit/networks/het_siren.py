@@ -32,10 +32,10 @@ from pathlib import Path
 import numpy as np
 from scipy.ndimage import gaussian_filter
 from scipy import signal
-import scipy.stats as st
 from xmipp_metadata.image_handler import ImageHandler
 
-from tensorflow_toolkit.utils import computeCTF, full_fft_pad, full_ifft_pad
+from tensorflow_toolkit.utils import computeCTF, full_fft_pad, full_ifft_pad, create_blur_filters, \
+    apply_blur_filters_to_batch
 from tensorflow_toolkit.layers.siren import SIRENFirstLayerInitializer, SIRENInitializer, MetaDenseWrapper
 
 
@@ -317,62 +317,6 @@ def filterVol(volume):
     volume = volume - (volume > thr) * thr + (volume < -thr) * thr - (volume == thr) * volume
 
     return volume
-
-def gaussian_kernel(size: int, std: float):
-    """
-    Creates a 2D Gaussian kernel with specified size and standard deviation.
-
-    Args:
-    - size: The size of the kernel (will be square).
-    - std: The standard deviation of the Gaussian.
-
-    Returns:
-    - A 2D numpy array representing the Gaussian kernel.
-    """
-    interval = (2 * std + 1.) / size
-    x = np.linspace(-std - interval / 2., std + interval / 2., size)
-    kern1d = np.diff(st.norm.cdf(x))
-    kernel_raw = np.sqrt(np.outer(kern1d, kern1d))
-    kernel = kernel_raw / kernel_raw.sum()
-    return kernel
-
-def create_blur_filters(num_filters, max_std, filter_size):
-    """
-    Create a set of Gaussian blur filters with varying standard deviations.
-
-    Args:
-    - num_filters: The number of blur filters to create.
-    - max_std: The maximum standard deviation for the Gaussian blur.
-    - filter_size: The size of each filter.
-
-    Returns:
-    - A tensor containing the filters.
-    """
-    std_intervals = np.linspace(0.1, max_std, num_filters)
-    filters = []
-    for std in std_intervals:
-        kernel = gaussian_kernel(filter_size, std)
-        kernel = np.expand_dims(kernel, axis=-1)
-        filters.append(kernel)
-
-    filters = np.stack(filters, axis=-1)
-    return tf.constant(filters, dtype=tf.float32)
-
-
-def apply_blur_filters_to_batch(images, filters):
-    """
-    Apply a set of Gaussian blur filters to a batch of images.
-
-    Args:
-    - images: Batch of images with shape (B, W, H, 1).
-    - filters: Filters to apply, with shape (filter_size, filter_size, 1, N).
-
-    Returns:
-    - Batch of blurred images with shape (B, W, H, N).
-    """
-    # Apply the filters
-    blurred_images = tf.nn.depthwise_conv2d(images, filters, strides=[1, 1, 1, 1], padding='SAME')
-    return blurred_images
 
 def resizeImageFourier(images, out_size, pad_factor=1):
     # Sizes
