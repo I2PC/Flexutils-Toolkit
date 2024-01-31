@@ -93,7 +93,7 @@ class Installation:
                 tensorflow = "2.15"
                 req_file = os.path.join("requirements", "tensorflow_2_15_requirements.txt")
                 command = "conda env remove -n flexutils-tensorflow && conda create -y -n flexutils-tensorflow " \
-                          "-c conda-forge python=3.10 pyyaml=6.0.1"
+                          "-c conda-forge python=3.9 pyyaml=6.0.1"
             elif cuda_version == "11.8":
                 tensorflow = "2.12"
                 req_file = os.path.join("requirements", "tensorflow_2_12_requirements.txt")
