@@ -27,6 +27,7 @@
 
 import math
 import numpy as np
+import scipy.stats as st
 
 import tensorflow as tf
 # from tensorflow.python.ops.numpy_ops import deg2rad
@@ -285,3 +286,57 @@ def epochs_from_iterations(total_samples_seen, n_samples, batch_size):
     # Get number of epochs to reach batch_iterations
     return int(batch_iterations / steps)
 
+def gaussian_kernel(size: int, std: float):
+    """
+    Creates a 2D Gaussian kernel with specified size and standard deviation.
+
+    Args:
+    - size: The size of the kernel (will be square).
+    - std: The standard deviation of the Gaussian.
+
+    Returns:
+    - A 2D numpy array representing the Gaussian kernel.
+    """
+    interval = (2 * std + 1.) / size
+    x = np.linspace(-std - interval / 2., std + interval / 2., size)
+    kern1d = np.diff(st.norm.cdf(x))
+    kernel_raw = np.sqrt(np.outer(kern1d, kern1d))
+    kernel = kernel_raw / kernel_raw.sum()
+    return kernel
+
+def create_blur_filters(num_filters, max_std, filter_size):
+    """
+    Create a set of Gaussian blur filters with varying standard deviations.
+
+    Args:
+    - num_filters: The number of blur filters to create.
+    - max_std: The maximum standard deviation for the Gaussian blur.
+    - filter_size: The size of each filter.
+
+    Returns:
+    - A tensor containing the filters.
+    """
+    std_intervals = np.linspace(0.1, max_std, num_filters)
+    filters = []
+    for std in std_intervals:
+        kernel = gaussian_kernel(filter_size, std)
+        kernel = np.expand_dims(kernel, axis=-1)
+        filters.append(kernel)
+
+    filters = np.stack(filters, axis=-1)
+    return tf.constant(filters, dtype=tf.float32)
+
+def apply_blur_filters_to_batch(images, filters):
+    """
+    Apply a set of Gaussian blur filters to a batch of images.
+
+    Args:
+    - images: Batch of images with shape (B, W, H, 1).
+    - filters: Filters to apply, with shape (filter_size, filter_size, 1, N).
+
+    Returns:
+    - Batch of blurred images with shape (B, W, H, N).
+    """
+    # Apply the filters
+    blurred_images = tf.nn.depthwise_conv2d(images, filters, strides=[1, 1, 1, 1], padding='SAME')
+    return blurred_images

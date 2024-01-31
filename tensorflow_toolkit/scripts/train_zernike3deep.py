@@ -34,8 +34,6 @@ from xmipp_metadata.metadata import XmippMetaData
 
 import tensorflow as tf
 
-from tensorflow_toolkit.generators.generator_zernike3deep import Generator
-from tensorflow_toolkit.networks.zernike3deep import AutoEncoder
 # from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
 from tensorflow_toolkit.utils import epochs_from_iterations
 
@@ -49,6 +47,11 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
           radius_mask, smooth_mask, refinePose, architecture="convnn", ctfType="apply", pad=2,
           sr=1.0, applyCTF=1, lr=1e-5, jit_compile=True, regBond=0.01, regAngle=0.01, regClashes=None,
           tensorboard=True, weigths_file=None):
+
+    # We need to import network and generators here instead of at the begining of the script to allow Tensorflow
+    # get the right GPUs set in CUDA_VISIBLE_DEVICES
+    from tensorflow_toolkit.generators.generator_zernike3deep import Generator
+    from tensorflow_toolkit.networks.zernike3deep import AutoEncoder
 
     try:
         # Create data generator
@@ -73,11 +76,13 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
         # Train model
         # strategy = tf.distribute.MirroredStrategy()
         # with strategy.scope():
-        autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, l_bond=regBond, l_angle=regAngle,
-                                  l_clashes=regClashes, jit_compile=jit_compile)
-
         if regClashes is not None:
+            autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, l_bond=regBond,
+                                      l_angle=regAngle, l_clashes=regClashes, jit_compile=jit_compile)
             jit_compile = False
+        else:
+            autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, l_bond=regBond,
+                                      l_angle=regAngle, l_clashes=regClashes, jit_compile=False)
 
         # Fine tune a previous model
         if weigths_file:

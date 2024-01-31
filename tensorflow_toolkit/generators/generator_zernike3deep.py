@@ -31,11 +31,13 @@ import mrcfile
 from pathlib import Path
 
 import tensorflow as tf
-tf_version = tf.__version__
-allow_open3d = version.parse(tf_version) >= version.parse("2.15.0")
 
-if allow_open3d:
+try:
     import open3d.ml.tf as ml3d
+    allow_open3d = True
+except ImportError:
+    allow_open3d = False
+    print("Open3D has not been installed. The program will continue without this package")
 
 from tensorflow_toolkit.generators.generator_template import DataGeneratorBase
 from tensorflow_toolkit.utils import basisDegreeVectors, computeBasis, euler_matrix_batch, fft_pad, ifft_pad
@@ -202,7 +204,8 @@ class Generator(DataGeneratorBase):
         return tf.add(tf.subtract(c, shifts_batch[axis][None, :]), self.xmipp_origin[axis])
 
     def applyDeltaShifts(self, c, shifts_batch, axis):
-        return tf.add(tf.subtract(c[0], shifts_batch[axis][None, :]), self.xmipp_origin[axis])
+        return tf.add(tf.subtract(c[0], shifts_batch[axis][None, :] + c[1][..., axis]),
+                      self.xmipp_origin[axis])
 
     def batch_scatter_nd_add(self, ref, indices, updates):
         # Get batch size

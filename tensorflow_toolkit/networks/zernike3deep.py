@@ -30,15 +30,41 @@ import numpy as np
 
 import tensorflow as tf
 from tensorflow.keras import layers
-tf_version = tf.__version__
-allow_open3d = version.parse(tf_version) >= version.parse("2.15.0")
 
-if allow_open3d:
+try:
     import open3d.ml.tf as ml3d
+    allow_open3d = True
+except ImportError:
+    YELLOW = "\033[93m"
+    RESET = "\033[0m"
+    allow_open3d = False
+    print(YELLOW + "Open3D has not been installed. The program will continue without this package" + RESET)
 
-from tensorflow_toolkit.utils import computeCTF, euler_matrix_batch
+from tensorflow_toolkit.utils import computeCTF, euler_matrix_batch, full_fft_pad, full_ifft_pad, \
+    apply_blur_filters_to_batch, create_blur_filters
 from tensorflow_toolkit.layers.residue_conv2d import ResidueConv2D
 
+
+def resizeImageFourier(images, out_size, pad_factor=1):
+    # Sizes
+    xsize = tf.shape(images)[1]
+    pad_size = pad_factor * xsize
+    pad_out_size = pad_factor * out_size
+
+    # Fourier transform
+    ft_images = full_fft_pad(images, pad_size, pad_size)
+
+    # Normalization constant
+    norm = tf.cast(pad_out_size, dtype=tf.float32) / tf.cast(pad_size, dtype=tf.float32)
+
+    # Resizing
+    ft_images = tf.image.resize_with_crop_or_pad(ft_images[..., None], pad_out_size, pad_out_size)[..., 0]
+
+    # Inverse transform
+    images = full_ifft_pad(ft_images, out_size, out_size)
+    images *= norm * norm
+
+    return images
 
 def lennard_jones(r2, radius):
     # r2 = r * radius * radius
@@ -62,24 +88,26 @@ class Encoder(tf.keras.Model):
                  mode="spa", jit_compile=True):
         super(Encoder, self).__init__()
         self.latent_dim = latent_dim
+        filters = create_blur_filters(5, 5, 15)
         l2 = tf.keras.regularizers.l2(1e-3)
         # shift_activation = lambda y: 2 * tf.keras.activations.tanh(y)
 
         # XLA compilation of methods
-        self.call = tf.function(jit_compile=jit_compile)(self.call)
+        if jit_compile:
+            self.call = tf.function(jit_compile=jit_compile)(self.call)
 
         encoder_inputs = tf.keras.Input(shape=(input_dim, input_dim, 1))
         subtomo_pe = tf.keras.Input(shape=(100,))
 
-        x = tf.keras.layers.Flatten()(encoder_inputs)
-
         if architecture == "mlpnn":
+            x = tf.keras.layers.Flatten()(encoder_inputs)
             for _ in range(12):
                 x = layers.Dense(1024, activation='relu', kernel_regularizer=l2)(x)
             x = layers.Dropout(0.3)(x)
             x = layers.BatchNormalization()(x)
 
         elif architecture == "convnn":
+            x = tf.keras.layers.Flatten()(encoder_inputs)
             for _ in range(3):
                 x = layers.Dense(64 * 64, activation='relu', kernel_regularizer=l2)(x)
 
@@ -149,13 +177,14 @@ class Decoder:
         self.CTF = CTF
 
         # XLA compilation of methods
-        self.prepare_batch = tf.function(jit_compile=jit_compile)(self.prepare_batch)
-        self.compute_field_volume = tf.function(jit_compile=jit_compile)(self.compute_field_volume)
-        self.compute_field_atoms = tf.function(jit_compile=jit_compile)(self.compute_field_atoms)
-        self.compute_atom_cost_params = tf.function(jit_compile=jit_compile)(self.compute_atom_cost_params)
-        self.apply_alignment_and_shifts = tf.function(jit_compile=jit_compile)(self.apply_alignment_and_shifts)
-        self.compute_theo_proj = tf.function(jit_compile=jit_compile)(self.compute_theo_proj)
-        self.__call__ = tf.function(jit_compile=jit_compile)(self.__call__)
+        if jit_compile:
+            self.prepare_batch = tf.function(jit_compile=jit_compile)(self.prepare_batch)
+            self.compute_field_volume = tf.function(jit_compile=jit_compile)(self.compute_field_volume)
+            self.compute_field_atoms = tf.function(jit_compile=jit_compile)(self.compute_field_atoms)
+            self.compute_atom_cost_params = tf.function(jit_compile=jit_compile)(self.compute_atom_cost_params)
+            self.apply_alignment_and_shifts = tf.function(jit_compile=jit_compile)(self.apply_alignment_and_shifts)
+            self.compute_theo_proj = tf.function(jit_compile=jit_compile)(self.compute_theo_proj)
+            self.__call__ = tf.function(jit_compile=jit_compile)(self.__call__)
 
     # @tf.function(jit_compile=True)
     def prepare_batch(self, indexes):
@@ -243,7 +272,7 @@ class Decoder:
         # Scatter image and bypass gradient
         decoded = self.generator.scatterImgByPass([c_x, c_y])
 
-        if self.generator.step > 1 or self.generator.ref_is_struct:
+        if self.generator.step > 1:
             # Gaussian filter image
             decoded = self.generator.gaussianFilterImage(decoded)
 
@@ -276,9 +305,9 @@ class Decoder:
             bondk, anglek, coords = self.compute_atom_cost_params(a_x, a_y, a_z)
 
         else:
-            bondk = 0.0
-            anglek = 0.0
-            coords = 0.0
+            bondk = tf.constant(0.0, tf.float32)
+            anglek = tf.constant(0.0, tf.float32)
+            coords = tf.constant(0.0, tf.float32)
 
         # Apply alignment and shifts
         c_r_s_x, c_r_s_y = self.apply_alignment_and_shifts(c_x, c_y, c_z, alignments, shifts, delta_euler, delta_shifts)
@@ -299,7 +328,7 @@ class AutoEncoder(tf.keras.Model):
         self.mode = generator.mode if mode is None else mode
         self.l_bond = l_bond
         self.l_angle = l_angle
-        self.l_clashes = l_clashes
+        self.l_clashes = l_clashes if l_clashes is not None else 0.0
         self.encoder = Encoder(generator.zernike_size.shape[0], generator.xsize,
                                generator.refinePose, architecture=architecture,
                                mode=self.mode, jit_compile=jit_compile)
@@ -310,7 +339,13 @@ class AutoEncoder(tf.keras.Model):
         self.angle_loss_tracker = tf.keras.metrics.Mean(name="angle_loss")
         self.clash_loss_tracker = tf.keras.metrics.Mean(name="clash_loss")
 
-        if allow_open3d:
+        # XLA compilation of cost function
+        if jit_compile:
+            self.cost_function = tf.function(jit_compile=jit_compile)(self.generator.cost_function)
+        else:
+            self.cost_function = self.generator.cost_function
+
+        if allow_open3d and self.generator.ref_is_struct:
             # Continuous convolution
             # k_clash = 0.6  # Repulsion value (for bb)
             # extent = 1.2  # 2 * radius, typical class distance between 0.4A-0.6A (for bb)
@@ -356,20 +391,34 @@ class AutoEncoder(tf.keras.Model):
         z_y_batch = tf.gather(self.generator.z_y_space, indexes, axis=0)
         z_z_batch = tf.gather(self.generator.z_z_space, indexes, axis=0)
 
-        # Row splits
-        B = tf.shape(images)[0]
-        # num_points = self.generator.atom_coords.shape[0]
-        num_points = tf.cast(tf.shape(self.generator.ca_indices)[0], tf.int64)
-        points_row_splits = tf.range(B + 1, dtype=tf.int64) * num_points
-        queries_row_splits = tf.range(B + 1, dtype=tf.int64) * num_points
+        if allow_open3d and self.generator.ref_is_struct:
+            # Row splits
+            B = tf.shape(images)[0]
+            # num_points = self.generator.atom_coords.shape[0]
+            num_points = tf.cast(tf.shape(self.generator.ca_indices)[0], tf.int64)
+            points_row_splits = tf.range(B + 1, dtype=tf.int64) * num_points
+            queries_row_splits = tf.range(B + 1, dtype=tf.int64) * num_points
 
         # Prepare batch
         # images = self.decoder.prepare_batch([images, indexes])
 
-        if self.mode == "spa":
-            inputs = images
-        elif self.mode == "tomo":
-            inputs[0] = images
+        if self.CTF == "wiener":
+            # Precompute batch CTFs
+            batch_size_scope = tf.shape(indexes)[0]
+            defocusU_batch = tf.gather(self.generator.defocusU, indexes, axis=0)
+            defocusV_batch = tf.gather(self.generator.defocusV, indexes, axis=0)
+            defocusAngle_batch = tf.gather(self.generator.defocusAngle, indexes, axis=0)
+            cs_batch = tf.gather(self.generator.cs, indexes, axis=0)
+            kv_batch = self.generator.kv
+            ctf = computeCTF(defocusU_batch, defocusV_batch, defocusAngle_batch, cs_batch, kv_batch,
+                             self.generator.sr, self.generator.pad_factor,
+                             [self.generator.xsize, int(0.5 * self.generator.xsize + 1)],
+                             batch_size_scope, self.generator.applyCTF)
+            images = self.generator.wiener2DFilter(images, ctf)
+            if self.mode == "spa":
+                inputs = images
+            elif self.mode == "tomo":
+                inputs[0] = images
 
         with tf.GradientTape() as tape:
             encoded = self.encoder(inputs)
@@ -378,12 +427,9 @@ class AutoEncoder(tf.keras.Model):
             encoded[2] = encoded[2] + z_z_batch
             encoded[3] *= self.refPose
             encoded[4] *= self.refPose
-            decoded, bondk, anglek, coords, ctf = self.decoder([encoded, indexes])
+            decoded, bondk, anglek, coords, _ = self.decoder([encoded, indexes])
 
-            if self.CTF == "wiener":
-                images = self.generator.wiener2DFilter(images, ctf)
-
-            if allow_open3d:
+            if allow_open3d and self.generator.ref_is_struct:
                 # Fixed radius search
                 result = self.nsearch(coords, coords, 0.5 * self.extent, points_row_splits, queries_row_splits)
 
@@ -395,16 +441,16 @@ class AutoEncoder(tf.keras.Model):
                                     user_neighbors_importance=self.fn(result.neighbors_distance, result.neighbors_row_splits))
                 clashes = tf.reduce_mean(tf.reshape(clashes, (B, -1)), axis=-1)
             else:
-                clashes = 0.0
+                clashes = tf.constant(0.0, tf.float32)
 
-            img_loss = self.generator.cost_function(images, decoded)
+            img_loss = self.cost_function(images, decoded)
 
             # Bond and angle losses
-            if self.decoder.generator.ref_is_struct:
+            if self.generator.ref_is_struct:
                 bond_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.generator.bond0, bondk)))
                 angle_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.generator.angle0, anglek)))
             else:
-                bond_loss, angle_loss = 0.0, 0.0
+                bond_loss, angle_loss = tf.constant(0.0, tf.float32), tf.constant(0.0, tf.float32)
 
             total_loss = img_loss + self.l_bond * bond_loss + self.l_angle * angle_loss + self.l_clashes * clashes
 
@@ -442,19 +488,33 @@ class AutoEncoder(tf.keras.Model):
         z_z_batch = tf.gather(self.generator.z_z_space, indexes, axis=0)
 
         # Row splits
-        B = tf.shape(images)[0]
-        # num_points = self.generator.atom_coords.shape[0]
-        num_points = tf.cast(tf.shape(self.generator.ca_indices)[0], tf.int64)
-        points_row_splits = tf.range(B + 1, dtype=tf.int64) * num_points
-        queries_row_splits = tf.range(B + 1, dtype=tf.int64) * num_points
+        if allow_open3d and self.generator.ref_is_struct:
+            B = tf.shape(images)[0]
+            # num_points = self.generator.atom_coords.shape[0]
+            num_points = tf.cast(tf.shape(self.generator.ca_indices)[0], tf.int64)
+            points_row_splits = tf.range(B + 1, dtype=tf.int64) * num_points
+            queries_row_splits = tf.range(B + 1, dtype=tf.int64) * num_points
 
         # Prepare batch
         # images = self.decoder.prepare_batch([images, indexes])
 
-        if self.mode == "spa":
-            inputs = images
-        elif self.mode == "tomo":
-            inputs[0] = images
+        if self.CTF == "wiener":
+            # Precompute batch CTFs
+            batch_size_scope = tf.shape(indexes)[0]
+            defocusU_batch = tf.gather(self.generator.defocusU, indexes, axis=0)
+            defocusV_batch = tf.gather(self.generator.defocusV, indexes, axis=0)
+            defocusAngle_batch = tf.gather(self.generator.defocusAngle, indexes, axis=0)
+            cs_batch = tf.gather(self.generator.cs, indexes, axis=0)
+            kv_batch = self.generator.kv
+            ctf = computeCTF(defocusU_batch, defocusV_batch, defocusAngle_batch, cs_batch, kv_batch,
+                             self.generator.sr, self.generator.pad_factor,
+                             [self.generator.xsize, int(0.5 * self.generator.xsize + 1)],
+                             batch_size_scope, self.generator.applyCTF)
+            images = self.generator.wiener2DFilter(images, ctf)
+            if self.mode == "spa":
+                inputs = images
+            elif self.mode == "tomo":
+                inputs[0] = images
 
         encoded = self.encoder(inputs)
         encoded[0] = encoded[0] + z_x_batch
@@ -462,12 +522,9 @@ class AutoEncoder(tf.keras.Model):
         encoded[2] = encoded[2] + z_z_batch
         encoded[3] *= self.refPose
         encoded[4] *= self.refPose
-        decoded, bondk, anglek, coords, ctf = self.decoder([encoded, indexes])
+        decoded, bondk, anglek, coords, _ = self.decoder([encoded, indexes])
 
-        if self.CTF == "wiener":
-            images = self.generator.wiener2DFilter(images, ctf)
-
-        if allow_open3d:
+        if allow_open3d and self.generator.ref_is_struct:
             # Fixed radius search
             result = self.nsearch(coords, coords, 0.5 * self.extent, points_row_splits, queries_row_splits)
 
@@ -479,16 +536,16 @@ class AutoEncoder(tf.keras.Model):
                                                                   result.neighbors_row_splits))
             clashes = tf.reduce_mean(tf.reshape(clashes, (B, -1)), axis=-1)
         else:
-            clashes = 0.0
+            clashes = tf.constant(0.0, tf.float32)
 
-        img_loss = self.generator.cost_function(images, decoded)
+        img_loss = self.cost_function(images, decoded)
 
         # Bond and angle losses
-        if self.decoder.generator.ref_is_struct:
+        if self.generator.ref_is_struct:
             bond_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.generator.bond0, bondk)))
             angle_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.generator.angle0, anglek)))
         else:
-            bond_loss, angle_loss = 0.0, 0.0
+            bond_loss, angle_loss = tf.constant(0.0, tf.float32), tf.constant(0.0, tf.float32)
 
         total_loss = img_loss + self.l_bond * bond_loss + self.l_angle * angle_loss + self.l_clashes * clashes
 
@@ -537,7 +594,7 @@ class AutoEncoder(tf.keras.Model):
         return encoded
 
     def call(self, input_features):
-        if allow_open3d:
+        if allow_open3d and self.generator.ref_is_struct:
             # To know this weights exist
             coords = tf.zeros((1, 3), tf.float32)
             _ = self.nsearch(coords, coords, 1.0)
