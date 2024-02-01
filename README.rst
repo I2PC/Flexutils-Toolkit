@@ -25,6 +25,17 @@ Before installing, Conda must be set in the PATH variable so it can be discovere
 
 We recommend adding the flag `-v` to pip installation command to have a better tracking of the installation.
 
+Additionally, the optional component `Open3D` can be installed to add extra functionalities during the network training phase. In order to install this package, the following requirements must be satisfied:
+
+- CUDA must be installed in your system and properly added to the ``PATH`` and ``LD_LIBRARY_PATH`` variables
+- You should check the following dependencies are installed in your system:
+
+.. code-block::
+
+    sudo apt install xorg-dev libxcb-shm0 libglu1-mesa-dev python3-dev clang libc++-dev libc++abi-dev libsdl2-dev ninja-build libxi-dev libtbb-dev libosmesa6-dev libudev-dev autoconf libtool
+
+If the previous requirements are not met, `Open3D` installation will be just skipped.
+
 ==========================
 Know issues
 ==========================
