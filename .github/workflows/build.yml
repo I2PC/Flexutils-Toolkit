@@ -46,7 +46,6 @@ jobs:
     # Checkout Flexutils-Toolkit to Pull Request branch if exists, by default stays in devel
     - name: Conditionally checkout Flexutils-Toolkit to ${{ github.head_ref }}
       uses: actions/checkout@v4
-      working-directory: ${{ github.workspace }}
       env:
         BRANCH_NAME: ${{ github.head_ref }}
       with:
