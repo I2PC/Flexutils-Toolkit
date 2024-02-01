@@ -1,0 +1,61 @@
+# Name of the GitHub Action
+name: Build scipion-em-flexutils on Pull Request
+
+# Specify when the Action should be triggered: when a pull request is opened against the 'devel' or 'master' branch
+on:
+  pull_request:
+    branches: [devel, master]
+
+# Define the job that should be run
+jobs:
+  build:
+    # Specify the machine to run the job on
+    runs-on: ubuntu-22.04
+
+    # Define the steps to be taken in the job
+    steps:    
+    # Installing dependencies
+    - name: Install dependencies 
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y xorg-dev libxcb-shm0 libglu1-mesa-dev python3-dev clang libc++-dev libc++abi-dev libsdl2-dev ninja-build libxi-dev libtbb-dev libosmesa6-dev libudev-dev autoconf libtool
+    
+    # Installing CUDA
+    - name: Install CUDA
+      uses: Jimver/cuda-toolkit@v0.2.14
+      id: cuda-toolkit
+      with:
+        cuda: '12.2.91'
+        method: network
+        sub-packages: '["nvcc", "toolkit"]'
+
+    # Installing Miniconda
+    - name: Install Miniconda
+      working-directory: ${{ github.workspace }}/../
+      run: |
+        wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+        bash Miniconda3-latest-Linux-x86_64.sh -b -p ${{ github.workspace }}/../miniconda/
+        source ./miniconda/etc/profile.d/conda.sh
+        conda update -n base -c defaults conda -y
+        
+    # Cloning Flexutils
+    - name: Cloning Flexutils-Toolkit
+      working-directory: ${{ github.workspace }}/../
+      run: git clone https://github.com/I2PC/Flexutils-Toolkit.git
+    
+    # Checkout Flexutils to Pull Request branch if exists, by default stays in devel
+    - name: Conditionally checkout Flexutils to ${{ github.head_ref }}
+      working-directory: ${{ github.workspace }}/../Flexutils-Toolkit
+      env:
+        BRANCH_NAME: ${{ github.head_ref }}
+      run: |
+        if [ $(git ls-remote --heads https://github.com/I2PC/Flexutils-Toolkit.git $BRANCH_NAME | wc -l) -eq 1 ]; then
+          git checkout $BRANCH_NAME
+        fi
+      
+    # Installing Flexutils-Toolkit
+    - name: Install Flexutils and show log
+      working-directory: ${{ github.workspace }}/../Flexutils-Toolkit
+      run: |
+        conda activate
+        bash ./install.sh
