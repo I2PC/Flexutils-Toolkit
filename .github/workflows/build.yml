@@ -27,7 +27,6 @@ jobs:
       with:
         cuda: '12.2.2'
         method: network
-        sub-packages: '["nvcc", "toolkit"]'
 
     # Installing Miniconda
     - name: Install Miniconda
@@ -37,11 +36,6 @@ jobs:
         bash Miniconda3-latest-Linux-x86_64.sh -b -p ${{ github.workspace }}/../miniconda/
         source ./miniconda/etc/profile.d/conda.sh
         conda update -n base -c defaults conda -y
-
-#    # Cloning Flexutils
-#    - name: Cloning Flexutils-Toolkit
-#      working-directory: ${{ github.workspace }}
-#      run: git clone https://github.com/I2PC/Flexutils-Toolkit.git:testRepo
     
     # Checkout Flexutils-Toolkit to Pull Request branch if exists, by default stays in devel
     - name: Conditionally checkout Flexutils-Toolkit to ${{ github.head_ref }}
