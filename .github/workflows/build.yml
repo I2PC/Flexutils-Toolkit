@@ -49,6 +49,7 @@ jobs:
       env:
         BRANCH_NAME: ${{ github.head_ref }}
       with:
+        fetch-depth: 0
         ref: $BRANCH_NAME
       
     # Installing Flexutils-Toolkit
