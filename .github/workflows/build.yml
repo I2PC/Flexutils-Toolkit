@@ -43,24 +43,19 @@ jobs:
 #      working-directory: ${{ github.workspace }}
 #      run: git clone https://github.com/I2PC/Flexutils-Toolkit.git:testRepo
     
-#    # Checkout Flexutils-Toolkit to Pull Request branch if exists, by default stays in devel
-#    - name: Conditionally checkout Flexutils-Toolkit to ${{ github.head_ref }}
-#      uses: actions/checkout@v4
-#      working-directory: ${{ github.workspace }}
-#      env:
-#        BRANCH_NAME: ${{ github.head_ref }}
-#      run: |
-#        if [ $(git ls-remote --heads https://github.com/I2PC/Flexutils-Toolkit.git $BRANCH_NAME | wc -l) -eq 1 ]; then
-#          git checkout $BRANCH_NAME
-#        fi
+    # Checkout Flexutils-Toolkit to Pull Request branch if exists, by default stays in devel
+    - name: Conditionally checkout Flexutils-Toolkit to ${{ github.head_ref }}
+      uses: actions/checkout@v4
+      working-directory: ${{ github.workspace }}
+      env:
+        BRANCH_NAME: ${{ github.head_ref }}
+      with:
+        ref: $BRANCH_NAME
       
     # Installing Flexutils-Toolkit
-    - name: Install Flexutils ${{ github.head_ref }} branch and show log
+    - name: Install Flexutils and show log
       working-directory: ${{ github.workspace }}
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ github.head_ref }}
       run: |
-        eval "$(${{ github.workspace }}/..miniconda/bin/conda shell.bash hook)"
+        eval "$(${{ github.workspace }}/../miniconda/bin/conda shell.bash hook)"
         conda activate
         bash ./install.sh
