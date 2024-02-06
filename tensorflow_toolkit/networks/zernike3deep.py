@@ -600,5 +600,8 @@ class AutoEncoder(tf.keras.Model):
             _ = self.nsearch(coords, coords, 1.0)
             _ = self.conv(tf.ones((tf.shape(coords)[0], 1), tf.float32), coords, coords, self.extent)
 
-        indexes = tf.zeros(tf.shape(input_features)[0], dtype=tf.int32)
+        if self.mode == "spa":
+            indexes = tf.zeros(tf.shape(input_features)[0], dtype=tf.int32)
+        elif self.mode == "tomo":
+            indexes = tf.zeros(tf.shape(input_features[0])[0], dtype=tf.int32)
         return self.decoder([self.encoder(input_features), indexes])
