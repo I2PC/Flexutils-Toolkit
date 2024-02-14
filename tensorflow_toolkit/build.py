@@ -171,9 +171,9 @@ class Installation:
                         'mkdir -p $CONDA_PREFIX/etc/conda/activate.d ',
                         'echo \'CUDNN_PATH=$(dirname $(python -c "import nvidia.cudnn;print(nvidia.cudnn.__file__)"))\''
                         ' >> $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh ',
-                        'echo \'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib/:$CUDNN_PATH/lib\' '
+                        'echo \'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib/:$CUDNN_PATH/lib\\n\' '
                         '>> $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh ',
-                        'echo \'export XLA_FLAGS=--xla_gpu_cuda_data_dir=$CONDA_PREFIX/lib/\n\' >> '
+                        'echo \'export XLA_FLAGS=--xla_gpu_cuda_data_dir=$CONDA_PREFIX/lib/\\n\' >> '
                         '$CONDA_PREFIX/etc/conda/activate.d/env_vars.sh ',
                         'mkdir -p $CONDA_PREFIX/lib/nvvm/libdevice ',
                         'cp $CONDA_PREFIX/lib/libdevice.10.bc $CONDA_PREFIX/lib/nvvm/libdevice/'
@@ -184,7 +184,7 @@ class Installation:
                         'mkdir -p $CONDA_PREFIX/etc/conda/activate.d ',
                         'echo \'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib/\' '
                         '>> $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh ',
-                        'echo \'export XLA_FLAGS=--xla_gpu_cuda_data_dir=$CONDA_PREFIX/lib/\n\' >> '
+                        'echo \'export XLA_FLAGS=--xla_gpu_cuda_data_dir=$CONDA_PREFIX/lib/\\n\' >> '
                         '$CONDA_PREFIX/etc/conda/activate.d/env_vars.sh ',
                         'mkdir -p $CONDA_PREFIX/lib/nvvm/libdevice ',
                         'cp $CONDA_PREFIX/lib/libdevice.10.bc $CONDA_PREFIX/lib/nvvm/libdevice/'
