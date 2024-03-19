@@ -72,11 +72,11 @@ done
 
 # Inform the user about missing packages
 if [ ${#missing_packages[@]} -ne 0 ]; then
-    colored_echo "red" "The following packages are missing:"
+    colored_echo "yellow" "The following packages are missing:"
     for pkg in "${missing_packages[@]}"; do
-        colored_echo "red" " - $pkg"
+        colored_echo "yellow" " - $pkg"
     done
-    colored_echo "red" "Open3D functionalities will not be available. If you want them to be used, please, install the listed
+    colored_echo "yellow" "Open3D functionalities will not be available. If you want them to be used, please, install the listed
     packages as sudo and rerun the scipion-em-flexutils plugin installation."
     exit 0
 fi
@@ -124,7 +124,7 @@ colored_echo "green" "##### Checking Cuda... #####"
 if command -v nvcc > /dev/null 2>&1; then
     colored_echo "green" "Cuda not installed in the system. Please, install Cuda."
 else
-    colored_echo "red" "CUDA not found, exiting. To installed Open3D capabilities, please, install Cuda in your system
+    colored_echo "yellow" "CUDA not found, exiting. To installed Open3D capabilities, please, install Cuda in your system
     and retry the installation. If Cuda is already installed and you are seeing this message, you might need to
     manually add Cuda to the bashrc file so it can be found."
     exit 0

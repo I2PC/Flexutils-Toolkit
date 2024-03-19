@@ -7,3 +7,6 @@ toolkit/*.egg-info
 
 # IDE files
 .idea
+
+# Installation files
+flexutils_tensorflow_installed

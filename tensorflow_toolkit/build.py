@@ -127,7 +127,7 @@ class Installation:
                             "Install Conda and/or add it to the PATH variable and try to install again "
                             "this package with 'pip install tensorflow-toolkit'")
 
-        req_file, condabin_path, install_conda_command, cuda_version, tensorlfow = self.condaInstallationCommands()
+        req_file, condabin_path, install_conda_command, cuda_version, tensorflow = self.condaInstallationCommands()
 
         # Install flexutils-tensorflow conda environment
         self.print_flush("Installing Tensorflow conda env...")
@@ -140,7 +140,7 @@ class Installation:
         # Get command to install envrionment and pip dependencies
         self.print_flush("Getting env pip...")
         if install_conda_command is not None:
-            if tensorlfow == "2.12":
+            if tensorflow == "2.12":
                 install_toolkit_command = 'eval "$(%s shell.bash hook)" && conda activate flexutils-tensorflow && ' \
                                           'conda install -y -c nvidia cuda-nvcc=11.3.58 && ' \
                                           'pip install nvidia-cudnn-cu11==8.6.0.163 && ' \
@@ -163,17 +163,17 @@ class Installation:
 
         # Set Tensorflow env variables when env is activated
         self.print_flush("Set environment variables in conda env...")
-        if tensorlfow == "2.15" or "None":
+        if tensorflow == "2.15" or tensorflow == "None":
             commands = []
-        elif tensorlfow == "2.12":
+        elif tensorflow == "2.12":
             commands = ['eval "$(%s shell.bash hook) "' % condabin_path,
                         'conda activate flexutils-tensorflow ',
                         'mkdir -p $CONDA_PREFIX/etc/conda/activate.d ',
                         'echo \'CUDNN_PATH=$(dirname $(python -c "import nvidia.cudnn;print(nvidia.cudnn.__file__)"))\''
                         ' >> $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh ',
-                        'echo \'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib/:$CUDNN_PATH/lib\\n\' '
+                        'echo \'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib/:$CUDNN_PATH/lib\' '
                         '>> $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh ',
-                        'echo \'export XLA_FLAGS=--xla_gpu_cuda_data_dir=$CONDA_PREFIX/lib/\\n\' >> '
+                        'echo \'export XLA_FLAGS=--xla_gpu_cuda_data_dir=$CONDA_PREFIX/lib/\' >> '
                         '$CONDA_PREFIX/etc/conda/activate.d/env_vars.sh ',
                         'mkdir -p $CONDA_PREFIX/lib/nvvm/libdevice ',
                         'cp $CONDA_PREFIX/lib/libdevice.10.bc $CONDA_PREFIX/lib/nvvm/libdevice/'
@@ -184,7 +184,7 @@ class Installation:
                         'mkdir -p $CONDA_PREFIX/etc/conda/activate.d ',
                         'echo \'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib/\' '
                         '>> $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh ',
-                        'echo \'export XLA_FLAGS=--xla_gpu_cuda_data_dir=$CONDA_PREFIX/lib/\\n\' >> '
+                        'echo \'export XLA_FLAGS=--xla_gpu_cuda_data_dir=$CONDA_PREFIX/lib/\' >> '
                         '$CONDA_PREFIX/etc/conda/activate.d/env_vars.sh ',
                         'mkdir -p $CONDA_PREFIX/lib/nvvm/libdevice ',
                         'cp $CONDA_PREFIX/lib/libdevice.10.bc $CONDA_PREFIX/lib/nvvm/libdevice/'
