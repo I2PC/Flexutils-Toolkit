@@ -132,7 +132,7 @@ if command -v nvcc > /dev/null 2>&1; then
         Open3D can only be installed if the Cuda version in the system is at least 12.2. If you want to use Open3D,
         please update your Cuda version."
         exit 0
-
+    fi
 else
     colored_echo "yellow" "CUDA not found, exiting. To installed Open3D capabilities, please, install Cuda in your system
     and retry the installation. If Cuda is already installed and you are seeing this message, you might need to
