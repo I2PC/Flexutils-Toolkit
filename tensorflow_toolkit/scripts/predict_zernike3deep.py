@@ -32,8 +32,6 @@ import numpy as np
 import tensorflow as tf
 from tensorboard.plugins import projector
 
-from tensorflow_toolkit.generators.generator_zernike3deep import Generator
-from tensorflow_toolkit.networks.zernike3deep import AutoEncoder
 # from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
 
 
@@ -45,6 +43,12 @@ from tensorflow_toolkit.networks.zernike3deep import AutoEncoder
 
 def predict(md_file, weigths_file, L1, L2, refinePose, architecture, ctfType, pad=2,
             sr=1.0, applyCTF=1):
+
+    # We need to import network and generators here instead of at the beginning of the script to allow Tensorflow
+    # get the right GPUs set in CUDA_VISIBLE_DEVICES
+    from tensorflow_toolkit.generators.generator_zernike3deep import Generator
+    from tensorflow_toolkit.networks.zernike3deep import AutoEncoder
+
     # Create data generator
     generator = Generator(L1, L2, md_file=md_file, shuffle=False, batch_size=32,
                           step=1, splitTrain=1.0, refinePose=refinePose, pad_factor=pad,
