@@ -320,7 +320,7 @@ class Decoder:
 
 class AutoEncoder(tf.keras.Model):
     def __init__(self, generator, architecture="convnn", CTF="apply", mode=None, l_bond=0.01, l_angle=0.01,
-                 l_clashes=None, jit_compile=True, **kwargs):
+                 l_clashes=None, l_norm=1e-4, jit_compile=True, **kwargs):
         super(AutoEncoder, self).__init__(**kwargs)
         self.generator = generator
         self.CTF = CTF
@@ -329,6 +329,8 @@ class AutoEncoder(tf.keras.Model):
         self.l_bond = l_bond
         self.l_angle = l_angle
         self.l_clashes = l_clashes if l_clashes is not None else 0.0
+        self.l_norm = l_norm
+        # self.architecture = architecture
         self.encoder = Encoder(generator.zernike_size.shape[0], generator.xsize,
                                generator.refinePose, architecture=architecture,
                                mode=self.mode, jit_compile=jit_compile)
@@ -338,6 +340,7 @@ class AutoEncoder(tf.keras.Model):
         self.bond_loss_tracker = tf.keras.metrics.Mean(name="bond_loss")
         self.angle_loss_tracker = tf.keras.metrics.Mean(name="angle_loss")
         self.clash_loss_tracker = tf.keras.metrics.Mean(name="clash_loss")
+        self.norm_loss_tracker = tf.keras.metrics.Mean(name="norm_loss")
 
         # XLA compilation of cost function
         if jit_compile:
@@ -370,7 +373,8 @@ class AutoEncoder(tf.keras.Model):
             self.img_loss_tracker,
             self.bond_loss_tracker,
             self.angle_loss_tracker,
-            self.clash_loss_tracker
+            self.clash_loss_tracker,
+            self.norm_loss_tracker
         ]
 
     def train_step(self, data):
@@ -452,7 +456,20 @@ class AutoEncoder(tf.keras.Model):
             else:
                 bond_loss, angle_loss = tf.constant(0.0, tf.float32), tf.constant(0.0, tf.float32)
 
-            total_loss = img_loss + self.l_bond * bond_loss + self.l_angle * angle_loss + self.l_clashes * clashes
+            # Coefficent norm loss
+            # if self.architecture == "deepconv":
+            #     norm_x = tf.reduce_mean(tf.square(encoded[0]), axis=-1)
+            #     norm_y = tf.reduce_mean(tf.square(encoded[1]), axis=-1)
+            #     norm_z = tf.reduce_mean(tf.square(encoded[2]), axis=-1)
+            #     norm_loss = (norm_x + norm_y + norm_z) / 3.
+            # else:
+            #     norm_loss = tf.constant(0.0, tf.float32)
+            norm_x = tf.reduce_mean(tf.square(encoded[0]), axis=-1)
+            norm_y = tf.reduce_mean(tf.square(encoded[1]), axis=-1)
+            norm_z = tf.reduce_mean(tf.square(encoded[2]), axis=-1)
+            norm_loss = (norm_x + norm_y + norm_z) / 3.
+
+            total_loss = img_loss + self.l_bond * bond_loss + self.l_angle * angle_loss + self.l_clashes * clashes + self.l_norm * norm_loss
 
         grads = tape.gradient(total_loss, self.trainable_weights)
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
@@ -461,12 +478,14 @@ class AutoEncoder(tf.keras.Model):
         self.angle_loss_tracker.update_state(angle_loss)
         self.bond_loss_tracker.update_state(bond_loss)
         self.clash_loss_tracker.update_state(clashes)
+        self.norm_loss_tracker.update_state(norm_loss)
         return {
             "loss": self.total_loss_tracker.result(),
             "img_loss": self.img_loss_tracker.result(),
             "bond": self.bond_loss_tracker.result(),
             "angle": self.angle_loss_tracker.result(),
             "clashes": self.clash_loss_tracker.result(),
+            "norm": self.norm_loss_tracker.result(),
         }
 
     def test_step(self, data):
