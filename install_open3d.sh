@@ -122,7 +122,17 @@ colored_echo "green" "##### Done! #####"
 # Check Cuda is installed in the system
 colored_echo "green" "##### Checking Cuda... #####"
 if command -v nvcc > /dev/null 2>&1; then
-    colored_echo "green" "Cuda not installed in the system. Please, install Cuda."
+    cuda_version=$(nvcc --version | grep "release" | awk '{print $6}' | cut -d',' -f1)
+    cleaned_version=$(echo $cuda_version | sed 's/V//;s/\([0-9]*\.[0-9]*\).*/\1/')
+    cuda_version_number=$(echo $cleaned_version | awk -F. '{printf "%d%02d", $1, $2}')
+    if [ "$cuda_version_number" -ge 1202 ]; then
+        colored_echo "green" "Cuda found in the system."
+    else
+        colored_echo "yellow" "Cuda has been found in your system, but does not fulfill versio requirements. Currently,
+        Open3D can only be installed if the Cuda version in the system is at least 12.2. If you want to use Open3D,
+        please update your Cuda version."
+        exit 0
+
 else
     colored_echo "yellow" "CUDA not found, exiting. To installed Open3D capabilities, please, install Cuda in your system
     and retry the installation. If Cuda is already installed and you are seeing this message, you might need to
