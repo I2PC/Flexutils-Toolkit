@@ -44,6 +44,8 @@ from tensorboard.plugins import projector
 def predict(md_file, weigths_file, L1, L2, refinePose, architecture, ctfType, pad=2,
             sr=1.0, applyCTF=1):
 
+    # We need to import network and generators here instead of at the beginning of the script to allow Tensorflow
+    # get the right GPUs set in CUDA_VISIBLE_DEVICES
     from tensorflow_toolkit.generators.generator_zernike3deep import Generator
     from tensorflow_toolkit.networks.zernike3deep import AutoEncoder
 

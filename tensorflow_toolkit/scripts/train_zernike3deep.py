@@ -45,10 +45,10 @@ from tensorflow_toolkit.utils import epochs_from_iterations
 
 def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epochs, cost,
           radius_mask, smooth_mask, refinePose, architecture="convnn", ctfType="apply", pad=2,
-          sr=1.0, applyCTF=1, lr=1e-5, jit_compile=True, regBond=0.01, regAngle=0.01, regClashes=None,
+          sr=1.0, applyCTF=1, lr=1e-5, jit_compile=True, regNorm=1e-4, regBond=0.01, regAngle=0.01, regClashes=None,
           tensorboard=True, weigths_file=None):
 
-    # We need to import network and generators here instead of at the begining of the script to allow Tensorflow
+    # We need to import network and generators here instead of at the beginning of the script to allow Tensorflow
     # get the right GPUs set in CUDA_VISIBLE_DEVICES
     from tensorflow_toolkit.generators.generator_zernike3deep import Generator
     from tensorflow_toolkit.networks.zernike3deep import AutoEncoder
@@ -82,7 +82,7 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
             jit_compile = False
         else:
             autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, l_bond=regBond,
-                                      l_angle=regAngle, l_clashes=regClashes, jit_compile=False)
+                                      l_angle=regAngle, l_clashes=regClashes, l_norm=regNorm, jit_compile=False)
 
         # Fine tune a previous model
         if weigths_file:
@@ -183,6 +183,7 @@ def main():
     parser.add_argument('--sr', type=float, required=True)
     parser.add_argument('--apply_ctf', type=int, required=True)
     parser.add_argument('--jit_compile', action='store_true')
+    parser.add_argument('--regNorm', type=float, default=0.0001)
     parser.add_argument('--regBond', type=float, default=0.01)
     parser.add_argument('--regAngle', type=float, default=0.01)
     parser.add_argument('--regClashes', type=float, default=None)
@@ -213,8 +214,8 @@ def main():
               "refinePose": args.refine_pose, "architecture": args.architecture,
               "ctfType": args.ctf_type, "pad": args.pad, "sr": args.sr,
               "applyCTF": args.apply_ctf, "lr": args.lr, "jit_compile": args.jit_compile,
-              "regBond": args.regBond, "regAngle": args.regAngle, "regClashes": args.regClashes,
-              "tensorboard": args.tensorboard, "weigths_file": args.weigths_file}
+              "regNorm": args.regNorm, "regBond": args.regBond, "regAngle": args.regAngle,
+              "regClashes": args.regClashes, "tensorboard": args.tensorboard, "weigths_file": args.weigths_file}
 
     # Initialize volume slicer
     train(**inputs)
