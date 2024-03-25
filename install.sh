@@ -59,6 +59,7 @@ else
 fi
 
 # Install pynvml package in current env (installation dependency)
+export LD_LIBRARY_PATH=""
 conda create -y -n install-temp python=3.9
 conda activate install-temp
 colored_echo "green" "Adding installation dependencies to current env..."
