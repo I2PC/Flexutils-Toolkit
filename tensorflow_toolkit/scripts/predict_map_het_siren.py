@@ -46,7 +46,7 @@ from tensorflow_toolkit.networks.het_siren import AutoEncoder
 #     tf.config.experimental.set_memory_growth(gpu_instance, True)
 
 
-def predict(weigths_file, het_file, out_path, allCoords=False, filter=False, architecture="convnn", **kwargs):
+def predict(weigths_file, het_file, out_path, allCoords=False, filter=True, architecture="convnn", **kwargs):
     x_het = np.loadtxt(het_file)
     if len(x_het.shape) == 1:
         x_het = x_het.reshape((1, -1))
@@ -86,6 +86,7 @@ def main():
     parser.add_argument('--out_path', type=str, required=True)
     parser.add_argument('--step', type=int, required=True)
     parser.add_argument('--architecture', type=str, required=True)
+    parser.add_argument('--gpu', type=str)
 
     args = parser.parse_args()
 
