@@ -90,8 +90,10 @@ def main():
 
     args = parser.parse_args()
 
-    if hasattr(args, "gpu"):
+    if args.gpu:
         os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
+    else:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
     physical_devices = tf.config.list_physical_devices('GPU')
     for gpu_instance in physical_devices:
         tf.config.experimental.set_memory_growth(gpu_instance, True)
