@@ -304,6 +304,13 @@ def filterVol(volume):
     kernel = tf.constant(kernel, dtype=tf.complex64)
     ft_kernel = tf.abs(tf.signal.fftshift(tf.signal.fft3d(kernel)))
 
+    # Create a gaussian kernel that will be used to blur the original acquisition
+    # std = 2.0
+    # gauss_1d = signal.windows.gaussian(volume.shape[1], std)
+    # kernel = np.einsum('i,j,k->ijk', gauss_1d, gauss_1d, gauss_1d)
+    # kernel = tf.constant(kernel, dtype=tf.complex64)
+    # ft_kernel = tf.abs(tf.signal.fftshift(tf.signal.fft3d(kernel)))
+
     def applyKernelFourier(x):
         x = tf.cast(x, dtype=tf.complex64)
         ft_x = tf.signal.fftshift(tf.signal.fft3d(x))
@@ -550,7 +557,7 @@ class Decoder(Model):
             delta_het = layers.Add()([delta_het, aux])
         count += 1
         delta_het = layers.Dense(self.generator.total_voxels, activation='linear',
-                                 name=f"het_{count}")(delta_het)
+                                 name=f"het_{count}", kernel_initializer=self.generator.weight_initializer)(delta_het)
 
         # Scatter image and bypass gradient
         decoded_het = layers.Lambda(self.generator.scatterImgByPass)([coords, shifts, delta_het])
@@ -591,7 +598,7 @@ class Decoder(Model):
             volume_grids[idx] = volume_grids[idx] * (volume_grids[idx] >= 0.0)
 
             # Deconvolvers
-            volume_grids[idx] = richardsonLucyDeconvolver(volume_grids[idx])
+            # volume_grids[idx] = richardsonLucyDeconvolver(volume_grids[idx])
             # volume_grids[idx] = richardsonLucyBlindDeconvolver(volume_grids[idx], global_iter=5, iter=5)
             # volume_grids[idx] = deconvolveTV(volume_grids[idx], iterations=50, regularization_weight=0.001, lr=0.01)
             # volume_grids[idx] = tv_deconvolution_bregman(volume_grids[idx], iterations=50,
@@ -703,14 +710,18 @@ class AutoEncoder(Model):
             d_mse_loss *= self.mse_lambda
 
             # Negative loss
-            if self.only_pos:
-                mask = tf.less(delta_het, 0.0)
-                delta_neg = tf.boolean_mask(delta_het, mask)
-                delta_neg_size = tf.cast(tf.shape(delta_neg)[-1], dtype=tf.float32)
-                delta_neg = tf.reduce_mean(tf.abs(delta_neg))
-                neg_loss_het = self.l1_lambda * delta_neg / delta_neg_size
-            else:
-                neg_loss_het = 0.0
+            mask = tf.less(delta_het, 0.0)
+            delta_neg = tf.boolean_mask(delta_het, mask)
+            delta_neg_size = tf.cast(tf.shape(delta_neg)[-1], dtype=tf.float32)
+            delta_neg = tf.reduce_mean(tf.abs(delta_neg))
+            neg_loss_het = self.l1_lambda * delta_neg / delta_neg_size
+
+            # # Positive loss
+            # mask = tf.greater(delta_het, 0.0)
+            # delta_pos = tf.boolean_mask(delta_het, mask)
+            # delta_pos_size = tf.cast(tf.shape(delta_pos)[-1], dtype=tf.float32)
+            # delta_pos = tf.reduce_mean(tf.abs(delta_pos))
+            # pos_loss_het = self.l1_lambda * delta_pos / delta_pos_size
 
             # Reconstruction mask for projections (Decoder size)
             mask_imgs = self.decoder.generator.resizeImageFourier(self.decoder.generator.mask_imgs,
@@ -913,15 +924,16 @@ class AutoEncoder(Model):
             self.decoder.generator.coords = coords
             volume += self.decoder.eval_volume_het(x_het, filter=filter, only_pos=only_pos)
 
-            if original_volume is not None:
-                original_norm = match_histograms(original_volume, volume)
-                # original_norm = normalize_to_other_volumes(volume, original_volume)
-                volume = original_norm + volume
+        # if original_volume is not None:
+        #     original_norm = match_histograms(original_volume, volume)
+        #     # original_norm = normalize_to_other_volumes(volume, original_volume)
+        #     volume = original_norm + volume
 
         if allCoords and self.decoder.generator.step > 1:
             self.decoder.generator.coords = prev_coords
 
         return volume
+
     def predict(self, data, predict_mode="het", applyCTF=False):
         self.predict_mode, self.applyCTF = predict_mode, applyCTF
         self.predict_function = None
