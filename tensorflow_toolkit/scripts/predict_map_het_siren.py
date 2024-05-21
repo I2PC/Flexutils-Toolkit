@@ -46,7 +46,7 @@ from tensorflow_toolkit.networks.het_siren import AutoEncoder
 #     tf.config.experimental.set_memory_growth(gpu_instance, True)
 
 
-def predict(weigths_file, het_file, out_path, allCoords=False, filter=False, architecture="convnn", **kwargs):
+def predict(weigths_file, het_file, out_path, allCoords=False, filter=True, architecture="convnn", **kwargs):
     x_het = np.loadtxt(het_file)
     if len(x_het.shape) == 1:
         x_het = x_het.reshape((1, -1))
@@ -70,7 +70,7 @@ def predict(weigths_file, het_file, out_path, allCoords=False, filter=False, arc
     autoencoder.load_weights(weigths_file)
 
     # Decode maps
-    decoded_maps = autoencoder.eval_volume_het(x_het, allCoords=allCoords, filter=filter)
+    decoded_maps = autoencoder.eval_volume_het(x_het, allCoords=allCoords, filter=filter, add_to_original=True)
     for idx, decoded_map in enumerate(decoded_maps):
         decoded_path = Path(out_path, 'decoded_map_class_%02d.mrc' % (idx + 1))
         ImageHandler().write(decoded_map, decoded_path, overwrite=True)
@@ -86,11 +86,14 @@ def main():
     parser.add_argument('--out_path', type=str, required=True)
     parser.add_argument('--step', type=int, required=True)
     parser.add_argument('--architecture', type=str, required=True)
+    parser.add_argument('--gpu', type=str)
 
     args = parser.parse_args()
 
-    if hasattr(args, "gpu"):
+    if args.gpu:
         os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
+    else:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
     physical_devices = tf.config.list_physical_devices('GPU')
     for gpu_instance in physical_devices:
         tf.config.experimental.set_memory_growth(gpu_instance, True)
