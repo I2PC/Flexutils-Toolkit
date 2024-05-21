@@ -135,7 +135,7 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
     def readMetadata(self, filename):
         filename = Path(filename)
         self.filename = filename
-        self.metadata = XmippMetaData(file_name=filename)
+        self.metadata = XmippMetaData(file_name=str(filename))
         mask = Path(filename.parent, 'mask.mrc')
         volume = Path(filename.parent, 'volume.mrc')
         structure = Path(filename.parent, 'structure.txt')
