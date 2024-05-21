@@ -179,35 +179,114 @@ class Generator(tf.keras.utils.Sequence):
         encoder_loss = tf.constant(0.0, dtype=tf.float32)
         for space_1 in inputs:
             for space_2 in inputs:
-                encoder_loss += tf.losses.mean_squared_error(space_1, space_2)
-        encoder_loss *= 0.5
+                loss_1 = tf.losses.mean_squared_error(space_1, space_2)
+
+                dmat1 = self.pairwise_distances(space_1)
+                dmat2 = self.pairwise_distances(space_2)
+                dmat1 = self.normalize_distributions(dmat1)
+                dmat2 = self.normalize_distributions(dmat2)
+                # loss_2 = 1.0 * -self.spearman_rank_correlation(dmat1, dmat2)
+
+                hist1 = self.compute_histogram(tf.reshape(dmat1, [-1]), 20)
+                hist2 = self.compute_histogram(tf.reshape(dmat2, [-1]), 20)
+                loss_3 = 1.0 * self.wasserstein_distance(hist1, hist2)
+
+                encoder_loss += loss_1 + loss_3
+        # encoder_loss *= 0.5
         return encoder_loss
 
     @tf.function()
     def compute_shannon_loss(self, inputs, predictions):
         encoder_loss = tf.constant(0.0, dtype=tf.float32)
         for input_data in inputs:
-            for space in predictions:
-                dist_input = self.pairwise_distances(input_data)
-                dist_space = self.pairwise_distances(space)
-                mask_epsilon_distance = tf.fill(shape_internal(dist_space), tf.cast(1e-5, dtype=tf.float32))
-                div_dist_mat_true = tf.multiply(dist_input,
-                                                tf.cast(tf.greater(dist_input, mask_epsilon_distance),
-                                                        dtype=tf.float32))
-                upper_mat_pred = tf.linalg.band_part(dist_space, 0, -1) - tf.linalg.band_part(dist_space, 0, 0)
-                div_upper_mat_true = tf.linalg.band_part(div_dist_mat_true, 0, -1) - tf.linalg.band_part(
-                    div_dist_mat_true, 0, 0)
-                aux_1 = tf.reduce_sum(
-                    tf.math.divide_no_nan(tf.square(div_upper_mat_true - upper_mat_pred), div_upper_mat_true))
-                aux_2 = 1. / tf.reduce_sum(div_upper_mat_true)
-                encoder_loss += aux_2 * aux_1
+            dist_input = self.pairwise_distances(input_data)
+            dist_space = self.pairwise_distances(predictions)
+            mask_epsilon_distance = tf.fill(shape_internal(dist_space), tf.cast(1e-5, dtype=tf.float32))
+            div_dist_mat_true = tf.multiply(dist_input,
+                                            tf.cast(tf.greater(dist_input, mask_epsilon_distance),
+                                                    dtype=tf.float32))
+            upper_mat_pred = tf.linalg.band_part(dist_space, 0, -1) - tf.linalg.band_part(dist_space, 0, 0)
+            div_upper_mat_true = tf.linalg.band_part(div_dist_mat_true, 0, -1) - tf.linalg.band_part(
+                div_dist_mat_true, 0, 0)
+            aux_1 = tf.reduce_sum(
+                tf.math.divide_no_nan(tf.square(div_upper_mat_true - upper_mat_pred), div_upper_mat_true))
+            aux_2 = 1. / tf.reduce_sum(div_upper_mat_true)
+            encoder_loss += aux_2 * aux_1
         return encoder_loss
+
+    def normalize_distributions(self, dist):
+        dist = dist - tf.reduce_mean(dist)
+        return dist / tf.math.reduce_std(dist)
+
+    @tf.function
+    def spearman_rank_correlation(self, dmat1, dmat2):
+        """Compute the Spearman rank correlation between two distance matrices."""
+
+        def rank_tensor(tensor):
+            """Return the ranks of the values in the tensor."""
+            flat_tensor = tf.reshape(tensor, [-1])
+            sorted_indices = tf.argsort(flat_tensor)
+            rank_indices = tf.argsort(sorted_indices)
+            return tf.cast(tf.reshape(rank_indices, tf.shape(tensor)), tf.float32)
+
+        rank1 = rank_tensor(dmat1)
+        rank2 = rank_tensor(dmat2)
+
+        covariance = tf.reduce_mean((rank1 - tf.reduce_mean(rank1)) * (rank2 - tf.reduce_mean(rank2)))
+        stddev1 = tf.math.reduce_std(rank1)
+        stddev2 = tf.math.reduce_std(rank2)
+        correlation = covariance / (stddev1 * stddev2)
+        # return tf.clip_by_value(correlation, -1.0, 1.0)
+        return correlation
+
+    def spearman_correlation_loss(self, tensor1, tensor2):
+        encoder_loss = tf.constant(0.0, dtype=tf.float32)
+        for input_data, space in zip(tensor1, tensor2):
+            # for space in tensor2:
+            """Custom loss function to minimize the dissimilarity between distance distributions."""
+            dmat1 = self.pairwise_distances(input_data)
+            dmat2 = self.pairwise_distances(space)
+            dmat1 = self.normalize_distributions(dmat1)
+            dmat2 = self.normalize_distributions(dmat2)
+            encoder_loss += -self.spearman_rank_correlation(dmat1, dmat2)
+        return encoder_loss
+
+    def compute_histogram(self, distances, bins):
+        """Compute the histogram of the distances."""
+        histogram = tf.histogram_fixed_width(distances, [0.0, tf.reduce_max(distances)], nbins=bins)
+        histogram = tf.math.divide_no_nan(tf.cast(histogram, tf.float32), tf.cast(tf.reduce_sum(histogram), tf.float32))
+        return histogram
+
+    def wasserstein_distance(self, hist1, hist2):
+        """Compute the Wasserstein distance between two histograms."""
+        return tf.reduce_sum(tf.abs(tf.cumsum(hist1) - tf.cumsum(hist2)))
+
+    def wasserstein_distance_loss(self, inputs, encoded, bins=20):
+        encoder_loss = tf.constant(0.0, dtype=tf.float32)
+        dmat1 = self.pairwise_distances(encoded)
+        dmat1 = self.normalize_distributions(dmat1)
+        for input_data in inputs:
+            # for space in tensor2:
+            """Custom loss function to minimize the dissimilarity between distance distributions."""
+            dmat2 = self.pairwise_distances(input_data)
+            dmat2 = self.normalize_distributions(dmat2)
+
+            hist1 = self.compute_histogram(tf.reshape(dmat1, [-1]), bins)
+            hist2 = self.compute_histogram(tf.reshape(dmat2, [-1]), bins)
+
+            encoder_loss += self.wasserstein_distance(hist1, hist2)
+
+        return encoder_loss
+
+    def compute_centering_loss(self, tensor):
+        loss = tf.reduce_sum(tf.square(tf.reduce_mean(tensor, axis=0)))
+        return loss
 
     @tf.function()
     def compute_decoder_loss(self, inputs, predictions):
         loss = tf.constant(0.0, dtype=tf.float32)
-        for space in predictions:
-            loss += tf.losses.mean_squared_error(inputs, space)
+        for data, space in zip(inputs, predictions):
+            loss += tf.losses.mean_squared_error(data, space)
             # loss += tf.losses.mean_absolute_error(inputs, space)
         loss /= len(predictions)
         return loss
