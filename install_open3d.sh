@@ -120,23 +120,23 @@ colored_echo "green" "##### Done! #####"
 #echo "##### Done! #####"
 
 # Check Cuda is installed in the system
-colored_echo "green" "##### Checking Cuda... #####"
-if command -v nvcc > /dev/null 2>&1; then
-    cuda_version=$(nvcc --version | grep "release" | awk '{print $6}' | cut -d',' -f1)
-    cleaned_version=$(echo $cuda_version | sed 's/V//;s/\([0-9]*\.[0-9]*\).*/\1/')
-    cuda_version_number=$(echo $cleaned_version | awk -F. '{printf "%d%02d", $1, $2}')
-    if [ "$cuda_version_number" -ge 1202 ]; then
-        colored_echo "green" "Cuda found in the system."
+colored_echo "green" "##### Checking Nvidia Drivers version... #####"
+if command -v nvidia-smi > /dev/null 2>&1; then
+    nvidia_minimum_version=53505403
+    nvidia_driver_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader,nounits | head -n 1)
+    # nvidia_driver_version=$(echo $nvidia_driver_version | sed 's/V//;s/\([0-9]*\.[0-9]*\).*/\1/')
+    nvidia_driver_version_cleaned=$(echo $nvidia_driver_version | awk -F. '{printf "%d%02d%02d", $1, $2, $3}')
+    if [ "$nvidia_driver_version_cleaned" -ge $nvidia_minimum_version ]; then
+        colored_echo "green" "Nvidia Drivers OK"
     else
-        colored_echo "yellow" "Cuda has been found in your system, but does not fulfill versio requirements. Currently,
-        Open3D can only be installed if the Cuda version in the system is at least 12.2. If you want to use Open3D,
-        please update your Cuda version."
+        colored_echo "yellow" "The version of the Nvidia Drivers available in your system does not meet Open3D
+        requirements. Your current version is $nvidia_driver_version, but you will need at least 535.054.03. Please,
+        update your drivers and run the installation again to get Open3D."
         exit 0
-
+    fi
 else
-    colored_echo "yellow" "CUDA not found, exiting. To installed Open3D capabilities, please, install Cuda in your system
-    and retry the installation. If Cuda is already installed and you are seeing this message, you might need to
-    manually add Cuda to the bashrc file so it can be found."
+    colored_echo "yellow" "Nvidia Drivers not found, exiting. To installed Open3D capabilities, please, install at
+    least Nvidia Drivers v535.054.03 and run the installation again to get Open3D."
     exit 0
 fi
 colored_echo "green" "##### Done! #####"
@@ -151,7 +151,7 @@ colored_echo "green" "##### Done! #####"
 # CMake call (including Tensorflow)
 colored_echo "green" "##### Generating building files... #####"
 conda activate flexutils-tensorflow
-cmake -DBUILD_CUDA_MODULE=ON -DGLIBCXX_USE_CXX11_ABI=ON -DBUILD_TENSORFLOW_OPS=ON -DBUNDLE_OPEN3D_ML=ON -DOPEN3D_ML_ROOT=./Open3D-ML -DCMAKE_INSTALL_PREFIX=../open3d_install -DPython3_ROOT=$PYTHON_CONDA ..
+cmake -DBUILD_CUDA_MODULE=ON -DBUILD_TENSORFLOW_OPS=ON -DBUNDLE_OPEN3D_ML=ON -DGLIBCXX_USE_CXX11_ABI=ON -DOPEN3D_ML_ROOT=./Open3D-ML -DCMAKE_INSTALL_PREFIX=../open3d_install -DPython3_ROOT=$PYTHON_CONDA -DCMAKE_LIBRARY_ARCHITECTURE=x86_64-linux-gnu ..
 colored_echo "green" "##### Done! #####"
 
 # Install (needs Flexutils-Tensorflow environment)
