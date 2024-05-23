@@ -71,15 +71,15 @@ for pkg in "${required_packages[@]}"; do
 done
 
 # Inform the user about missing packages
-if [ ${#missing_packages[@]} -ne 0 ]; then
-    colored_echo "yellow" "The following packages are missing:"
-    for pkg in "${missing_packages[@]}"; do
-        colored_echo "yellow" " - $pkg"
-    done
-    colored_echo "yellow" "Open3D functionalities will not be available. If you want them to be used, please, install the listed
-    packages as sudo and rerun the scipion-em-flexutils plugin installation."
-    exit 0
-fi
+#if [ ${#missing_packages[@]} -ne 0 ]; then
+#    colored_echo "yellow" "The following packages are missing:"
+#    for pkg in "${missing_packages[@]}"; do
+#        colored_echo "yellow" " - $pkg"
+#    done
+#    colored_echo "yellow" "Open3D functionalities will not be available. If you want them to be used, please, install the listed
+#    packages as sudo and rerun the scipion-em-flexutils plugin installation."
+#    exit 0
+#fi
 
 # Activate conda in shell
 if which conda | sed 's: ::g' &> /dev/null ; then
@@ -145,13 +145,16 @@ colored_echo "green" "##### Done! #####"
 colored_echo "green" "##### Getting Flexutils-Tensorflow python... #####"
 conda activate flexutils-tensorflow
 PYTHON_CONDA=$CONDA_PREFIX"/bin/python"
-conda deactivate
+colored_echo "green" "##### Done! #####"
+
+# Install dependencies on conda environment
+colored_echo "green" "##### Installing Open3D dependencies... #####"
+conda install cxx-compiler c-compiler clang
 colored_echo "green" "##### Done! #####"
 
 # CMake call (including Tensorflow)
 colored_echo "green" "##### Generating building files... #####"
-conda activate flexutils-tensorflow
-cmake -DBUILD_CUDA_MODULE=ON -DBUILD_TENSORFLOW_OPS=ON -DBUNDLE_OPEN3D_ML=ON -DGLIBCXX_USE_CXX11_ABI=ON -DOPEN3D_ML_ROOT=./Open3D-ML -DCMAKE_INSTALL_PREFIX=../open3d_install -DPython3_ROOT=$PYTHON_CONDA -DCMAKE_LIBRARY_ARCHITECTURE=x86_64-linux-gnu ..
+cmake -DBUILD_CUDA_MODULE=ON -DGLIBCXX_USE_CXX11_ABI=ON -DBUILD_TENSORFLOW_OPS=ON -DBUNDLE_OPEN3D_ML=ON -DBUILD_GUI=OFF -DBUILD_WEBRTC=OFF -DBUILD_EXAMPLES=OFF -DOPEN3D_ML_ROOT=./Open3D-ML -DCMAKE_INSTALL_PREFIX=../open3d_install -DPython3_ROOT=$PYTHON_CONDA -DCMAKE_LIBRARY_ARCHITECTURE=x86_64-linux-gnu ..
 colored_echo "green" "##### Done! #####"
 
 # Install (needs Flexutils-Tensorflow environment)
