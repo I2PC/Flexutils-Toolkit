@@ -154,7 +154,7 @@ colored_echo "green" "##### Done! #####"
 
 # CMake call (including Tensorflow)
 colored_echo "green" "##### Generating building files... #####"
-cmake -DBUILD_CUDA_MODULE=ON -DGLIBCXX_USE_CXX11_ABI=ON -DBUILD_TENSORFLOW_OPS=ON -DBUNDLE_OPEN3D_ML=ON -DBUILD_GUI=OFF -DBUILD_WEBRTC=OFF -DBUILD_EXAMPLES=OFF -DOPEN3D_ML_ROOT=./Open3D-ML -DCMAKE_INSTALL_PREFIX=../open3d_install -DPython3_ROOT=$PYTHON_CONDA -DCMAKE_LIBRARY_ARCHITECTURE=x86_64-linux-gnu ..
+cmake -DBUILD_CUDA_MODULE=ON -DGLIBCXX_USE_CXX11_ABI=ON -DBUILD_TENSORFLOW_OPS=ON -DBUNDLE_OPEN3D_ML=ON -DBUILD_GUI=ON -DBUILD_WEBRTC=ON -DBUILD_EXAMPLES=OFF -DOPEN3D_ML_ROOT=./Open3D-ML -DCMAKE_INSTALL_PREFIX=../open3d_install -DPython3_ROOT=$PYTHON_CONDA -DCMAKE_LIBRARY_ARCHITECTURE=x86_64-linux-gnu ..
 colored_echo "green" "##### Done! #####"
 
 # Install (needs Flexutils-Tensorflow environment)
