@@ -149,7 +149,7 @@ colored_echo "green" "##### Done! #####"
 
 # Install dependencies on conda environment
 colored_echo "green" "##### Installing Open3D dependencies... #####"
-conda install cxx-compiler c-compiler clang
+conda install -y cxx-compiler c-compiler clang
 colored_echo "green" "##### Done! #####"
 
 # CMake call (including Tensorflow)
