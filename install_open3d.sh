@@ -147,25 +147,16 @@ conda activate flexutils-tensorflow
 PYTHON_CONDA=$CONDA_PREFIX"/bin/python"
 colored_echo "green" "##### Done! #####"
 
-# Install dependencies on conda environment
-colored_echo "green" "##### Installing Open3D dependencies... #####"
-conda install -y cxx-compiler c-compiler clang
-colored_echo "green" "##### Done! #####"
-
 # CMake call (including Tensorflow)
 colored_echo "green" "##### Generating building files... #####"
-cmake -DBUILD_CUDA_MODULE=ON -DGLIBCXX_USE_CXX11_ABI=ON -DBUILD_TENSORFLOW_OPS=ON -DBUNDLE_OPEN3D_ML=ON -DBUILD_GUI=ON -DBUILD_WEBRTC=ON -DBUILD_EXAMPLES=OFF -DOPEN3D_ML_ROOT=./Open3D-ML -DCMAKE_INSTALL_PREFIX=../open3d_install -DPython3_ROOT=$PYTHON_CONDA -DCMAKE_LIBRARY_ARCHITECTURE=x86_64-linux-gnu ..
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib/
+#cmake -DCMAKE_CXX_FLAGS="-Wno-error=unused-result" -DBUILD_CUDA_MODULE=ON -DGLIBCXX_USE_CXX11_ABI=ON -DBUILD_TENSORFLOW_OPS=ON -DBUNDLE_OPEN3D_ML=ON -DBUILD_GUI=ON -DBUILD_WEBRTC=ON -DBUILD_EXAMPLES=OFF -DOPEN3D_ML_ROOT=./Open3D-ML -DCMAKE_INSTALL_PREFIX=../open3d_install -DPython3_ROOT=$PYTHON_CONDA ..
+cmake -DBUILD_CUDA_MODULE=ON -DGLIBCXX_USE_CXX11_ABI=ON -DBUILD_TENSORFLOW_OPS=ON -DBUNDLE_OPEN3D_ML=ON -DBUILD_GUI=ON -DBUILD_WEBRTC=ON -DBUILD_EXAMPLES=OFF -DOPEN3D_ML_ROOT=./Open3D-ML -DCMAKE_INSTALL_PREFIX=../open3d_install -DPython3_ROOT=$PYTHON_CONDA ..
 colored_echo "green" "##### Done! #####"
 
-# Install (needs Flexutils-Tensorflow environment)
-colored_echo "green" "##### Installing Open3D... #####"
-#conda activate flexutils-tensorflow
-make -j12
-colored_echo "green" "##### Done! #####"
-
-# Install Python package in environment
-colored_echo "green" "##### Installing Open3D in Flexutils-Tensorflow environment... #####"
-make install-pip-package
+# Build and install Python package in environment (needs Flexutils-Tensorflow environment)
+colored_echo "green" "##### Installing Open3D in Flexutils-Tensorflow environment...... #####"
+make install-pip-package -j12
 colored_echo "green" "##### Done! #####"
 
 # Deactivate Flexutils-Tensorflow environment

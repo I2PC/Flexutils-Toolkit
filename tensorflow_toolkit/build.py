@@ -92,10 +92,13 @@ class Installation:
             if cuda_version == "12.2":
                 tensorflow = "2.15"
                 req_file = os.path.join("requirements", "tensorflow_2_15_requirements.txt")
-                command = ("conda env remove -n flexutils-tensorflow && conda create -y -n flexutils-tensorflow " 
-                           "-c nvidia/label/cuda-12.2.0 -c conda-forge  python=3.9 pyyaml=6.0.1 cuda=12.2.0 cmake "
-                           "mesalib libglu xorg-libx11 xorg-libxrandr xorg-libxinerama xorg-libxcursor libxcb libcxx "
-                           "libcxxabi sdl2 ninja xorg-libxi tbb-devel libudev autoconf libtool")
+                command = ("conda env remove -n flexutils-tensorflow && conda create -y -n flexutils-tensorflow "
+                           "-c nvidia/label/cuda-12.2.0 -c conda-forge -c anaconda python=3.9 pyyaml=6.0.1 cuda=12.2.0 "
+                           "cmake make mesalib libglu xorg-libx11 xorg-libxrandr xorg-libxinerama xorg-libxcursor "
+                           "libxcb libcxx=17.0.6 libcxxabi=17.0.6 sdl2 ninja xorg-libxi tbb-devel libudev autoconf "
+                           "libtool cxx-compiler c-compiler clang mesa-libgl-devel-cos6-x86_64 mesa-libgl-cos6-x86_64 "
+                           "mesa-dri-drivers-cos6-x86_64")
+
             elif cuda_version == "11.8":
                 tensorflow = "2.12"
                 req_file = os.path.join("requirements", "tensorflow_2_12_requirements.txt")
