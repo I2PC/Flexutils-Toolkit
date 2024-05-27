@@ -70,6 +70,35 @@ for pkg in "${required_packages[@]}"; do
     fi
 done
 
+# Compare versions
+compare_versions() {
+    local IFS=.
+    local i
+    local ver1=($1)
+    local ver2=($2)
+
+    # Determine the maximum length of the version arrays
+    local max_length=${#ver1[@]}
+    (( ${#ver2[@]} > max_length )) && max_length=${#ver2[@]}
+
+    # Fill empty fields with zeros
+    for ((i=0; i<max_length; i++)); do
+        [[ -z ${ver1[i]} ]] && ver1[i]=0
+        [[ -z ${ver2[i]} ]] && ver2[i]=0
+    done
+
+    # Compare version components
+    for ((i=0; i<max_length; i++)); do
+        if ((10#${ver1[i]} > 10#${ver2[i]})); then
+            return 1
+        fi
+        if ((10#${ver1[i]} < 10#${ver2[i]})); then
+            return 2
+        fi
+    done
+    return 0
+}
+
 # Inform the user about missing packages
 #if [ ${#missing_packages[@]} -ne 0 ]; then
 #    colored_echo "yellow" "The following packages are missing:"
@@ -122,11 +151,13 @@ colored_echo "green" "##### Done! #####"
 # Check Cuda is installed in the system
 colored_echo "green" "##### Checking Nvidia Drivers version... #####"
 if command -v nvidia-smi > /dev/null 2>&1; then
-    nvidia_minimum_version=53505403
+    nvidia_minimum_version="535.054.03"
     nvidia_driver_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader,nounits | head -n 1)
     # nvidia_driver_version=$(echo $nvidia_driver_version | sed 's/V//;s/\([0-9]*\.[0-9]*\).*/\1/')
-    nvidia_driver_version_cleaned=$(echo $nvidia_driver_version | awk -F. '{printf "%d%02d%02d", $1, $2, $3}')
-    if [ "$nvidia_driver_version_cleaned" -ge $nvidia_minimum_version ]; then
+#    nvidia_driver_version_cleaned=$(echo $nvidia_driver_version | awk -F. '{printf "%d%02d%02d", $1, $2, $3}')
+    compare_versions "$version1" "$version2"
+    result=$?
+    if [ "$result" -ge 0 ]; then
         colored_echo "green" "Nvidia Drivers OK"
     else
         colored_echo "yellow" "The version of the Nvidia Drivers available in your system does not meet Open3D
