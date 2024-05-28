@@ -71,14 +71,14 @@ if python tensorflow_toolkit/build.py ; then
 else
   colored_echo "red" "Error when building flexutils-tensorflow - Exiting"
   if which conda | sed 's: ::g' ; then
-    conda env remove -n flexutils-tensorflow
+    conda env remove -n flexutils-tensorflow -y
   fi
   exit 1
 fi
 
 # Deactivate and remove temporal installation environment
 conda deactivate
-conda env remove -n install-temp
+conda env remove -n install-temp -y
 
 # Install flexutils-toolkit in flexutils-tensorflow env
 conda activate flexutils-tensorflow
