@@ -207,10 +207,12 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
             coords = np.asarray(np.where(mrc.data > 0))
             coords = np.transpose(np.asarray([coords[2, :], coords[1, :], coords[0, :]]))
             self.coords = coords - self.xmipp_origin
+            xsize = mrc.data.shape[0]
 
         # Apply step to coords and values
         self.coords = self.coords[::self.step]
         self.values = np.zeros(self.coords.shape[0], dtype=np.float32)
+        self.vol = np.zeros((xsize, xsize, xsize), dtype=np.float32)
 
         # Flag (reference is map)
         self.ref_is_struct = False

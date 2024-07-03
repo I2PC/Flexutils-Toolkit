@@ -46,7 +46,8 @@ from tensorflow_toolkit.networks.het_siren import AutoEncoder
 #     tf.config.experimental.set_memory_growth(gpu_instance, True)
 
 
-def predict(weigths_file, het_file, out_path, allCoords=False, filter=True, architecture="convnn", **kwargs):
+def predict(weigths_file, het_file, out_path, allCoords=False, filter=True, architecture="convnn",
+            poseReg=0.0, ctfReg=0.0, **kwargs):
     x_het = np.loadtxt(het_file)
     if len(x_het.shape) == 1:
         x_het = x_het.reshape((1, -1))
@@ -61,7 +62,8 @@ def predict(weigths_file, het_file, out_path, allCoords=False, filter=True, arch
                           xsize=xsize)
 
     # Load model
-    autoencoder = AutoEncoder(generator, het_dim=x_het.shape[1], architecture=architecture, **kwargs)
+    autoencoder = AutoEncoder(generator, het_dim=x_het.shape[1], architecture=architecture,
+                              poseReg=poseReg, ctfReg=ctfReg, **kwargs)
     if generator.mode == "spa":
         autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
     elif generator.mode == "tomo":
@@ -86,6 +88,8 @@ def main():
     parser.add_argument('--out_path', type=str, required=True)
     parser.add_argument('--step', type=int, required=True)
     parser.add_argument('--architecture', type=str, required=True)
+    parser.add_argument('--pose_reg', type=float, required=False, default=0.0)
+    parser.add_argument('--ctf_reg', type=float, required=False, default=0.0)
     parser.add_argument('--gpu', type=str)
 
     args = parser.parse_args()
@@ -99,7 +103,8 @@ def main():
         tf.config.experimental.set_memory_growth(gpu_instance, True)
 
     inputs = {"weigths_file": args.weigths_file, "het_file": args.het_file,
-              "out_path": args.out_path, "step": args.step, "architecture": args.architecture}
+              "out_path": args.out_path, "step": args.step, "architecture": args.architecture,
+              "poseReg": args.pose_reg, "ctfReg": args.ctf_reg}
 
     # Initialize volume slicer
     predict(**inputs)

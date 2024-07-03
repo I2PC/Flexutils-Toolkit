@@ -134,14 +134,50 @@ def trilinear_interpolation(input_volumes, query_points):
 
 class Generator(DataGeneratorBase):
     def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+        super().__init__(keepMap=True, **kwargs)
 
         # Save mask map and indices
         mask_path = Path(self.filename.parent, 'mask.mrc')
+        values_in_mask = np.zeros((self.xsize, self.xsize, self.xsize))
         with mrcfile.open(mask_path) as mrc:
             self.mask_map = mrc.data
             coords = np.asarray(np.where(mrc.data == 1))
             self.indices = coords.T
+            self.flat_indices = self.convert_indices_to_flat(self.indices)
+            coords = np.asarray(np.where(mrc.data >= 0))
+            self.full_indices = coords.T
+            coords = np.transpose(np.asarray([coords[2, :], coords[1, :], coords[0, :]]))
+            self.coords = coords - self.xmipp_origin
+            combined_masks = values_in_mask + mrc.data
+
+        # TEST: Reconstruction instead of refinement in the mask?
+        inverted_mask = 1. - self.mask_map
+        vol = self.vol * inverted_mask
+        ImageHandler().write(vol, "masked_volume.mrc")
+        ImageHandler().write(self.vol, "np_masked_volume.mrc")
+
+        r = np.linalg.norm(self.coords, axis=1)
+        indices_r = self.full_indices[r <= 0.5 * self.xsize]
+        combined_masks[indices_r[:, 0], indices_r[:, 1], indices_r[:, 2]] = 1.0
+        # ImageHandler().write(combined_masks, "combined_masks.mrc")
+        combined_masks = combined_masks.flatten().astype(bool)
+        self.coords = self.coords[combined_masks]
+        self.full_indices = self.full_indices[combined_masks]
+        self.values = vol.flatten()[combined_masks]
+        self.values_no_masked = self.vol.flatten()[combined_masks]
+        values_in_mask[self.indices[:, 0], self.indices[:, 1], self.indices[:, 2]] = 1.0
+        values_in_mask = values_in_mask.flatten()[combined_masks].astype(bool)
+        self.values_in_mask = tf.squeeze(tf.constant(np.argwhere(values_in_mask), dtype=tf.int32))
+        self.full_voxels = self.coords.shape[0]
+        self.cube = self.xsize * self.xsize * self.xsize
+        self.mask = tf.squeeze(tf.constant(np.argwhere(combined_masks), dtype=tf.int32))
+
+        # Checks for losses
+        volume_path = Path(self.filename.parent, 'volume.mrc')
+        if os.path.isfile(volume_path):
+            self.null_ref = False
+        else:
+            self.null_ref = True
 
         # Scale factor
         self.scale_factor = 0.5 * self.xsize
@@ -164,7 +200,7 @@ class Generator(DataGeneratorBase):
         if self.step > 1:
             self.all_coords = self.coords / self.scale_factor
         self.coords = self.coords[::self.step] / self.scale_factor
-        self.total_voxels = self.coords.shape[0]
+        self.total_voxels = self.indices.shape[0]
 
         # Initialize pose information
         self.rot_batch = np.zeros(self.batch_size)
@@ -244,7 +280,12 @@ class Generator(DataGeneratorBase):
 
         imgs = tf.zeros((batch_size_scope, self.xsize, self.xsize), dtype=tf.float32)
 
-        bamp = self.values[None, :] + c[2]
+        # Update values within mask
+        flat_indices = tf.constant(self.flat_indices, dtype=tf.int32)[:, None]
+        fn = lambda inp: tf.scatter_nd(flat_indices, inp, [self.cube])
+        updates = tf.map_fn(fn, c[2], fn_output_signature=tf.float32)
+        updates = tf.gather(updates, self.mask, axis=1)
+        bamp = tf.tile(self.values[None, :], [batch_size_scope, 1]) + updates
 
         bposf = tf.round(c_sampling)
         bposi = tf.cast(bposf, tf.int32)
@@ -348,6 +389,19 @@ class Generator(DataGeneratorBase):
                                [batch_size, size, size, size])
 
         return tf.reduce_sum(kernel_3d, axis=1)
+
+    def convert_indices_to_flat(self, indices):
+        """
+        Convert 3D indices to linear indices for a flattened array.
+
+        Args:
+        indices (numpy.ndarray): A numpy array of shape (N, 3) containing the 3D indices.
+        M (int): The size of the dimension of the volume.
+
+        Returns:
+        numpy.ndarray: A numpy array of shape (N,) containing the linear indices.
+        """
+        return indices[:, 0] * (self.xsize ** 2) + indices[:, 1] * self.xsize + indices[:, 2]
 
     def multivariate_gaussian_3d_filter(self, inputs):
         """Applies a 3D Gaussian filter projected to 2D to a batch of images."""
