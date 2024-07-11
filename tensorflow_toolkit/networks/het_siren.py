@@ -629,17 +629,21 @@ class Decoder(Model):
             decoded_het_ctf = decoded_het
 
         self.decode_het = Model(latent, delta_het, name="decoder_het")
-        self.decoder = Model([rows, shifts, latent], [decoded_het, decoded_het_ctf], name="decoder")
+        self.decoder = Model([rows, shifts, latent], [decoded_het, decoded_het_ctf, delta_het], name="decoder")
 
     def eval_volume_het(self, x_het, filter=True, only_pos=False):
         batch_size = x_het.shape[0]
 
-        # Update values within mask
         delta_het = self.decode_het(x_het)
-        flat_indices = tf.constant(self.generator.flat_indices, dtype=tf.int32)[:, None]
-        fn = lambda inp: tf.scatter_nd(flat_indices, inp, [self.generator.cube])
-        updates = tf.map_fn(fn, delta_het, fn_output_signature=tf.float32)
-        updates = tf.gather(updates, self.generator.mask, axis=1)
+
+        # Update values within mask
+        if self.generator.isFocused:
+            flat_indices = tf.constant(self.generator.flat_indices, dtype=tf.int32)[:, None]
+            fn = lambda inp: tf.scatter_nd(flat_indices, inp, [self.generator.cube])
+            updates = tf.map_fn(fn, delta_het, fn_output_signature=tf.float32)
+            updates = tf.gather(updates, self.generator.mask, axis=1)
+        else:
+            updates = delta_het
 
         values = tf.tile(self.generator.values[None, :], [batch_size, 1]) + updates
 
@@ -714,6 +718,7 @@ class AutoEncoder(Model):
             self.filters = create_blur_filters(multires_levels, 10, 30)
         self.disantangle_pose = poseReg > 0.0
         self.disantangle_ctf = ctfReg > 0.0
+        self.isFocused = generator.isFocused
         self.total_loss_tracker = tf.keras.metrics.Mean(name="total_loss")
         self.test_loss_tracker = tf.keras.metrics.Mean(name="test_loss")
         self.loss_het_tracker = tf.keras.metrics.Mean(name="rec_het")
@@ -790,7 +795,7 @@ class AutoEncoder(Model):
             # Forward pass (first encoder and decoder)
             l_rows, l_shifts, l_het = self.encoder_exp(inputs)
             het, rows, shifts = self.latent(l_het), self.rows(l_rows), self.shifts(l_shifts)
-            decoded_het, decoded_het_ctf = self.decoder([self.refPose * rows, self.refPose * shifts, het])
+            decoded_het, decoded_het_ctf, delta_het = self.decoder([self.refPose * rows, self.refPose * shifts, het])
 
             if self.disantangle_pose and self.mode == "spa":
                 # Forward pass (second encoder - no permutation)
@@ -813,16 +818,20 @@ class AutoEncoder(Model):
                 self.decoder.generator.tilt_batch = euler_batch_perm[..., 1]
                 self.decoder.generator.psi_batch = euler_batch_perm[..., 2]
                 self.decoder.generator.shifts_batch = [shifts_batch_perm[..., 0], shifts_batch_perm[..., 1]]
-                decoded_het, _ = self.decoder([self.refPose * rows, self.refPose * shifts, het])
+                decoded_het, _, _ = self.decoder([self.refPose * rows, self.refPose * shifts, het])
                 _, _, l_het_clean_perm = self.encoder_clean(decoded_het)
                 het_clean_perm = self.latent(l_het_clean_perm)
 
+            # delta_het = self.decoder.decode_het(het)
+
             # Update values within mask
-            delta_het = self.decoder.decode_het(het)
-            flat_indices = tf.constant(self.decoder.generator.flat_indices, dtype=tf.int32)[:, None]
-            fn = lambda inp: tf.scatter_nd(flat_indices, inp, [self.decoder.generator.cube])
-            updates = tf.map_fn(fn, delta_het, fn_output_signature=tf.float32)
-            updates = tf.gather(updates, self.decoder.generator.mask, axis=1)
+            if self.isFocused:
+                flat_indices = tf.constant(self.decoder.generator.flat_indices, dtype=tf.int32)[:, None]
+                fn = lambda inp: tf.scatter_nd(flat_indices, inp, [self.decoder.generator.cube])
+                updates = tf.map_fn(fn, delta_het, fn_output_signature=tf.float32)
+                updates = tf.gather(updates, self.decoder.generator.mask, axis=1)
+            else:
+                updates = delta_het
 
             # L1 penalization delta_het
             delta_het = tf.tile(self.decoder.generator.values[None, :], [batch_size_scope, 1]) + updates
@@ -830,16 +839,16 @@ class AutoEncoder(Model):
             l1_loss_het = self.l1_lambda * l1_loss_het / self.decoder.generator.full_voxels
 
             # Volume range loss
-            if self.decoder.generator.null_ref:
+            if self.decoder.generator.null_ref or not self.isFocused:
                 hist_loss = 0.0
             else:
-                # range = [tf.reduce_min(self.decoder.generator.values), tf.reduce_max(self.decoder.generator.values)]
                 orig_values = tf.tile(self.decoder.generator.values_no_masked[None, :], [batch_size_scope, 1])
                 values_in_het = tf.gather(delta_het, self.decoder.generator.values_in_mask, axis=1)
                 values_in_mask = tf.gather(orig_values, self.decoder.generator.values_in_mask, axis=1)
+                # val_range = [tf.reduce_min(values_in_mask), tf.reduce_max(values_in_mask)]
                 # hist_loss = tf.keras.losses.MSE(
-                #     compute_histogram(values_in_het, bins=50, minval=range[0], maxval=range[1]),
-                #     compute_histogram(values_in_mask, bins=50, minval=range[0], maxval=range[1])
+                #     compute_histogram(values_in_het, bins=50, minval=val_range[0], maxval=val_range[1]),
+                #     compute_histogram(values_in_mask, bins=50, minval=val_range[0], maxval=val_range[1])
                 # )
                 hist_loss = (tf.keras.losses.MSE(tf.reduce_max(values_in_het, axis=1), tf.reduce_max(values_in_mask))
                              + tf.keras.losses.MSE(tf.reduce_min(values_in_het, axis=1), tf.reduce_min(values_in_mask))
@@ -914,7 +923,7 @@ class AutoEncoder(Model):
             reg_loss = l1_loss_het + neg_loss_het + tv_loss + d_mse_loss
 
             total_loss = (rec_loss + reg_loss + self.pose_lambda * loss_disantagled_pose
-                          + self.ctf_lambda * loss_disantagled_ctf + 10.0 * hist_loss)
+                          + self.ctf_lambda * loss_disantagled_ctf + 100.0 * hist_loss)
 
         grads = tape.gradient(total_loss, self.trainable_weights)
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
@@ -989,7 +998,7 @@ class AutoEncoder(Model):
         # Forward pass (first encoder and decoder)
         l_rows, l_shifts, l_het = self.encoder_exp(inputs)
         het, rows, shifts = self.latent(l_het), self.rows(l_rows), self.shifts(l_shifts)
-        decoded_het, decoded_het_ctf = self.decoder([self.refPose * rows, self.refPose * shifts, het])
+        decoded_het, decoded_het_ctf, delta_het = self.decoder([self.refPose * rows, self.refPose * shifts, het])
 
         if self.disantangle_pose and self.mode == "spa":
             # Forward pass (second encoder - no permutation)
@@ -1012,16 +1021,20 @@ class AutoEncoder(Model):
             self.decoder.generator.tilt_batch = euler_batch_perm[..., 1]
             self.decoder.generator.psi_batch = euler_batch_perm[..., 2]
             self.decoder.generator.shifts_batch = [shifts_batch_perm[..., 0], shifts_batch_perm[..., 1]]
-            decoded_het, _ = self.decoder([self.refPose * rows, self.refPose * shifts, het])
+            decoded_het, _, _ = self.decoder([self.refPose * rows, self.refPose * shifts, het])
             _, _, l_het_clean_perm = self.encoder_clean(decoded_het)
             het_clean_perm = self.latent(l_het_clean_perm)
 
+        # delta_het = self.decoder.decode_het(het)
+
         # Update values within mask
-        delta_het = self.decoder.decode_het(het)
-        flat_indices = tf.constant(self.decoder.generator.flat_indices, dtype=tf.int32)[:, None]
-        fn = lambda inp: tf.scatter_nd(flat_indices, inp, [self.decoder.generator.cube])
-        updates = tf.map_fn(fn, delta_het, fn_output_signature=tf.float32)
-        updates = tf.gather(updates, self.decoder.generator.mask, axis=1)
+        if self.isFocused:
+            flat_indices = tf.constant(self.decoder.generator.flat_indices, dtype=tf.int32)[:, None]
+            fn = lambda inp: tf.scatter_nd(flat_indices, inp, [self.decoder.generator.cube])
+            updates = tf.map_fn(fn, delta_het, fn_output_signature=tf.float32)
+            updates = tf.gather(updates, self.decoder.generator.mask, axis=1)
+        else:
+            updates = delta_het
 
         # L1 penalization delta_het
         delta_het = tf.tile(self.decoder.generator.values[None, :], [batch_size_scope, 1]) + updates
@@ -1029,7 +1042,7 @@ class AutoEncoder(Model):
         l1_loss_het = self.l1_lambda * l1_loss_het / self.decoder.generator.full_voxels
 
         # Volume range loss
-        if self.decoder.generator.null_ref:
+        if self.decoder.generator.null_ref or not self.isFocused:
             hist_loss = 0.0
         else:
             # range = [tf.reduce_min(self.decoder.generator.values), tf.reduce_max(self.decoder.generator.values)]
@@ -1245,10 +1258,13 @@ class AutoEncoder(Model):
             l_rot, l_shifts, l_het = self.encoder_exp(inputs)
             het, rot, shifts = self.latent(l_het), self.rows(l_rot), self.shifts(l_shifts)
             return rot, shifts, het
-        elif self.predict_mode == "particles":
+        elif "particles" in self.predict_mode:
             l_rot, l_shifts, l_het = self.encoder_exp(inputs)
             het, rot, shifts = self.latent(l_het), self.rows(l_rot), self.shifts(l_shifts)
-            return self.decoder([rot, shifts, het])[0]
+            if "ctf" in self.predict_mode:
+                return self.decoder([rot, shifts, het])[1]
+            else:
+                return self.decoder([rot, shifts, het])[0]
         else:
             raise ValueError("Prediction mode not understood!")
 

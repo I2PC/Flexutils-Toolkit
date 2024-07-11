@@ -133,8 +133,9 @@ def trilinear_interpolation(input_volumes, query_points):
 
 
 class Generator(DataGeneratorBase):
-    def __init__(self, **kwargs):
+    def __init__(self, isFocused=False, **kwargs):
         super().__init__(keepMap=True, **kwargs)
+        self.isFocused = isFocused
 
         # Save mask map and indices
         mask_path = Path(self.filename.parent, 'mask.mrc')
@@ -143,34 +144,36 @@ class Generator(DataGeneratorBase):
             self.mask_map = mrc.data
             coords = np.asarray(np.where(mrc.data == 1))
             self.indices = coords.T
-            self.flat_indices = self.convert_indices_to_flat(self.indices)
-            coords = np.asarray(np.where(mrc.data >= 0))
-            self.full_indices = coords.T
-            coords = np.transpose(np.asarray([coords[2, :], coords[1, :], coords[0, :]]))
-            self.coords = coords - self.xmipp_origin
-            combined_masks = values_in_mask + mrc.data
 
-        # TEST: Reconstruction instead of refinement in the mask?
-        inverted_mask = 1. - self.mask_map
-        vol = self.vol * inverted_mask
-        ImageHandler().write(vol, "masked_volume.mrc")
-        ImageHandler().write(self.vol, "np_masked_volume.mrc")
+            if self.isFocused:
+                self.flat_indices = self.convert_indices_to_flat(self.indices)
+                coords = np.asarray(np.where(mrc.data >= 0))
+                self.full_indices = coords.T
+                coords = np.transpose(np.asarray([coords[2, :], coords[1, :], coords[0, :]]))
+                self.coords = coords - self.xmipp_origin
+                combined_masks = values_in_mask + mrc.data
 
-        r = np.linalg.norm(self.coords, axis=1)
-        indices_r = self.full_indices[r <= 0.5 * self.xsize]
-        combined_masks[indices_r[:, 0], indices_r[:, 1], indices_r[:, 2]] = 1.0
-        # ImageHandler().write(combined_masks, "combined_masks.mrc")
-        combined_masks = combined_masks.flatten().astype(bool)
-        self.coords = self.coords[combined_masks]
-        self.full_indices = self.full_indices[combined_masks]
-        self.values = vol.flatten()[combined_masks]
-        self.values_no_masked = self.vol.flatten()[combined_masks]
-        values_in_mask[self.indices[:, 0], self.indices[:, 1], self.indices[:, 2]] = 1.0
-        values_in_mask = values_in_mask.flatten()[combined_masks].astype(bool)
-        self.values_in_mask = tf.squeeze(tf.constant(np.argwhere(values_in_mask), dtype=tf.int32))
-        self.full_voxels = self.coords.shape[0]
-        self.cube = self.xsize * self.xsize * self.xsize
-        self.mask = tf.squeeze(tf.constant(np.argwhere(combined_masks), dtype=tf.int32))
+        if self.isFocused:
+            inverted_mask = 1. - self.mask_map
+            vol = self.vol * inverted_mask
+            r = np.linalg.norm(self.coords, axis=1)
+            indices_r = self.full_indices[r <= 0.5 * self.xsize]
+            combined_masks[indices_r[:, 0], indices_r[:, 1], indices_r[:, 2]] = 1.0
+            # ImageHandler().write(combined_masks, "combined_masks.mrc")
+            combined_masks = combined_masks.flatten().astype(bool)
+            self.coords = self.coords[combined_masks]
+            self.full_indices = self.full_indices[combined_masks]
+            self.values = vol.flatten()[combined_masks]
+            self.values_no_masked = self.vol.flatten()[combined_masks]
+            values_in_mask[self.indices[:, 0], self.indices[:, 1], self.indices[:, 2]] = 1.0
+            values_in_mask = values_in_mask.flatten()[combined_masks].astype(bool)
+            self.values_in_mask = tf.squeeze(tf.constant(np.argwhere(values_in_mask), dtype=tf.int32))
+            self.full_voxels = self.coords.shape[0]
+            self.cube = self.xsize * self.xsize * self.xsize
+            self.mask = tf.squeeze(tf.constant(np.argwhere(combined_masks), dtype=tf.int32))
+        else:
+            self.full_indices = np.copy(self.indices)
+            self.full_voxels = self.coords.shape[0]
 
         # Checks for losses
         volume_path = Path(self.filename.parent, 'volume.mrc')
@@ -281,10 +284,13 @@ class Generator(DataGeneratorBase):
         imgs = tf.zeros((batch_size_scope, self.xsize, self.xsize), dtype=tf.float32)
 
         # Update values within mask
-        flat_indices = tf.constant(self.flat_indices, dtype=tf.int32)[:, None]
-        fn = lambda inp: tf.scatter_nd(flat_indices, inp, [self.cube])
-        updates = tf.map_fn(fn, c[2], fn_output_signature=tf.float32)
-        updates = tf.gather(updates, self.mask, axis=1)
+        if self.isFocused:
+            flat_indices = tf.constant(self.flat_indices, dtype=tf.int32)[:, None]
+            fn = lambda inp: tf.scatter_nd(flat_indices, inp, [self.cube])
+            updates = tf.map_fn(fn, c[2], fn_output_signature=tf.float32)
+            updates = tf.gather(updates, self.mask, axis=1)
+        else:
+            updates = c[2]
         bamp = tf.tile(self.values[None, :], [batch_size_scope, 1]) + updates
 
         bposf = tf.round(c_sampling)
