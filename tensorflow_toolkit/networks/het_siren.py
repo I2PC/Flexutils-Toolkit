@@ -217,7 +217,7 @@ def tv_minimization_step(image, lr):
 
 
 ### Image smoothness with TV ###
-def total_variation_loss(volume, diff1, diff2, diff3):
+def total_variation_loss(volume, diff1, diff2, diff3, precision):
     """
     Computes the Total Variation Loss.
     Encourages spatial smoothness in the image output.
@@ -234,18 +234,19 @@ def total_variation_loss(volume, diff1, diff2, diff3):
 
     # Sum for both directions.
     sum_axis = [1, 2, 3]
-    loss = tf.reduce_sum(tf.abs(diff1), axis=sum_axis) + \
-           tf.reduce_sum(tf.abs(diff2), axis=sum_axis) + \
-           tf.reduce_sum(tf.abs(diff3), axis=sum_axis)
+    # sum_axis = 1
+    loss = tf.reduce_sum(tf.abs(tf.cast(diff1, tf.float32)), axis=sum_axis) + \
+           tf.reduce_sum(tf.abs(tf.cast(diff2, tf.float32)), axis=sum_axis) + \
+           tf.reduce_sum(tf.abs(tf.cast(diff3, tf.float32)), axis=sum_axis)
 
     # Normalize by the volume size
     num_pixels = tf.cast(tf.reduce_prod(volume.shape[1:]), tf.float32)
-    loss /= num_pixels
+    loss = tf.cast(loss / num_pixels, precision)
 
     return loss
 
 
-def mse_smoothness_loss(volume, diff1, diff2, diff3):
+def mse_smoothness_loss(volume, diff1, diff2, diff3, precision):
     """
     Computes an MSE-based smoothness loss.
     This loss penalizes large intensity differences between adjacent pixels.
@@ -261,31 +262,32 @@ def mse_smoothness_loss(volume, diff1, diff2, diff3):
     """
 
     # Square differences
-    diff1 = tf.square(diff1)
-    diff2 = tf.square(diff2)
-    diff3 = tf.square(diff3)
+    diff1 = tf.square(tf.cast(diff1, tf.float32))
+    diff2 = tf.square(tf.cast(diff2, tf.float32))
+    diff3 = tf.square(tf.cast(diff3, tf.float32))
 
     # Sum the squared differences
     sum_axis = [1, 2, 3]
+    # sum_axis = 1
     loss = tf.reduce_sum(diff1, axis=sum_axis) + tf.reduce_sum(diff2, axis=sum_axis) + tf.reduce_sum(diff3,
                                                                                                      axis=sum_axis)
 
     # Normalize by the number of pixel pairs
     num_pixel_pairs = tf.cast(2 * tf.reduce_prod(volume.shape[1:3]) - volume.shape[1] - volume.shape[2], tf.float32)
-    loss /= num_pixel_pairs
+    loss = tf.cast(tf.cast(loss, tf.float32) / num_pixel_pairs, precision)
 
     return loss
 
 
-def densitySmoothnessVolume(xsize, indices, values):
+def densitySmoothnessVolume(xsize, indices, values, precision):
     B = tf.shape(values)[0]
 
-    grid = tf.zeros((B, xsize, xsize, xsize), dtype=tf.float32)
+    grid = tf.zeros((B, xsize, xsize, xsize), dtype=precision)
     indices = tf.tile(tf.cast(indices[None, ...], dtype=tf.int32), (B, 1, 1))
 
     # Scatter in volumes
     fn = lambda inp: tf.tensor_scatter_nd_add(inp[0], inp[1], inp[2])
-    grid = tf.map_fn(fn, [grid, indices, values], fn_output_signature=tf.float32)
+    grid = tf.map_fn(fn, [grid, indices, values], fn_output_signature=precision)
 
     # Calculate the differences of neighboring pixel-values.
     # The total variation loss is the sum of absolute differences of neighboring pixels
@@ -295,9 +297,8 @@ def densitySmoothnessVolume(xsize, indices, values):
     pixel_diff3 = grid[:, :, :, 1:] - grid[:, :, :, :-1]
 
     # Compute total variation and density MSE losses
-    return (total_variation_loss(grid, pixel_diff1, pixel_diff2, pixel_diff3),
-            mse_smoothness_loss(grid, pixel_diff1, pixel_diff2, pixel_diff3))
-
+    return (total_variation_loss(grid, pixel_diff1, pixel_diff2, pixel_diff3, precision),
+            mse_smoothness_loss(grid, pixel_diff1, pixel_diff2, pixel_diff3, precision))
 
 def filterVol(volume):
     size = volume.shape[1]
@@ -629,17 +630,21 @@ class Decoder(Model):
             decoded_het_ctf = decoded_het
 
         self.decode_het = Model(latent, delta_het, name="decoder_het")
-        self.decoder = Model([rows, shifts, latent], [decoded_het, decoded_het_ctf], name="decoder")
+        self.decoder = Model([rows, shifts, latent], [decoded_het, decoded_het_ctf, delta_het], name="decoder")
 
     def eval_volume_het(self, x_het, filter=True, only_pos=False):
         batch_size = x_het.shape[0]
 
-        # Update values within mask
         delta_het = self.decode_het(x_het)
-        flat_indices = tf.constant(self.generator.flat_indices, dtype=tf.int32)[:, None]
-        fn = lambda inp: tf.scatter_nd(flat_indices, inp, [self.generator.cube])
-        updates = tf.map_fn(fn, delta_het, fn_output_signature=tf.float32)
-        updates = tf.gather(updates, self.generator.mask, axis=1)
+
+        # Update values within mask
+        if self.generator.isFocused:
+            flat_indices = tf.constant(self.generator.flat_indices, dtype=tf.int32)[:, None]
+            fn = lambda inp: tf.scatter_nd(flat_indices, inp, [self.generator.cube])
+            updates = tf.map_fn(fn, delta_het, fn_output_signature=tf.float32)
+            updates = tf.gather(updates, self.generator.mask, axis=1)
+        else:
+            updates = delta_het
 
         values = tf.tile(self.generator.values[None, :], [batch_size, 1]) + updates
 
@@ -681,8 +686,9 @@ class Decoder(Model):
 class AutoEncoder(Model):
     def __init__(self, generator, het_dim=10, architecture="convnn", CTF="wiener", refPose=True,
                  l1_lambda=0.5, tv_lambda=0.5, mse_lambda=0.5, mode=None, train_size=None, only_pos=True,
-                 multires_levels=None, poseReg=0.0, ctfReg=0.0, **kwargs):
+                 multires_levels=None, poseReg=0.0, ctfReg=0.0, precision=tf.float32, **kwargs):
         super(AutoEncoder, self).__init__(**kwargs)
+        self.precision = precision
         self.CTF = CTF if generator.applyCTF == 1 else None
         self.mode = generator.mode if mode is None else mode
         self.xsize = generator.metadata.getMetaDataImage(0).shape[1] if generator.metadata.binaries else generator.xsize
@@ -711,9 +717,10 @@ class AutoEncoder(Model):
         if multires_levels is None:
             self.filters = None
         else:
-            self.filters = create_blur_filters(multires_levels, 10, 30)
+            self.filters = tf.cast(create_blur_filters(multires_levels, 10, 30), self.precision)
         self.disantangle_pose = poseReg > 0.0
         self.disantangle_ctf = ctfReg > 0.0
+        self.isFocused = generator.isFocused
         self.total_loss_tracker = tf.keras.metrics.Mean(name="total_loss")
         self.test_loss_tracker = tf.keras.metrics.Mean(name="test_loss")
         self.loss_het_tracker = tf.keras.metrics.Mean(name="rec_het")
@@ -740,6 +747,8 @@ class AutoEncoder(Model):
             indexes = data[1][0]
             images = inputs[0]
 
+        images = tf.cast(images, self.precision)
+
         self.decoder.generator.indexes = indexes
         self.decoder.generator.current_images = images
 
@@ -747,13 +756,13 @@ class AutoEncoder(Model):
         batch_size_scope = tf.shape(images)[0]
 
         # Precompute batch aligments
-        self.decoder.generator.rot_batch = tf.gather(self.decoder.generator.angle_rot, indexes, axis=0)
-        self.decoder.generator.tilt_batch = tf.gather(self.decoder.generator.angle_tilt, indexes, axis=0)
-        self.decoder.generator.psi_batch = tf.gather(self.decoder.generator.angle_psi, indexes, axis=0)
+        self.decoder.generator.rot_batch = tf.cast(tf.gather(self.decoder.generator.angle_rot, indexes, axis=0), self.precision)
+        self.decoder.generator.tilt_batch = tf.cast(tf.gather(self.decoder.generator.angle_tilt, indexes, axis=0), self.precision)
+        self.decoder.generator.psi_batch = tf.cast(tf.gather(self.decoder.generator.angle_psi, indexes, axis=0), self.precision)
 
         # Precompute batch shifts
-        self.decoder.generator.shifts_batch = [tf.gather(self.decoder.generator.shift_x, indexes, axis=0),
-                                               tf.gather(self.decoder.generator.shift_y, indexes, axis=0)]
+        self.decoder.generator.shifts_batch = [tf.cast(tf.gather(self.decoder.generator.shift_x, indexes, axis=0), self.precision),
+                                               tf.cast(tf.gather(self.decoder.generator.shift_y, indexes, axis=0), self.precision)]
 
         # Random permutations of angles and shifts
         euler_batch = tf.stack([self.decoder.generator.rot_batch,
@@ -790,7 +799,7 @@ class AutoEncoder(Model):
             # Forward pass (first encoder and decoder)
             l_rows, l_shifts, l_het = self.encoder_exp(inputs)
             het, rows, shifts = self.latent(l_het), self.rows(l_rows), self.shifts(l_shifts)
-            decoded_het, decoded_het_ctf = self.decoder([self.refPose * rows, self.refPose * shifts, het])
+            decoded_het, decoded_het_ctf, delta_het = self.decoder([self.refPose * rows, self.refPose * shifts, het])
 
             if self.disantangle_pose and self.mode == "spa":
                 # Forward pass (second encoder - no permutation)
@@ -813,51 +822,53 @@ class AutoEncoder(Model):
                 self.decoder.generator.tilt_batch = euler_batch_perm[..., 1]
                 self.decoder.generator.psi_batch = euler_batch_perm[..., 2]
                 self.decoder.generator.shifts_batch = [shifts_batch_perm[..., 0], shifts_batch_perm[..., 1]]
-                decoded_het, _ = self.decoder([self.refPose * rows, self.refPose * shifts, het])
+                decoded_het, _, _ = self.decoder([self.refPose * rows, self.refPose * shifts, het])
                 _, _, l_het_clean_perm = self.encoder_clean(decoded_het)
                 het_clean_perm = self.latent(l_het_clean_perm)
 
+            # delta_het = self.decoder.decode_het(het)
+
             # Update values within mask
-            delta_het = self.decoder.decode_het(het)
-            flat_indices = tf.constant(self.decoder.generator.flat_indices, dtype=tf.int32)[:, None]
-            fn = lambda inp: tf.scatter_nd(flat_indices, inp, [self.decoder.generator.cube])
-            updates = tf.map_fn(fn, delta_het, fn_output_signature=tf.float32)
-            updates = tf.gather(updates, self.decoder.generator.mask, axis=1)
+            if self.isFocused:
+                flat_indices = tf.constant(self.decoder.generator.flat_indices, dtype=tf.int32)[:, None]
+                fn = lambda inp: tf.scatter_nd(flat_indices, inp, [self.decoder.generator.cube])
+                updates = tf.map_fn(fn, delta_het, fn_output_signature=self.precision)
+                updates = tf.gather(updates, self.decoder.generator.mask, axis=1)
+            else:
+                updates = delta_het
 
             # L1 penalization delta_het
             delta_het = tf.tile(self.decoder.generator.values[None, :], [batch_size_scope, 1]) + updates
-            l1_loss_het = tf.reduce_mean(tf.reduce_sum(tf.abs(delta_het), axis=1))
-            l1_loss_het = self.l1_lambda * l1_loss_het / self.decoder.generator.full_voxels
+            l1_loss_het = tf.cast(self.l1_lambda * tf.reduce_mean(tf.abs(tf.cast(delta_het, tf.float32))), self.precision)
 
             # Volume range loss
-            if self.decoder.generator.null_ref:
+            if self.decoder.generator.null_ref or not self.isFocused:
                 hist_loss = 0.0
             else:
-                # range = [tf.reduce_min(self.decoder.generator.values), tf.reduce_max(self.decoder.generator.values)]
                 orig_values = tf.tile(self.decoder.generator.values_no_masked[None, :], [batch_size_scope, 1])
-                values_in_het = tf.gather(delta_het, self.decoder.generator.values_in_mask, axis=1)
-                values_in_mask = tf.gather(orig_values, self.decoder.generator.values_in_mask, axis=1)
+                values_in_het = tf.cast(tf.gather(delta_het, self.decoder.generator.values_in_mask, axis=1), tf.float32)
+                values_in_mask = tf.cast(tf.gather(orig_values, self.decoder.generator.values_in_mask, axis=1), tf.float32)
+                # val_range = [tf.reduce_min(values_in_mask), tf.reduce_max(values_in_mask)]
                 # hist_loss = tf.keras.losses.MSE(
-                #     compute_histogram(values_in_het, bins=50, minval=range[0], maxval=range[1]),
-                #     compute_histogram(values_in_mask, bins=50, minval=range[0], maxval=range[1])
+                #     compute_histogram(values_in_het, bins=50, minval=val_range[0], maxval=val_range[1]),
+                #     compute_histogram(values_in_mask, bins=50, minval=val_range[0], maxval=val_range[1])
                 # )
-                hist_loss = (tf.keras.losses.MSE(tf.reduce_max(values_in_het, axis=1), tf.reduce_max(values_in_mask))
-                             + tf.keras.losses.MSE(tf.reduce_min(values_in_het, axis=1), tf.reduce_min(values_in_mask))
-                             + tf.keras.losses.MSE(tf.reduce_mean(values_in_het, axis=1), tf.reduce_mean(values_in_mask))
-                             + tf.keras.losses.MSE(tf.math.reduce_std(values_in_het, axis=1), tf.math.reduce_std(values_in_mask)))
+                hist_loss = tf.cast(tf.keras.losses.MSE(tf.reduce_max(values_in_het, axis=1), tf.reduce_max(values_in_mask))
+                                    + tf.keras.losses.MSE(tf.reduce_min(values_in_het, axis=1), tf.reduce_min(values_in_mask))
+                                    + tf.keras.losses.MSE(tf.reduce_mean(values_in_het, axis=1), tf.reduce_mean(values_in_mask))
+                                    + tf.keras.losses.MSE(tf.math.reduce_std(values_in_het, axis=1), tf.math.reduce_std(values_in_mask)), self.precision)
 
             # Total variation and MSE losses
             tv_loss, d_mse_loss = densitySmoothnessVolume(self.decoder.generator.xsize,
-                                                          self.decoder.generator.full_indices, delta_het)
+                                                          self.decoder.generator.full_indices, delta_het, self.precision)
             tv_loss *= self.tv_lambda
             d_mse_loss *= self.mse_lambda
 
             # Negative loss
             mask = tf.less(delta_het, 0.0)
             delta_neg = tf.boolean_mask(delta_het, mask)
-            delta_neg_size = tf.cast(tf.shape(delta_neg)[-1], dtype=tf.float32)
-            delta_neg = tf.reduce_mean(tf.abs(delta_neg))
-            neg_loss_het = self.l1_lambda * delta_neg / delta_neg_size
+            delta_neg = tf.reduce_mean(tf.abs(tf.cast(delta_neg, tf.float32)))
+            neg_loss_het = tf.cast(self.l1_lambda * delta_neg, self.precision)
 
             # # Positive loss
             # mask = tf.greater(delta_het, 0.0)
@@ -874,7 +885,8 @@ class AutoEncoder(Model):
 
             # Reconstruction loss for original size images
             images_masked = mask_imgs * self.decoder.generator.resizeImageFourier(images, self.decoder.generator.xsize)
-            loss_het_ori = self.decoder.generator.cost_function(images_masked, decoded_het_ctf)
+            loss_het_ori = tf.cast(self.decoder.generator.cost_function(tf.cast(images_masked, tf.float32),
+                                                                        tf.cast(decoded_het_ctf, tf.float32)), self.precision)
 
             # Reconstruction mask for projections (Train size)
             mask_imgs = self.decoder.generator.resizeImageFourier(self.decoder.generator.mask_imgs, self.train_size)
@@ -884,28 +896,29 @@ class AutoEncoder(Model):
             # Reconstruction loss for downscaled images
             images_masked = mask_imgs * self.decoder.generator.resizeImageFourier(images, self.train_size)
             decoded_het_scl = self.decoder.generator.resizeImageFourier(decoded_het_ctf, self.train_size)
-            loss_het_scl = self.decoder.generator.cost_function(images_masked, decoded_het_scl)
+            loss_het_scl = tf.cast(self.decoder.generator.cost_function(tf.cast(images_masked, tf.float32),
+                                                                        tf.cast(decoded_het_scl, tf.float32)), self.precision)
 
             # MR loss
             if self.filters is not None:
                 filt_images = apply_blur_filters_to_batch(images, self.filters)
                 filt_decoded = apply_blur_filters_to_batch(decoded_het_ctf, self.filters)
                 for idx in range(self.multires_levels):
-                    loss_het_ori += self.decoder.generator.cost_function(filt_images[..., idx][..., None],
-                                                                         filt_decoded[..., idx][..., None])
-                loss_het_ori = loss_het_ori / (float(self.multires_levels) + 1)
+                    loss_het_ori += tf.cast(self.decoder.generator.cost_function(tf.cast(filt_images, tf.float32)[..., idx][..., None],
+                                                                                 tf.cast(filt_decoded, tf.float32)[..., idx][..., None]), self.precision)
+                loss_het_ori = tf.cast(tf.cast(loss_het_ori, tf.float32) / (float(self.multires_levels) + 1), self.precision)
 
             # Loss disantagled (pose)
             if self.disantangle_pose and self.mode == "spa":
-                loss_disantagled_pose = (tf.keras.losses.MSE(het, het_clean)
-                                         + tf.keras.losses.MSE(het, het_clean_perm))
+                loss_disantagled_pose = tf.cast(tf.keras.losses.MSE(tf.cast(het, tf.float32), tf.cast(het_clean, tf.float32))
+                                         + tf.keras.losses.MSE(tf.cast(het, tf.float32), tf.cast(het_clean_perm, tf.float32)), self.precision)
             else:
                 loss_disantagled_pose = 0.0
 
             # Loss disantagled (CTF)
             if self.disantangle_ctf and self.mode == "spa":
-                loss_disantagled_ctf = (tf.keras.losses.MSE(het, het_ctf)
-                                        + tf.keras.losses.MSE(het, het_ctf_perm))
+                loss_disantagled_ctf = tf.cast(tf.keras.losses.MSE(tf.cast(het, tf.float32), tf.cast(het_ctf, tf.float32))
+                                        + tf.keras.losses.MSE(tf.cast(het, tf.float32), tf.cast(het_ctf_perm, tf.float32)), self.precision)
             else:
                 loss_disantagled_ctf = 0.0
 
@@ -914,8 +927,12 @@ class AutoEncoder(Model):
             reg_loss = l1_loss_het + neg_loss_het + tv_loss + d_mse_loss
 
             total_loss = (rec_loss + reg_loss + self.pose_lambda * loss_disantagled_pose
-                          + self.ctf_lambda * loss_disantagled_ctf + 10.0 * hist_loss)
+                          + self.ctf_lambda * loss_disantagled_ctf + 100.0 * hist_loss)
+            # scaled_loss = self.optimizer.get_scaled_loss(total_loss)
 
+        # scaled_gradients = tape.gradient(scaled_loss, self.trainable_variables)
+        # gradients = self.optimizer.get_unscaled_gradients(scaled_gradients)
+        # self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
         grads = tape.gradient(total_loss, self.trainable_weights)
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
 
@@ -940,6 +957,8 @@ class AutoEncoder(Model):
             indexes = data[1][0]
             images = inputs[0]
 
+        images = tf.cast(images, self.precision)
+
         self.decoder.generator.indexes = indexes
         self.decoder.generator.current_images = images
 
@@ -947,13 +966,17 @@ class AutoEncoder(Model):
         batch_size_scope = tf.shape(images)[0]
 
         # Precompute batch aligments
-        self.decoder.generator.rot_batch = tf.gather(self.decoder.generator.angle_rot, indexes, axis=0)
-        self.decoder.generator.tilt_batch = tf.gather(self.decoder.generator.angle_tilt, indexes, axis=0)
-        self.decoder.generator.psi_batch = tf.gather(self.decoder.generator.angle_psi, indexes, axis=0)
+        self.decoder.generator.rot_batch = tf.cast(tf.gather(self.decoder.generator.angle_rot, indexes, axis=0),
+                                                   self.precision)
+        self.decoder.generator.tilt_batch = tf.cast(tf.gather(self.decoder.generator.angle_tilt, indexes, axis=0),
+                                                    self.precision)
+        self.decoder.generator.psi_batch = tf.cast(tf.gather(self.decoder.generator.angle_psi, indexes, axis=0),
+                                                   self.precision)
 
         # Precompute batch shifts
-        self.decoder.generator.shifts_batch = [tf.gather(self.decoder.generator.shift_x, indexes, axis=0),
-                                               tf.gather(self.decoder.generator.shift_y, indexes, axis=0)]
+        self.decoder.generator.shifts_batch = [
+            tf.cast(tf.gather(self.decoder.generator.shift_x, indexes, axis=0), self.precision),
+            tf.cast(tf.gather(self.decoder.generator.shift_y, indexes, axis=0), self.precision)]
 
         # Random permutations of angles and shifts
         euler_batch = tf.stack([self.decoder.generator.rot_batch,
@@ -989,7 +1012,7 @@ class AutoEncoder(Model):
         # Forward pass (first encoder and decoder)
         l_rows, l_shifts, l_het = self.encoder_exp(inputs)
         het, rows, shifts = self.latent(l_het), self.rows(l_rows), self.shifts(l_shifts)
-        decoded_het, decoded_het_ctf = self.decoder([self.refPose * rows, self.refPose * shifts, het])
+        decoded_het, decoded_het_ctf, delta_het = self.decoder([self.refPose * rows, self.refPose * shifts, het])
 
         if self.disantangle_pose and self.mode == "spa":
             # Forward pass (second encoder - no permutation)
@@ -1012,53 +1035,58 @@ class AutoEncoder(Model):
             self.decoder.generator.tilt_batch = euler_batch_perm[..., 1]
             self.decoder.generator.psi_batch = euler_batch_perm[..., 2]
             self.decoder.generator.shifts_batch = [shifts_batch_perm[..., 0], shifts_batch_perm[..., 1]]
-            decoded_het, _ = self.decoder([self.refPose * rows, self.refPose * shifts, het])
+            decoded_het, _, _ = self.decoder([self.refPose * rows, self.refPose * shifts, het])
             _, _, l_het_clean_perm = self.encoder_clean(decoded_het)
             het_clean_perm = self.latent(l_het_clean_perm)
 
+        # delta_het = self.decoder.decode_het(het)
+
         # Update values within mask
-        delta_het = self.decoder.decode_het(het)
-        flat_indices = tf.constant(self.decoder.generator.flat_indices, dtype=tf.int32)[:, None]
-        fn = lambda inp: tf.scatter_nd(flat_indices, inp, [self.decoder.generator.cube])
-        updates = tf.map_fn(fn, delta_het, fn_output_signature=tf.float32)
-        updates = tf.gather(updates, self.decoder.generator.mask, axis=1)
+        if self.isFocused:
+            flat_indices = tf.constant(self.decoder.generator.flat_indices, dtype=tf.int32)[:, None]
+            fn = lambda inp: tf.scatter_nd(flat_indices, inp, [self.decoder.generator.cube])
+            updates = tf.map_fn(fn, delta_het, fn_output_signature=self.precision)
+            updates = tf.gather(updates, self.decoder.generator.mask, axis=1)
+        else:
+            updates = delta_het
 
         # L1 penalization delta_het
         delta_het = tf.tile(self.decoder.generator.values[None, :], [batch_size_scope, 1]) + updates
-        l1_loss_het = tf.reduce_mean(tf.reduce_sum(tf.abs(delta_het), axis=1))
-        l1_loss_het = self.l1_lambda * l1_loss_het / self.decoder.generator.full_voxels
+        l1_loss_het = tf.cast(self.l1_lambda * tf.reduce_mean(tf.abs(tf.cast(delta_het, tf.float32))),
+                              self.precision)
 
         # Volume range loss
-        if self.decoder.generator.null_ref:
+        if self.decoder.generator.null_ref or not self.isFocused:
             hist_loss = 0.0
         else:
-            # range = [tf.reduce_min(self.decoder.generator.values), tf.reduce_max(self.decoder.generator.values)]
             orig_values = tf.tile(self.decoder.generator.values_no_masked[None, :], [batch_size_scope, 1])
-            values_in_het = tf.gather(delta_het, self.decoder.generator.values_in_mask, axis=1)
-            values_in_mask = tf.gather(orig_values, self.decoder.generator.values_in_mask, axis=1)
+            values_in_het = tf.cast(tf.gather(delta_het, self.decoder.generator.values_in_mask, axis=1), tf.float32)
+            values_in_mask = tf.cast(tf.gather(orig_values, self.decoder.generator.values_in_mask, axis=1),
+                                     tf.float32)
+            # val_range = [tf.reduce_min(values_in_mask), tf.reduce_max(values_in_mask)]
             # hist_loss = tf.keras.losses.MSE(
-            #     compute_histogram(values_in_het, bins=50, minval=range[0], maxval=range[1]),
-            #     compute_histogram(values_in_mask, bins=50, minval=range[0], maxval=range[1])
+            #     compute_histogram(values_in_het, bins=50, minval=val_range[0], maxval=val_range[1]),
+            #     compute_histogram(values_in_mask, bins=50, minval=val_range[0], maxval=val_range[1])
             # )
-            hist_loss = (tf.keras.losses.MSE(tf.reduce_max(values_in_het, axis=1), tf.reduce_max(values_in_mask))
-                         + tf.keras.losses.MSE(tf.reduce_min(values_in_het, axis=1), tf.reduce_min(values_in_mask))
-                         + tf.keras.losses.MSE(tf.reduce_mean(values_in_het, axis=1),
-                                               tf.reduce_mean(values_in_mask))
-                         + tf.keras.losses.MSE(tf.math.reduce_std(values_in_het, axis=1),
-                                               tf.math.reduce_std(values_in_mask)))
+            hist_loss = tf.cast(
+                tf.keras.losses.MSE(tf.reduce_max(values_in_het, axis=1), tf.reduce_max(values_in_mask))
+                + tf.keras.losses.MSE(tf.reduce_min(values_in_het, axis=1), tf.reduce_min(values_in_mask))
+                + tf.keras.losses.MSE(tf.reduce_mean(values_in_het, axis=1), tf.reduce_mean(values_in_mask))
+                + tf.keras.losses.MSE(tf.math.reduce_std(values_in_het, axis=1),
+                                      tf.math.reduce_std(values_in_mask)), self.precision)
 
         # Total variation and MSE losses
         tv_loss, d_mse_loss = densitySmoothnessVolume(self.decoder.generator.xsize,
-                                                      self.decoder.generator.full_indices, delta_het)
+                                                      self.decoder.generator.full_indices, delta_het,
+                                                      self.precision)
         tv_loss *= self.tv_lambda
         d_mse_loss *= self.mse_lambda
 
         # Negative loss
         mask = tf.less(delta_het, 0.0)
         delta_neg = tf.boolean_mask(delta_het, mask)
-        delta_neg_size = tf.cast(tf.shape(delta_neg)[-1], dtype=tf.float32)
-        delta_neg = tf.reduce_mean(tf.abs(delta_neg))
-        neg_loss_het = self.l1_lambda * delta_neg / delta_neg_size
+        delta_neg = tf.reduce_mean(tf.abs(tf.cast(delta_neg, tf.float32)))
+        neg_loss_het = tf.cast(self.l1_lambda * delta_neg, self.precision)
 
         # # Positive loss
         # mask = tf.greater(delta_het, 0.0)
@@ -1075,7 +1103,9 @@ class AutoEncoder(Model):
 
         # Reconstruction loss for original size images
         images_masked = mask_imgs * self.decoder.generator.resizeImageFourier(images, self.decoder.generator.xsize)
-        loss_het_ori = self.decoder.generator.cost_function(images_masked, decoded_het_ctf)
+        loss_het_ori = tf.cast(self.decoder.generator.cost_function(tf.cast(images_masked, tf.float32),
+                                                                    tf.cast(decoded_het_ctf, tf.float32)),
+                               self.precision)
 
         # Reconstruction mask for projections (Train size)
         mask_imgs = self.decoder.generator.resizeImageFourier(self.decoder.generator.mask_imgs, self.train_size)
@@ -1085,28 +1115,36 @@ class AutoEncoder(Model):
         # Reconstruction loss for downscaled images
         images_masked = mask_imgs * self.decoder.generator.resizeImageFourier(images, self.train_size)
         decoded_het_scl = self.decoder.generator.resizeImageFourier(decoded_het_ctf, self.train_size)
-        loss_het_scl = self.decoder.generator.cost_function(images_masked, decoded_het_scl)
+        loss_het_scl = tf.cast(self.decoder.generator.cost_function(tf.cast(images_masked, tf.float32),
+                                                                    tf.cast(decoded_het_scl, tf.float32)),
+                               self.precision)
 
         # MR loss
         if self.filters is not None:
             filt_images = apply_blur_filters_to_batch(images, self.filters)
             filt_decoded = apply_blur_filters_to_batch(decoded_het_ctf, self.filters)
             for idx in range(self.multires_levels):
-                loss_het_ori += self.decoder.generator.cost_function(filt_images[..., idx][..., None],
-                                                                     filt_decoded[..., idx][..., None])
-            loss_het_ori = loss_het_ori / (float(self.multires_levels) + 1)
+                loss_het_ori += tf.cast(
+                    self.decoder.generator.cost_function(tf.cast(filt_images, tf.float32)[..., idx][..., None],
+                                                         tf.cast(filt_decoded, tf.float32)[..., idx][..., None]),
+                    self.precision)
+            loss_het_ori = tf.cast(tf.cast(loss_het_ori, tf.float32) / (float(self.multires_levels) + 1),
+                                   self.precision)
 
         # Loss disantagled (pose)
         if self.disantangle_pose and self.mode == "spa":
-            loss_disantagled_pose = (tf.keras.losses.MSE(het, het_clean)
-                                     + tf.keras.losses.MSE(het, het_clean_perm))
+            loss_disantagled_pose = tf.cast(
+                tf.keras.losses.MSE(tf.cast(het, tf.float32), tf.cast(het_clean, tf.float32))
+                + tf.keras.losses.MSE(tf.cast(het, tf.float32), tf.cast(het_clean_perm, tf.float32)),
+                self.precision)
         else:
             loss_disantagled_pose = 0.0
 
         # Loss disantagled (CTF)
         if self.disantangle_ctf and self.mode == "spa":
-            loss_disantagled_ctf = (tf.keras.losses.MSE(het, het_ctf)
-                                    + tf.keras.losses.MSE(het, het_ctf_perm))
+            loss_disantagled_ctf = tf.cast(
+                tf.keras.losses.MSE(tf.cast(het, tf.float32), tf.cast(het_ctf, tf.float32))
+                + tf.keras.losses.MSE(tf.cast(het, tf.float32), tf.cast(het_ctf_perm, tf.float32)), self.precision)
         else:
             loss_disantagled_ctf = 0.0
 
@@ -1115,7 +1153,7 @@ class AutoEncoder(Model):
         reg_loss = l1_loss_het + neg_loss_het + tv_loss + d_mse_loss
 
         total_loss = (rec_loss + reg_loss + self.pose_lambda * loss_disantagled_pose
-                      + self.ctf_lambda * loss_disantagled_ctf + 10.0 * hist_loss)
+                      + self.ctf_lambda * loss_disantagled_ctf + 100.0 * hist_loss)
 
         self.total_loss_tracker.update_state(total_loss)
         self.loss_het_tracker.update_state(rec_loss)
@@ -1245,10 +1283,13 @@ class AutoEncoder(Model):
             l_rot, l_shifts, l_het = self.encoder_exp(inputs)
             het, rot, shifts = self.latent(l_het), self.rows(l_rot), self.shifts(l_shifts)
             return rot, shifts, het
-        elif self.predict_mode == "particles":
+        elif "particles" in self.predict_mode:
             l_rot, l_shifts, l_het = self.encoder_exp(inputs)
             het, rot, shifts = self.latent(l_het), self.rows(l_rot), self.shifts(l_shifts)
-            return self.decoder([rot, shifts, het])[0]
+            if "ctf" in self.predict_mode:
+                return self.decoder([rot, shifts, het])[1]
+            else:
+                return self.decoder([rot, shifts, het])[0]
         else:
             raise ValueError("Prediction mode not understood!")
 

@@ -83,10 +83,13 @@ class Generator(DataGeneratorBase):
             self.z_x_space = tf.constant(z_space[:, :size], dtype=tf.float32)
             self.z_y_space = tf.constant(z_space[:, size:2 * size], dtype=tf.float32)
             self.z_z_space = tf.constant(z_space[:, 2 * size:], dtype=tf.float32)
+            self.weight_initializer = tf.keras.initializers.RandomUniform(minval=-0.001, maxval=0.001,
+                                                                          seed=None)
         else:
             self.z_x_space = tf.zeros((len(self.metadata), size), dtype=tf.float32)
             self.z_y_space = tf.zeros((len(self.metadata), size), dtype=tf.float32)
             self.z_z_space = tf.zeros((len(self.metadata), size), dtype=tf.float32)
+            self.weight_initializer = "glorot_uniform"
         self.z_x_batch = np.zeros(self.batch_size)
         self.z_y_batch = np.zeros(self.batch_size)
         self.z_z_batch = np.zeros(self.batch_size)
@@ -298,62 +301,41 @@ class Generator(DataGeneratorBase):
     def calcBond(self, coords):
         coords = [tf.transpose(coords[0]), tf.transpose(coords[1]), tf.transpose(coords[2])]
         coords = tf.stack(coords, axis=2)
-        px = tf.gather(coords, self.connectivity[:, 0], axis=1)
-        py = tf.gather(coords, self.connectivity[:, 1], axis=1)
-        pz = tf.gather(coords, self.connectivity[:, 2], axis=1)
-        dst_1 = tf.sqrt(tf.nn.relu(tf.reduce_sum((px - py) ** 2, axis=2)))
-        dst_2 = tf.sqrt(tf.nn.relu(tf.reduce_sum((py - pz) ** 2, axis=2)))
 
-        return tf.stack([dst_1, dst_2], axis=2)
+        bonds_coords = tf.gather(coords, self.bonds)
+        dst = tf.sqrt(tf.nn.relu(tf.reduce_sum((bonds_coords[:, :, 1, :] - bonds_coords[:, :, 0, :]) ** 2, axis=2)))
 
-    # def calcAngle(self, coords):
-    #     coords = [tf.transpose(coords[0]), tf.transpose(coords[1]), tf.transpose(coords[2])]
-    #     coords = tf.stack(coords, axis=2)
-    #     p0 = tf.gather(coords, self.connectivity[:, 0], axis=1)
-    #     p1 = tf.gather(coords, self.connectivity[:, 1], axis=1)
-    #     p2 = tf.gather(coords, self.connectivity[:, 2], axis=1)
-    #     b0 = p0 - p1
-    #     b1 = p2 - p1
-    #     b0 = b0 / tf.sqrt(tf.reduce_sum(b0 ** 2.0, axis=2, keepdims=True))
-    #     b1 = b1 / tf.reduce_sum(b1 ** 2.0, axis=2, keepdims=True)
-    #     ang = tf.reduce_sum(b0 * b1, axis=2)
-    #     n0 = tf.linalg.norm(b0, axis=2) * tf.linalg.norm(b1, axis=2)
-    #     ang = tf.math.divide_no_nan(ang, n0)
-    #     epsilon = 1.0 - 1e-6
-    #     ang = tf.minimum(tf.maximum(ang, -epsilon), epsilon)
-    #     # ang = np.min(np.max(ang, axis=1), axis=0)
-    #     ang = tf.acos(ang)
-    #     ang *= 180 / np.pi
-    #
-    #     return ang
+        return dst
 
     def calcAngle(self, coords):
+        bsz = tf.shape(coords)[-1]
         coords = [tf.transpose(coords[0]), tf.transpose(coords[1]), tf.transpose(coords[2])]
         coords = tf.stack(coords, axis=2)
 
-        p0 = tf.gather(coords, self.connectivity[:, 0], axis=1)
-        p1 = tf.gather(coords, self.connectivity[:, 1], axis=1)
-        p2 = tf.gather(coords, self.connectivity[:, 2], axis=1)
-        p3 = tf.gather(coords, self.connectivity[:, 3], axis=1)
+        dihedrals_coords = tf.gather(coords, self.dihedrals)
+        dihedrals_coords = tf.reshape(dihedrals_coords, (bsz, -1, 4, 3, 3))
 
-        # Assuming positions is a 4x3 array: [a, b, c, d]
-        b1 = p1 - p0  # b - a
-        b2 = p2 - p1  # c - b
-        b3 = p3 - p2  # d - c
+        ab = dihedrals_coords[:, 0] - dihedrals_coords[:, 1]
+        cb = dihedrals_coords[:, 2] - dihedrals_coords[:, 1]
+        db = dihedrals_coords[:, 3] - dihedrals_coords[:, 2]
 
         # Compute normals
-        n1 = tf.linalg.cross(b1, b2)
-        n2 = tf.linalg.cross(b2, b3)
+        u = tf.linalg.cross(ab, cb)
+        v = tf.linalg.cross(db, cb)
+        w = tf.linalg.cross(u, v)
 
         # Normalize normals
-        n1 = tf.nn.l2_normalize(n1)
-        n2 = tf.nn.l2_normalize(n2)
+        u = tf.nn.l2_normalize(u)
+        v = tf.nn.l2_normalize(v)
+        w = tf.nn.l2_normalize(w)
+        cb = tf.nn.l2_normalize(cb)
 
         # Compute angle
-        angle = tf.acos(tf.reduce_sum(n1 * n2, axis=2))
+        angle = tf.acos(tf.clip_by_value(tf.reduce_sum(u * v, axis=3), -1., 1.))
+        angle_check = tf.acos(tf.clip_by_value(tf.reduce_sum(cb * w, axis=3), -1., 1.))
 
         # Adjust sign
-        angle = tf.where(tf.reduce_sum(n2 * n1, axis=2) < 0.0, tf.abs(angle), angle)
+        angle = tf.where(angle_check > 0.001, -angle, angle)
 
         # Convert to degrees
         angle *= 180.0 / np.pi
@@ -370,24 +352,6 @@ class Generator(DataGeneratorBase):
         nsearch = ml3d.layers.KNNSearch(return_distances=True, ignore_query_point=True)
         ans = nsearch(points, queries, k)
         return tf.cast(ans.neighbors_index, tf.int32), tf.cast(ans.neighbors_distance, tf.float32)
-
-    # def calcClashes(self, coords):
-    #     coords = [tf.transpose(coords[0]), tf.transpose(coords[1]), tf.transpose(coords[2])]
-    #     coords = tf.stack(coords, axis=2)
-    #     coords = tf.transpose(coords, perm=(1, 0, 2))
-    #
-    #     B = tf.shape(coords)[0]
-    #     extent = 8.  # Twice the radius (4A)
-    #
-    #     # To simulate gradient computation
-    #     spread = tf.cast(tf.linspace(0, 1000, B), tf.float32)[..., None, None]
-    #     coords = tf.reshape(coords + spread, (-1, 3))
-    #
-    #     # Compute neighbour distances
-    #     energy = self.conv(tf.ones((tf.shape(coords)[0], 1), tf.float32), coords, coords, extent)
-    #     energy = tf.reduce_mean(tf.reshape(energy, (B, -1)), axis=-1)
-    #
-    #     return energy
 
     def calcCoords(self, coords):
         B = tf.shape(coords[0])[1]
