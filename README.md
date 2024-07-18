@@ -19,7 +19,6 @@ This package provides a neural network environment integrating the deep learning
 # Included Networks
 
 - **Zernike3Deep**: Semi-classical neural network to analyze continuous heterogeneity with the Zernike3D basis
-- **DeepNMA**: Semi-classical neural network with automatic NMA selection directly from images to analyze continuous heterogeneity
 - **HomoSIREN**: Neural network homogeneous reconstruction for real space
 - **HetSIREN**: Neural network heterogeneous reconstruction for real space
 - **DeepPose**: Particle pose and shift refinement with neural networks
