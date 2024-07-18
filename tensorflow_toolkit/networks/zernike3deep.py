@@ -66,6 +66,7 @@ def resizeImageFourier(images, out_size, pad_factor=1):
 
     return images
 
+
 def lennard_jones(r2, radius):
     # r2 = r * radius * radius
     r6 = r2 * r2 * r2
@@ -73,6 +74,7 @@ def lennard_jones(r2, radius):
     s6 = 0.1176
     s12 = 0.0138
     return (s12 / r12) - (s6 / r6)
+
 
 def simple_clash(r2, splits, radius):
     lengths = tf.math.subtract(splits[1:], splits[:-1])
@@ -83,14 +85,15 @@ def simple_clash(r2, splits, radius):
     return tf.abs(r2 - radius2) / expanded_lengths
 
 
+def tanh(x):
+    return 10. * tf.math.tanh(x)
+
+
 class Encoder(tf.keras.Model):
-    def __init__(self, latent_dim, input_dim, refinePose, architecture="convnn",
-                 mode="spa", jit_compile=True):
+    def __init__(self, latent_dim, input_dim, architecture="convnn", mode="spa", jit_compile=True):
         super(Encoder, self).__init__()
         self.latent_dim = latent_dim
-        filters = create_blur_filters(5, 5, 15)
         l2 = tf.keras.regularizers.l2(1e-3)
-        # shift_activation = lambda y: 2 * tf.keras.activations.tanh(y)
 
         # XLA compilation of methods
         if jit_compile:
@@ -131,38 +134,15 @@ class Encoder(tf.keras.Model):
             x = layers.Dropout(.1)(x)
             x = layers.BatchNormalization()(x)
 
-            # x = tf.keras.layers.Conv2D(4, 5, activation="relu", strides=(2, 2), padding="same")(x)
-            # x = tf.keras.layers.Conv2D(8, 5, activation="relu", strides=(2, 2), padding="same")(x)
-            # x = tf.keras.layers.Conv2D(16, 3, activation="relu", strides=(2, 2), padding="same")(x)
-            # x = tf.keras.layers.Conv2D(16, 3, activation="relu", strides=(2, 2), padding="same")(x)
-            # x = tf.keras.layers.Flatten()(x)
-            # x = tf.keras.layers.Dropout(.1)(x)
-            # x = tf.keras.layers.BatchNormalization()(x)
-
-        if mode == "spa":
-            z_space_x = layers.Dense(latent_dim, activation="linear", name="z_space_x")(x)
-            z_space_y = layers.Dense(latent_dim, activation="linear", name="z_space_y")(x)
-            z_space_z = layers.Dense(latent_dim, activation="linear", name="z_space_z")(x)
-        elif mode == "tomo":
+        if mode == "tomo":
             latent = layers.Dense(1024, activation="relu")(subtomo_pe)
             for _ in range(2):  # TODO: Is it better to use 12 hidden layers as in Zernike3Deep?
                 latent = layers.Dense(1024, activation="relu")(latent)
-            z_space_x = layers.Dense(latent_dim, activation="linear", name="z_space_x")(latent)
-            z_space_y = layers.Dense(latent_dim, activation="linear", name="z_space_y")(latent)
-            z_space_z = layers.Dense(latent_dim, activation="linear", name="z_space_z")(latent)
-
-        delta_euler = layers.Dense(3, activation="linear", name="delta_euler", trainable=refinePose)(x)
-
-        # delta_shifts = layers.Dense(2, activation=shift_activation, name="delta_shifts")(x)
-        delta_shifts = layers.Dense(2, activation="linear", name="delta_shifts", trainable=refinePose)(x)
 
         if mode == "spa":
-            self.encoder = tf.keras.Model(encoder_inputs,
-                                          [z_space_x, z_space_y, z_space_z, delta_euler, delta_shifts], name="encoder")
+            self.encoder = tf.keras.Model(encoder_inputs, x, name="encoder")
         elif mode == "tomo":
-            self.encoder = tf.keras.Model([encoder_inputs, subtomo_pe],
-                                          [z_space_x, z_space_y, z_space_z, delta_euler, delta_shifts], name="encoder")
-            self.encoder_latent = tf.keras.Model(subtomo_pe, [z_space_x, z_space_y, z_space_z], name="encode_latent")
+            self.encoder = tf.keras.Model([encoder_inputs, subtomo_pe], [x, latent], name="encoder")
 
     # @tf.function(jit_compile=True)
     def call(self, x):
@@ -187,24 +167,28 @@ class Decoder:
             self.__call__ = tf.function(jit_compile=jit_compile)(self.__call__)
 
     # @tf.function(jit_compile=True)
-    def prepare_batch(self, indexes):
+    def prepare_batch(self, indexes, permute_view=False):
         # images, indexes = x
 
         # Update batch_size (in case it is incomplete)
         batch_size_scope = tf.shape(indexes)[0]
 
         # Precompute batch alignments
-        if self.generator.refinePose:
-            rot_batch = tf.gather(self.generator.angle_rot, indexes, axis=0)
-            tilt_batch = tf.gather(self.generator.angle_tilt, indexes, axis=0)
-            psi_batch = tf.gather(self.generator.angle_psi, indexes, axis=0)
-        else:
-            rot_batch = tf.gather(self.generator.angle_rot, indexes, axis=0)
-            tilt_batch = tf.gather(self.generator.angle_tilt, indexes, axis=0)
-            psi_batch = tf.gather(self.generator.angle_psi, indexes, axis=0)
+        rot_batch = tf.gather(self.generator.angle_rot, indexes, axis=0)
+        tilt_batch = tf.gather(self.generator.angle_tilt, indexes, axis=0)
+        psi_batch = tf.gather(self.generator.angle_psi, indexes, axis=0)
 
         shifts_x = tf.gather(self.generator.shifts[0], indexes, axis=0)
         shifts_y = tf.gather(self.generator.shifts[1], indexes, axis=0)
+
+        if permute_view:
+            # Random permutations of angles and shifts
+            euler_batch = tf.stack([rot_batch, tilt_batch, psi_batch], axis=1)
+            shifts_batch = tf.stack([shifts_x, shifts_y], axis=1)
+            euler_batch_perm = tf.random.shuffle(euler_batch)
+            shifts_batch_perm = tf.random.shuffle(shifts_batch)
+            rot_batch, tilt_batch, psi_batch = euler_batch_perm[:, 0], euler_batch_perm[:, 1], euler_batch_perm[:, 2]
+            shifts_x, shifts_y = shifts_batch_perm[:, 0], shifts_batch_perm[:, 1]
 
         # Precompute batch CTFs
         defocusU_batch = tf.gather(self.generator.defocusU, indexes, axis=0)
@@ -278,19 +262,23 @@ class Decoder:
 
             if self.CTF == "apply":
                 # CTF filter image
-                decoded = self.generator.ctfFilterImage(decoded, ctf)
+                decoded_ctf = self.generator.ctfFilterImage(decoded, ctf)
+            else:
+                decoded_ctf = decoded
         else:
             if self.CTF == "apply":
                 # CTF filter image
-                decoded = self.generator.ctfFilterImage(decoded, ctf)
+                decoded_ctf = self.generator.ctfFilterImage(decoded, ctf)
+            else:
+                decoded_ctf = decoded
 
-        return decoded
+        return decoded, decoded_ctf
 
     # @tf.function(jit_compile=False)
-    def __call__(self, x):
+    def __call__(self, x, permute_view=False):
         # encoded, images, indexes = x
         encoded, indexes = x
-        alignments, shifts, ctf = self.prepare_batch(indexes)
+        alignments, shifts, ctf = self.prepare_batch(indexes, permute_view)
 
         decoder_inputs_x, decoder_inputs_y, decoder_inputs_z, delta_euler, delta_shifts = encoded
 
@@ -313,34 +301,50 @@ class Decoder:
         c_r_s_x, c_r_s_y = self.apply_alignment_and_shifts(c_x, c_y, c_z, alignments, shifts, delta_euler, delta_shifts)
 
         # Theoretical projections
-        decoded = self.compute_theo_proj(c_r_s_x, c_r_s_y, ctf)
+        decoded, decoded_ctf = self.compute_theo_proj(c_r_s_x, c_r_s_y, ctf)
 
-        return decoded, bondk, anglek, coords, ctf
+        return [decoded, decoded_ctf], bondk, anglek, coords, ctf
 
 
 class AutoEncoder(tf.keras.Model):
     def __init__(self, generator, architecture="convnn", CTF="apply", mode=None, l_bond=0.01, l_angle=0.01,
-                 l_clashes=None, l_norm=1e-4, jit_compile=True, **kwargs):
+                 l_clashes=None, l_norm=1e-4, jit_compile=True, poseReg=0.0, ctfReg=0.0, **kwargs):
         super(AutoEncoder, self).__init__(**kwargs)
         self.generator = generator
-        self.CTF = CTF
+        self.CTF = CTF if generator.applyCTF == 1 else None
         self.refPose = 1.0 if generator.refinePose else 0.0
         self.mode = generator.mode if mode is None else mode
         self.l_bond = l_bond
         self.l_angle = l_angle
         self.l_clashes = l_clashes if l_clashes is not None else 0.0
         self.l_norm = l_norm
+        self.pose_lambda = poseReg
+        self.ctf_lambda = ctfReg
+        self.disantangle_pose = poseReg > 0.0
+        self.disantangle_ctf = ctfReg > 0.0
+        self.filters = create_blur_filters(5, 10, 30)
         # self.architecture = architecture
-        self.encoder = Encoder(generator.zernike_size.shape[0], generator.xsize,
-                               generator.refinePose, architecture=architecture,
-                               mode=self.mode, jit_compile=jit_compile)
-        self.decoder = Decoder(generator, CTF=CTF, jit_compile=jit_compile)
+        self.encoder_exp = Encoder(generator.zernike_size.shape[0], generator.xsize,architecture=architecture,
+                                   mode=self.mode, jit_compile=jit_compile)
+        if poseReg > 0.0:
+            self.encoder_clean = Encoder(generator.zernike_size.shape[0], generator.xsize, architecture=architecture,
+                                         mode=self.mode, jit_compile=jit_compile)
+        if ctfReg > 0.0:
+            self.encoder_ctf = Encoder(generator.zernike_size.shape[0], generator.xsize, architecture=architecture,
+                                       mode=self.mode, jit_compile=jit_compile)
+        self.decoder = Decoder(generator, CTF=self.CTF, jit_compile=jit_compile)
+        self.z_space_x = layers.Dense(generator.zernike_size.shape[0], activation="linear", name="z_space_x")
+        self.z_space_y = layers.Dense(generator.zernike_size.shape[0], activation="linear", name="z_space_y")
+        self.z_space_z = layers.Dense(generator.zernike_size.shape[0], activation="linear", name="z_space_z")
+        self.delta_euler = layers.Dense(3, activation="linear", name="delta_euler", trainable=generator.refinePose)
+        self.delta_shifts = layers.Dense(2, activation="linear", name="delta_shifts", trainable=generator.refinePose)
         self.total_loss_tracker = tf.keras.metrics.Mean(name="total_loss")
         self.img_loss_tracker = tf.keras.metrics.Mean(name="img_loss")
         self.bond_loss_tracker = tf.keras.metrics.Mean(name="bond_loss")
         self.angle_loss_tracker = tf.keras.metrics.Mean(name="angle_loss")
         self.clash_loss_tracker = tf.keras.metrics.Mean(name="clash_loss")
         self.norm_loss_tracker = tf.keras.metrics.Mean(name="norm_loss")
+        self.loss_disantangle_tracker = tf.keras.metrics.Mean(name="loss_disentangled")
 
         # XLA compilation of cost function
         if jit_compile:
@@ -374,7 +378,8 @@ class AutoEncoder(tf.keras.Model):
             self.bond_loss_tracker,
             self.angle_loss_tracker,
             self.clash_loss_tracker,
-            self.norm_loss_tracker
+            self.norm_loss_tracker,
+            self.loss_disantangle_tracker,
         ]
 
     def train_step(self, data):
@@ -386,9 +391,6 @@ class AutoEncoder(tf.keras.Model):
         elif self.mode == "tomo":
             indexes = data[1][0]
             images = inputs[0]
-
-        # self.decoder.generator.indexes = indexes
-        # self.decoder.generator.current_images = images
 
         # Precompute batch zernike coefficients
         z_x_batch = tf.gather(self.generator.z_x_space, indexes, axis=0)
@@ -402,9 +404,6 @@ class AutoEncoder(tf.keras.Model):
             num_points = tf.cast(tf.shape(self.generator.ca_indices)[0], tf.int64)
             points_row_splits = tf.range(B + 1, dtype=tf.int64) * num_points
             queries_row_splits = tf.range(B + 1, dtype=tf.int64) * num_points
-
-        # Prepare batch
-        # images = self.decoder.prepare_batch([images, indexes])
 
         if self.CTF == "wiener":
             # Precompute batch CTFs
@@ -425,51 +424,108 @@ class AutoEncoder(tf.keras.Model):
                 inputs[0] = images
 
         with tf.GradientTape() as tape:
-            encoded = self.encoder(inputs)
+            # Forward pass (first encoder and decoder)
+            if self.mode == "spa":
+                x = self.encoder_exp(inputs)
+                encoded = [self.z_space_x(x), self.z_space_y(x), self.z_space_z(x), self.delta_euler(x),
+                           self.delta_shifts(x)]
+            elif self.mode == "tomo":
+                x, latent = self.encoder_exp(inputs)
+                encoded = [self.z_space_x(latent), self.z_space_y(latent), self.z_space_z(latent), self.delta_euler(x),
+                           self.delta_shifts(x)]
             encoded[0] = encoded[0] + z_x_batch
             encoded[1] = encoded[1] + z_y_batch
             encoded[2] = encoded[2] + z_z_batch
+            het = tf.concat([encoded[0], encoded[1], encoded[2]], axis=1)
             encoded[3] *= self.refPose
             encoded[4] *= self.refPose
-            decoded, bondk, anglek, coords, _ = self.decoder([encoded, indexes])
+            decoded_vec, bondk, anglek, coords, ctf = self.decoder([encoded, indexes], permute_view=False)
+            decoded, decoded_ctf = decoded_vec[0], decoded_vec[1]
 
-            if allow_open3d and self.generator.ref_is_struct:
+            if self.disantangle_pose and self.mode == "spa":
+                # Forward pass (second decoder - no permutation)
+                x = self.encoder_clean(decoded)
+                encoded_clean = [self.z_space_x(x), self.z_space_y(x), self.z_space_z(x)]
+                encoded_clean[0] = encoded_clean[0] + z_x_batch
+                encoded_clean[1] = encoded_clean[1] + z_y_batch
+                encoded_clean[2] = encoded_clean[2] + z_z_batch
+                het_clean = tf.concat([encoded_clean[0], encoded_clean[1], encoded_clean[2]], axis=1)
+
+                # Forward pass (third encoder - permuted CTF)
+                if self.disantangle_ctf and self.CTF is not None:
+                    x = self.encoder_ctf(decoded_ctf)
+                    encoded_ctf = [self.z_space_x(x), self.z_space_y(x), self.z_space_z(x)]
+                    encoded_ctf[0] = encoded_ctf[0] + z_x_batch
+                    encoded_ctf[1] = encoded_ctf[1] + z_y_batch
+                    encoded_ctf[2] = encoded_ctf[2] + z_z_batch
+                    het_ctf = tf.concat([encoded_ctf[0], encoded_ctf[1], encoded_ctf[2]], axis=1)
+                    ctf_perm = tf.random.shuffle(ctf)
+                    decoded_het_ctf_perm = self.decoder.generator.ctfFilterImage(decoded, ctf_perm)
+                    x = self.encoder_ctf(decoded_het_ctf_perm)
+                    encoded_ctf_perm = [self.z_space_x(x), self.z_space_y(x), self.z_space_z(x)]
+                    encoded_ctf_perm[0] = encoded_ctf_perm[0] + z_x_batch
+                    encoded_ctf_perm[1] = encoded_ctf_perm[1] + z_y_batch
+                    encoded_ctf_perm[2] = encoded_ctf_perm[2] + z_z_batch
+                    het_ctf_perm = tf.concat([encoded_ctf_perm[0], encoded_ctf_perm[1], encoded_ctf_perm[2]], axis=1)
+                else:
+                    het_ctf_perm = het
+
+                # Forward pass (second decoder - permutation)
+                decoded_vec, _, _, _, _ = self.decoder([encoded, indexes], permute_view=True)
+                x = self.encoder_clean(decoded_vec[0])
+                encoded_clean_perm = [self.z_space_x(x), self.z_space_y(x), self.z_space_z(x)]
+                encoded_clean_perm[0] = encoded_clean_perm[0] + z_x_batch
+                encoded_clean_perm[1] = encoded_clean_perm[1] + z_y_batch
+                encoded_clean_perm[2] = encoded_clean_perm[2] + z_z_batch
+                het_clean_perm = tf.concat([encoded_clean_perm[0], encoded_clean_perm[1], encoded_clean_perm[2]], axis=1)
+
+            if allow_open3d and self.generator.ref_is_struct and self.l_clashes > 0.0:
                 # Fixed radius search
                 result = self.nsearch(coords, coords, 0.5 * self.extent, points_row_splits, queries_row_splits)
-
 
                 # Compute neighbour distances
                 clashes = self.conv(tf.ones((tf.shape(coords)[0], 1), tf.float32), coords, coords, self.extent,
                                     user_neighbors_row_splits=result.neighbors_row_splits,
                                     user_neighbors_index=result.neighbors_index,
-                                    user_neighbors_importance=self.fn(result.neighbors_distance, result.neighbors_row_splits))
-                clashes = tf.reduce_mean(tf.reshape(clashes, (B, -1)), axis=-1)
+                                    user_neighbors_importance=self.fn(result.neighbors_distance,
+                                                                      result.neighbors_row_splits))
+                clashes = tf.reduce_max(tf.reshape(clashes, (B, -1)), axis=-1)
             else:
                 clashes = tf.constant(0.0, tf.float32)
 
-            img_loss = self.cost_function(images, decoded)
+            img_loss = self.cost_function(images, decoded_ctf)
 
             # Bond and angle losses
             if self.generator.ref_is_struct:
-                bond_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.generator.bond0, bondk)))
-                angle_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.generator.angle0, anglek)))
+                bond_loss = tf.sqrt(tf.reduce_max(tf.keras.losses.MSE(self.generator.bond0, bondk)))
+                angle_loss = tf.sqrt(tf.reduce_max(tf.keras.losses.MSE(self.generator.angle0, anglek)))
             else:
                 bond_loss, angle_loss = tf.constant(0.0, tf.float32), tf.constant(0.0, tf.float32)
 
+            # Loss disantagled (pose)
+            if self.disantangle_pose and self.mode == "spa":
+                loss_disantagled_pose = (tf.keras.losses.MSE(het, het_clean)
+                                         + tf.keras.losses.MSE(het, het_clean_perm))
+            else:
+                loss_disantagled_pose = 0.0
+
+            # Loss disantagled (CTF)
+            if self.disantangle_ctf and self.mode == "spa":
+                loss_disantagled_ctf = (tf.keras.losses.MSE(het, het_ctf)
+                                        + tf.keras.losses.MSE(het, het_ctf_perm))
+            else:
+                loss_disantagled_ctf = 0.0
+
             # Coefficent norm loss
-            # if self.architecture == "deepconv":
-            #     norm_x = tf.reduce_mean(tf.square(encoded[0]), axis=-1)
-            #     norm_y = tf.reduce_mean(tf.square(encoded[1]), axis=-1)
-            #     norm_z = tf.reduce_mean(tf.square(encoded[2]), axis=-1)
-            #     norm_loss = (norm_x + norm_y + norm_z) / 3.
-            # else:
-            #     norm_loss = tf.constant(0.0, tf.float32)
             norm_x = tf.reduce_mean(tf.square(encoded[0]), axis=-1)
             norm_y = tf.reduce_mean(tf.square(encoded[1]), axis=-1)
             norm_z = tf.reduce_mean(tf.square(encoded[2]), axis=-1)
             norm_loss = (norm_x + norm_y + norm_z) / 3.
 
-            total_loss = img_loss + self.l_bond * bond_loss + self.l_angle * angle_loss + self.l_clashes * clashes + self.l_norm * norm_loss
+            total_loss = (img_loss + self.l_bond * bond_loss
+                          + self.l_angle * angle_loss + self.l_clashes * clashes +
+                          self.l_norm * norm_loss + self.pose_lambda * loss_disantagled_pose +
+                          self.ctf_lambda * loss_disantagled_ctf)  # 0.001 works on HetSIREN
 
         grads = tape.gradient(total_loss, self.trainable_weights)
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
@@ -479,6 +535,7 @@ class AutoEncoder(tf.keras.Model):
         self.bond_loss_tracker.update_state(bond_loss)
         self.clash_loss_tracker.update_state(clashes)
         self.norm_loss_tracker.update_state(norm_loss)
+        self.loss_disantangle_tracker.update_state(loss_disantagled_pose + loss_disantagled_ctf)
         return {
             "loss": self.total_loss_tracker.result(),
             "img_loss": self.img_loss_tracker.result(),
@@ -486,6 +543,7 @@ class AutoEncoder(tf.keras.Model):
             "angle": self.angle_loss_tracker.result(),
             "clashes": self.clash_loss_tracker.result(),
             "norm": self.norm_loss_tracker.result(),
+            "loss_disentangled": self.loss_disantangle_tracker.result(),
         }
 
     def test_step(self, data):
@@ -497,9 +555,6 @@ class AutoEncoder(tf.keras.Model):
         elif self.mode == "tomo":
             indexes = data[1][0]
             images = inputs[0]
-
-        # self.decoder.generator.indexes = indexes
-        # self.decoder.generator.current_images = images
 
         # Precompute batch zernike coefficients
         z_x_batch = tf.gather(self.generator.z_x_space, indexes, axis=0)
@@ -513,9 +568,6 @@ class AutoEncoder(tf.keras.Model):
             num_points = tf.cast(tf.shape(self.generator.ca_indices)[0], tf.int64)
             points_row_splits = tf.range(B + 1, dtype=tf.int64) * num_points
             queries_row_splits = tf.range(B + 1, dtype=tf.int64) * num_points
-
-        # Prepare batch
-        # images = self.decoder.prepare_batch([images, indexes])
 
         if self.CTF == "wiener":
             # Precompute batch CTFs
@@ -535,15 +587,65 @@ class AutoEncoder(tf.keras.Model):
             elif self.mode == "tomo":
                 inputs[0] = images
 
-        encoded = self.encoder(inputs)
+        # Forward pass (first encoder and decoder)
+        if self.mode == "spa":
+            x = self.encoder_exp(inputs)
+            encoded = [self.z_space_x(x), self.z_space_y(x), self.z_space_z(x), self.delta_euler(x),
+                       self.delta_shifts(x)]
+        elif self.mode == "tomo":
+            x, latent = self.encoder_exp(inputs)
+            encoded = [self.z_space_x(latent), self.z_space_y(latent), self.z_space_z(latent),
+                       self.delta_euler(x),
+                       self.delta_shifts(x)]
         encoded[0] = encoded[0] + z_x_batch
         encoded[1] = encoded[1] + z_y_batch
         encoded[2] = encoded[2] + z_z_batch
+        het = tf.concat([encoded[0], encoded[1], encoded[2]], axis=1)
         encoded[3] *= self.refPose
         encoded[4] *= self.refPose
-        decoded, bondk, anglek, coords, _ = self.decoder([encoded, indexes])
+        decoded_vec, bondk, anglek, coords, ctf = self.decoder([encoded, indexes], permute_view=False)
+        decoded, decoded_ctf = decoded_vec[0], decoded_vec[1]
 
-        if allow_open3d and self.generator.ref_is_struct:
+        if self.disantangle_pose and self.mode == "spa":
+            # Forward pass (second decoder - no permutation)
+            x = self.encoder_clean(decoded)
+            encoded_clean = [self.z_space_x(x), self.z_space_y(x), self.z_space_z(x)]
+            encoded_clean[0] = encoded_clean[0] + z_x_batch
+            encoded_clean[1] = encoded_clean[1] + z_y_batch
+            encoded_clean[2] = encoded_clean[2] + z_z_batch
+            het_clean = tf.concat([encoded_clean[0], encoded_clean[1], encoded_clean[2]], axis=1)
+
+            # Forward pass (third encoder - permuted CTF)
+            if self.disantangle_ctf and self.CTF is not None:
+                x = self.encoder_ctf(decoded_ctf)
+                encoded_ctf = [self.z_space_x(x), self.z_space_y(x), self.z_space_z(x)]
+                encoded_ctf[0] = encoded_ctf[0] + z_x_batch
+                encoded_ctf[1] = encoded_ctf[1] + z_y_batch
+                encoded_ctf[2] = encoded_ctf[2] + z_z_batch
+                het_ctf = tf.concat([encoded_ctf[0], encoded_ctf[1], encoded_ctf[2]], axis=1)
+                ctf_perm = tf.random.shuffle(ctf)
+                decoded_het_ctf_perm = self.decoder.generator.ctfFilterImage(decoded, ctf_perm)
+                x = self.encoder_ctf(decoded_het_ctf_perm)
+                encoded_ctf_perm = [self.z_space_x(x), self.z_space_y(x), self.z_space_z(x)]
+                encoded_ctf_perm[0] = encoded_ctf_perm[0] + z_x_batch
+                encoded_ctf_perm[1] = encoded_ctf_perm[1] + z_y_batch
+                encoded_ctf_perm[2] = encoded_ctf_perm[2] + z_z_batch
+                het_ctf_perm = tf.concat([encoded_ctf_perm[0], encoded_ctf_perm[1], encoded_ctf_perm[2]],
+                                         axis=1)
+            else:
+                het_ctf_perm = het
+
+            # Forward pass (second decoder - permutation)
+            decoded_vec, _, _, _, _ = self.decoder([encoded, indexes], permute_view=True)
+            x = self.encoder_clean(decoded_vec[0])
+            encoded_clean_perm = [self.z_space_x(x), self.z_space_y(x), self.z_space_z(x)]
+            encoded_clean_perm[0] = encoded_clean_perm[0] + z_x_batch
+            encoded_clean_perm[1] = encoded_clean_perm[1] + z_y_batch
+            encoded_clean_perm[2] = encoded_clean_perm[2] + z_z_batch
+            het_clean_perm = tf.concat([encoded_clean_perm[0], encoded_clean_perm[1], encoded_clean_perm[2]],
+                                       axis=1)
+
+        if allow_open3d and self.generator.ref_is_struct and self.l_clashes > 0.0:
             # Fixed radius search
             result = self.nsearch(coords, coords, 0.5 * self.extent, points_row_splits, queries_row_splits)
 
@@ -553,32 +655,57 @@ class AutoEncoder(tf.keras.Model):
                                 user_neighbors_index=result.neighbors_index,
                                 user_neighbors_importance=self.fn(result.neighbors_distance,
                                                                   result.neighbors_row_splits))
-            clashes = tf.reduce_mean(tf.reshape(clashes, (B, -1)), axis=-1)
+            clashes = tf.reduce_max(tf.reshape(clashes, (B, -1)), axis=-1)
         else:
             clashes = tf.constant(0.0, tf.float32)
 
-        img_loss = self.cost_function(images, decoded)
+        img_loss = self.cost_function(images, decoded_ctf)
 
         # Bond and angle losses
         if self.generator.ref_is_struct:
-            bond_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.generator.bond0, bondk)))
-            angle_loss = tf.sqrt(tf.reduce_mean(tf.keras.losses.MSE(self.generator.angle0, anglek)))
+            bond_loss = tf.sqrt(tf.reduce_max(tf.keras.losses.MSE(self.generator.bond0, bondk)))
+            angle_loss = tf.sqrt(tf.reduce_max(tf.keras.losses.MSE(self.generator.angle0, anglek)))
         else:
             bond_loss, angle_loss = tf.constant(0.0, tf.float32), tf.constant(0.0, tf.float32)
 
-        total_loss = img_loss + self.l_bond * bond_loss + self.l_angle * angle_loss + self.l_clashes * clashes
+        # Loss disantagled (pose)
+        if self.disantangle_pose and self.mode == "spa":
+            loss_disantagled_pose = (tf.keras.losses.MSE(het, het_clean)
+                                     + tf.keras.losses.MSE(het, het_clean_perm))
+        else:
+            loss_disantagled_pose = 0.0
+
+        # Loss disantagled (CTF)
+        if self.disantangle_ctf and self.mode == "spa":
+            loss_disantagled_ctf = (tf.keras.losses.MSE(het, het_ctf)
+                                    + tf.keras.losses.MSE(het, het_ctf_perm))
+        else:
+            loss_disantagled_ctf = 0.0
+
+        # Coefficent norm loss
+        norm_x = tf.reduce_mean(tf.square(encoded[0]), axis=-1)
+        norm_y = tf.reduce_mean(tf.square(encoded[1]), axis=-1)
+        norm_z = tf.reduce_mean(tf.square(encoded[2]), axis=-1)
+        norm_loss = (norm_x + norm_y + norm_z) / 3.
+
+        total_loss = (img_loss + self.l_bond * bond_loss
+                      + self.l_angle * angle_loss + self.l_clashes * clashes +
+                      self.l_norm * norm_loss + self.pose_lambda * loss_disantagled_pose +
+                      self.ctf_lambda * loss_disantagled_ctf)  # 0.001 works on HetSIREN
 
         self.total_loss_tracker.update_state(total_loss)
         self.img_loss_tracker.update_state(img_loss)
         self.angle_loss_tracker.update_state(angle_loss)
         self.bond_loss_tracker.update_state(bond_loss)
         self.clash_loss_tracker.update_state(clashes)
+        self.loss_disantangle_tracker.update_state(loss_disantagled_pose + loss_disantagled_ctf)
         return {
             "loss": self.total_loss_tracker.result(),
             "img_loss": self.img_loss_tracker.result(),
             "bond": self.bond_loss_tracker.result(),
             "angle": self.angle_loss_tracker.result(),
             "clashes": self.clash_loss_tracker.result(),
+            "loss_disentangled": self.loss_disantangle_tracker.result(),
         }
 
     def predict_step(self, data):
@@ -596,14 +723,15 @@ class AutoEncoder(tf.keras.Model):
         self.decoder.generator.z_y_batch = tf.gather(self.generator.z_y_space, indexes, axis=0)
         self.decoder.generator.z_z_batch = tf.gather(self.generator.z_z_space, indexes, axis=0)
 
-        # if self.CTF == "wiener":
-        #     images = self.decoder.generator.wiener2DFilter(images)
-        #     if self.mode == "spa":
-        #         inputs = images
-        #     elif self.mode == "tomo":
-        #         inputs[0] = images
-
-        encoded = self.encoder(inputs)
+        if self.mode == "spa":
+            x = self.encoder_exp(inputs)
+            encoded = [self.z_space_x(x), self.z_space_y(x), self.z_space_z(x), self.delta_euler(x),
+                       self.delta_shifts(x)]
+        elif self.mode == "tomo":
+            x, latent = self.encoder(inputs)
+            encoded = [self.z_space_x(latent), self.z_space_y(latent), self.z_space_z(latent),
+                       self.delta_euler(x),
+                       self.delta_shifts(x)]
         encoded[0] = encoded[0] + self.decoder.generator.z_x_batch
         encoded[1] = encoded[1] + self.decoder.generator.z_y_batch
         encoded[2] = encoded[2] + self.decoder.generator.z_z_batch
@@ -621,6 +749,13 @@ class AutoEncoder(tf.keras.Model):
 
         if self.mode == "spa":
             indexes = tf.zeros(tf.shape(input_features)[0], dtype=tf.int32)
+            x = self.encoder_exp(input_features)
+            encoded = [self.z_space_x(x), self.z_space_y(x), self.z_space_z(x), self.delta_euler(x),
+                       self.delta_shifts(x)]
         elif self.mode == "tomo":
             indexes = tf.zeros(tf.shape(input_features[0])[0], dtype=tf.int32)
-        return self.decoder([self.encoder(input_features), indexes])
+            x, latent = self.encoder_exp(input_features)
+            encoded = [self.z_space_x(latent), self.z_space_y(latent), self.z_space_z(latent),
+                       self.delta_euler(x), self.delta_shifts(x)]
+
+        return self.decoder([encoded, indexes])

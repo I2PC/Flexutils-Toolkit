@@ -135,7 +135,7 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
     def readMetadata(self, filename):
         filename = Path(filename)
         self.filename = filename
-        self.metadata = XmippMetaData(file_name=filename)
+        self.metadata = XmippMetaData(file_name=str(filename))
         mask = Path(filename.parent, 'mask.mrc')
         volume = Path(filename.parent, 'volume.mrc')
         structure = Path(filename.parent, 'structure.txt')
@@ -189,10 +189,15 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
         # self.values = np.ones(self.coords.shape[0])
         # self.values = (pdb_info[:, -1]).reshape(-1)
 
-        # Connectivity
-        connect_file = str(Path(structure.parent, 'connectivity.txt'))
-        if os.path.isfile(connect_file):
-            self.connectivity = np.loadtxt(connect_file).astype(int)
+        # Bonds
+        bonds_file = str(Path(structure.parent, 'bonds.txt'))
+        if os.path.isfile(bonds_file):
+            self.bonds = np.loadtxt(bonds_file).astype(int)
+
+        # Dihedrals
+        dihedrals_file = str(Path(structure.parent, 'dihedrals.txt'))
+        if os.path.isfile(dihedrals_file):
+            self.dihedrals = np.loadtxt(dihedrals_file).astype(int)
 
         # CA indices
         ca_file = str(Path(structure.parent, 'ca_indices.txt'))
@@ -207,10 +212,12 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
             coords = np.asarray(np.where(mrc.data > 0))
             coords = np.transpose(np.asarray([coords[2, :], coords[1, :], coords[0, :]]))
             self.coords = coords - self.xmipp_origin
+            xsize = mrc.data.shape[0]
 
         # Apply step to coords and values
         self.coords = self.coords[::self.step]
         self.values = np.zeros(self.coords.shape[0], dtype=np.float32)
+        self.vol = np.zeros((xsize, xsize, xsize), dtype=np.float32)
 
         # Flag (reference is map)
         self.ref_is_struct = False

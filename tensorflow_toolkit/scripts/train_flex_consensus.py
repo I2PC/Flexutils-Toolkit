@@ -66,7 +66,7 @@ def sort_nicely(l):
     l.sort(key=alphanum_key)
 
 
-def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs, lr=1e-5):
+def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs, lr=1e-5, tensorboard=True):
 
     try:
         # Read data
@@ -96,6 +96,9 @@ def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs, lr
 
         optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
 
+        # Callbacks list
+        callbacks = []
+
         # Create a callback that saves the model's weights
         initial_epoch = 0
         checkpoint_path = os.path.join(outPath, "training", "cp-{epoch:04d}.hdf5")
@@ -104,13 +107,16 @@ def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs, lr
         cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
                                                          save_weights_only=True,
                                                          verbose=1)
+        callbacks.append(cp_callback)
 
         # Tensorboard callback
-        log_dir = os.path.join(outPath, "logs")
-        if not os.path.isdir(log_dir):
-            os.mkdir(log_dir)
-        tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1,
-                                                              write_graph=True, write_steps_per_second=True)
+        if tensorboard:
+            log_dir = os.path.join(outPath, "logs")
+            if not os.path.isdir(log_dir):
+                os.mkdir(log_dir)
+            tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1,
+                                                                  write_graph=True, write_steps_per_second=True)
+            callbacks.append(tensorboard_callback)
 
         checkpoint = os.path.join(outPath, "training")
         if os.path.isdir(checkpoint):
@@ -123,15 +129,15 @@ def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs, lr
                 latest = os.path.basename(latest)
                 initial_epoch = int(re.findall(r'\d+', latest)[0]) - 1
 
-        autoencoder.compile(optimizer=optimizer)
+        autoencoder.compile(optimizer=optimizer, jit_compile=False)
         optimizer.build(autoencoder.trainable_variables)
 
         if generator_val is not None:
             autoencoder.fit(generator, validation_data=generator_val, epochs=epochs, validation_freq=2,
-                            callbacks=[cp_callback, tensorboard_callback], initial_epoch=initial_epoch)
+                            callbacks=callbacks, initial_epoch=initial_epoch)
         else:
             autoencoder.fit(generator, epochs=epochs,
-                            callbacks=[cp_callback, tensorboard_callback], initial_epoch=initial_epoch)
+                            callbacks=callbacks, initial_epoch=initial_epoch)
     except tf.errors.ResourceExhaustedError as error:
         msg = "GPU memory has been exhausted. Usually this can be solved by " \
               "by decreasing the batch size. Please, modify these " \
@@ -187,6 +193,7 @@ def main():
     parser.add_argument('--split_train', type=float, required=True)
     parser.add_argument('--epochs', type=int, required=False)
     parser.add_argument('--max_samples_seen', type=int, required=False)
+    parser.add_argument('--tensorboard', action='store_true')
     parser.add_argument('--gpu', type=str)
 
     args = parser.parse_args()
@@ -208,7 +215,7 @@ def main():
 
     inputs = {"dataPath": args.data_path, "outPath": args.out_path, "latDim": args.lat_dim,
               "batch_size": args.batch_size, "shuffle": args.shuffle,
-              "splitTrain": args.split_train, "epochs": epochs, "lr": args.lr}
+              "splitTrain": args.split_train, "epochs": epochs, "lr": args.lr, "tensorboard": args.tensorboard}
 
     # Initialize volume slicer
     train(**inputs)
