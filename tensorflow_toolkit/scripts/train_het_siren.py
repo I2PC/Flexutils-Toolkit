@@ -33,9 +33,8 @@ import glob
 from xmipp_metadata.metadata import XmippMetaData
 
 import tensorflow as tf
+from tensorflow.keras import mixed_precision
 
-from tensorflow_toolkit.generators.generator_het_siren import Generator
-from tensorflow_toolkit.networks.het_siren import AutoEncoder
 # from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
 from tensorflow_toolkit.utils import epochs_from_iterations
 
@@ -50,14 +49,21 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
           radius_mask, smooth_mask, refinePose, architecture="convnn", weigths_file=None,
           ctfType="apply", pad=2, sr=1.0, applyCTF=1, hetDim=10, l1Reg=0.5, tvReg=0.1, mseReg=0.1, poseReg=0.0,
           ctfReg=0.0, lr=1e-5, only_pos=False, multires=None, jit_compile=True, trainSize=None, outSize=None,
-          tensorboard=True, useMirrorStrategy=False):
+          tensorboard=True, useMirrorStrategy=False, precision="mixed_float16"):
+    # We need to import network and generators here instead of at the beginning of the script to allow Tensorflow
+    # get the right GPUs set in CUDA_VISIBLE_DEVICES
+    assert precision in ["float32", "mixed_float16"]
+    mixed_precision.set_global_policy(precision)
+    precision = tf.float32 if precision == "float32" else tf.float16
+    from tensorflow_toolkit.generators.generator_het_siren import Generator
+    from tensorflow_toolkit.networks.het_siren import AutoEncoder
 
     try:
         # Create data generator
         generator = Generator(md_file=md_file, shuffle=shuffle, batch_size=batch_size,
                               step=step, splitTrain=splitTrain, cost=cost, radius_mask=radius_mask,
                               smooth_mask=smooth_mask, pad_factor=pad, sr=sr,
-                              applyCTF=applyCTF, xsize=outSize)
+                              applyCTF=applyCTF, xsize=outSize, precision=precision)
 
 
         # Create validation generator
@@ -65,7 +71,7 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
             generator_val = Generator(md_file=md_file, shuffle=shuffle, batch_size=batch_size,
                                       step=step, splitTrain=(splitTrain - 1.0), cost=cost, radius_mask=radius_mask,
                                       smooth_mask=smooth_mask, pad_factor=pad, sr=sr,
-                                      applyCTF=applyCTF, xsize=outSize)
+                                      applyCTF=applyCTF, xsize=outSize, precision=precision)
         else:
             generator_val = None
 
@@ -83,7 +89,7 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
             autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
                                       het_dim=hetDim, l1_lambda=l1Reg, tv_lambda=tvReg, mse_lambda=mseReg,
                                       train_size=trainSize, only_pos=only_pos, multires_levels=multires,
-                                      poseReg=poseReg, ctfReg=ctfReg)
+                                      poseReg=poseReg, ctfReg=ctfReg, precision=precision)
 
             # Fine tune a previous model
             if weigths_file:
@@ -95,6 +101,7 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
                 autoencoder.load_weights(weigths_file)
 
             optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+            # optimizer = mixed_precision.LossScaleOptimizer(optimizer)
 
             # Callbacks list
             callbacks = []

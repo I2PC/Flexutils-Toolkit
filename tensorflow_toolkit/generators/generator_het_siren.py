@@ -37,7 +37,7 @@ import tensorflow as tf
 import tensorflow_addons as tfa
 
 from tensorflow_toolkit.generators.generator_template import DataGeneratorBase
-from tensorflow_toolkit.utils import euler_matrix_batch
+from tensorflow_toolkit.utils import euler_matrix_batch, fft_pad, ifft_pad, full_fft_pad, full_ifft_pad
 
 
 ### TO BE USED IN FUTURE NETWORKS ###
@@ -133,9 +133,10 @@ def trilinear_interpolation(input_volumes, query_points):
 
 
 class Generator(DataGeneratorBase):
-    def __init__(self, isFocused=False, **kwargs):
+    def __init__(self, isFocused=False, precision=tf.float32, **kwargs):
         super().__init__(keepMap=True, **kwargs)
         self.isFocused = isFocused
+        self.precision = precision
 
         # Save mask map and indices
         mask_path = Path(self.filename.parent, 'mask.mrc')
@@ -215,7 +216,10 @@ class Generator(DataGeneratorBase):
         # b_spline_1d = np.asarray([0.0, 0.5, 1.0, 0.5, 1.0])
         b_spline_1d = np.asarray([0.0, 0.25, 0.5, 1.0, 0.5, 0.25, 1.0])
         b_spline_kernel = np.einsum('i,j->ij', b_spline_1d, b_spline_1d)
-        self.b_spline_kernel = tf.constant(b_spline_kernel, dtype=tf.float32)[..., None, None]
+        self.b_spline_kernel = tf.constant(b_spline_kernel, dtype=self.precision)[..., None, None]
+
+        # Type cast
+        self.values = tf.cast(self.values, self.precision)
 
     # ----- Utils -----#
 
@@ -242,9 +246,9 @@ class Generator(DataGeneratorBase):
                                self.psi_batch + delta_angles[:, 2])
 
         # Apply alignment
-        c_r_1 = tf.multiply(c_x[None, :], tf.cast(tf.gather(r[axis], 0, axis=1), dtype=tf.float32)[:, None])
-        c_r_2 = tf.multiply(c_y[None, :], tf.cast(tf.gather(r[axis], 1, axis=1), dtype=tf.float32)[:, None])
-        c_r_3 = tf.multiply(c_z[None, :], tf.cast(tf.gather(r[axis], 2, axis=1), dtype=tf.float32)[:, None])
+        c_r_1 = tf.multiply(c_x[None, :], tf.cast(tf.gather(r[axis], 0, axis=1), dtype=self.precision)[:, None])
+        c_r_2 = tf.multiply(c_y[None, :], tf.cast(tf.gather(r[axis], 1, axis=1), dtype=self.precision)[:, None])
+        c_r_3 = tf.multiply(c_z[None, :], tf.cast(tf.gather(r[axis], 2, axis=1), dtype=self.precision)[:, None])
         return tf.add(tf.add(c_r_1, c_r_2), c_r_3)
 
     def applyShifts(self, coord, delta_shifts, axis):
@@ -253,9 +257,9 @@ class Generator(DataGeneratorBase):
 
     def getRotatedGrid(self, angles):
         # Get coords to move
-        c_x = tf.constant(self.coords[:, 0], dtype=tf.float32)
-        c_y = tf.constant(self.coords[:, 1], dtype=tf.float32)
-        c_z = tf.constant(self.coords[:, 2], dtype=tf.float32)
+        c_x = tf.constant(self.coords[:, 0], dtype=self.precision)
+        c_y = tf.constant(self.coords[:, 1], dtype=self.precision)
+        c_z = tf.constant(self.coords[:, 2], dtype=self.precision)
 
         # Apply alignment
         c_x_r = self.applyAlignment(c_x, c_y, c_z, angles, 0)
@@ -287,7 +291,7 @@ class Generator(DataGeneratorBase):
         if self.isFocused:
             flat_indices = tf.constant(self.flat_indices, dtype=tf.int32)[:, None]
             fn = lambda inp: tf.scatter_nd(flat_indices, inp, [self.cube])
-            updates = tf.map_fn(fn, c[2], fn_output_signature=tf.float32)
+            updates = tf.map_fn(fn, c[2], fn_output_signature=self.precision)
             updates = tf.gather(updates, self.mask, axis=1)
         else:
             updates = c[2]
@@ -300,15 +304,15 @@ class Generator(DataGeneratorBase):
         sigma = 1.
         bamp = bamp * tf.exp(-num / (2. * sigma ** 2.))
 
-        fn = lambda inp: tf.tensor_scatter_nd_add(inp[0], inp[1], inp[2])
-        imgs = tf.map_fn(fn, [imgs, bposi, bamp], fn_output_signature=tf.float32)
+        fn = lambda inp: tf.cast(tf.tensor_scatter_nd_add(inp[0], inp[1], inp[2]), self.precision)
+        imgs = tf.map_fn(fn, [imgs, bposi, tf.cast(bamp, tf.float32)], fn_output_signature=self.precision)
 
         imgs = tf.reshape(imgs, [-1, self.xsize, self.xsize, 1])
 
         # Create projection mask (to improve cost accuracy)
         self.mask_imgs = tf.zeros((batch_size_scope, self.xsize, self.xsize), dtype=tf.float32)
         mask_values = tf.ones([batch_size_scope, self.coords.shape[0]], dtype=tf.float32)
-        self.mask_imgs = tf.map_fn(fn, [self.mask_imgs, bposi, mask_values], fn_output_signature=tf.float32)
+        self.mask_imgs = tf.map_fn(fn, [self.mask_imgs, bposi, mask_values], fn_output_signature=self.precision)
         self.mask_imgs = tf.reshape(self.mask_imgs, [-1, self.xsize, self.xsize, 1])
         self.mask_imgs = tfa.image.gaussian_filter2d(self.mask_imgs, 3, 1)
         self.mask_imgs = tf.math.divide_no_nan(self.mask_imgs, self.mask_imgs)
@@ -439,5 +443,74 @@ class Generator(DataGeneratorBase):
         tf.print(tf.reduce_sum(gauss_filter), output_stream=sys.stdout)
 
         return tf.transpose(gauss_filter[0], [2, 0, 1])[..., None]
+
+    def softThresholdImage(self, images):
+        images = (images - tf.cast(images > 1e-6, dtype=self.precision)
+                  * 1e-6 + tf.cast(images < -1e-6, dtype=self.precision)
+                  * 1e-6 - tf.cast(images == 1e-6, dtype=self.precision) * images)
+        return images
+
+    def ctfFilterImage(self, images):
+        images = tf.cast(images, tf.float32)
+
+        # Get current batch size (function scope)
+        batch_size_scope = tf.shape(images)[0]
+
+        # Sizes
+        pad_size = tf.constant(int(self.pad_factor * self.xsize), dtype=tf.int32)
+        size = tf.constant(int(self.xsize), dtype=tf.int32)
+
+        # ft_images = tf.signal.fftshift(tf.signal.rfft2d(images[:, :, :, 0]))
+        ft_images = fft_pad(images, pad_size, pad_size)
+        ft_ctf_images_real = tf.multiply(tf.math.real(ft_images), self.ctf)
+        ft_ctf_images_imag = tf.multiply(tf.math.imag(ft_images), self.ctf)
+        ft_ctf_images = tf.complex(ft_ctf_images_real, ft_ctf_images_imag)
+        # ctf_images = tf.signal.irfft2d(tf.signal.ifftshift(ft_ctf_images))
+        ctf_images = tf.cast(ifft_pad(ft_ctf_images, size, size), self.precision)
+        return tf.reshape(ctf_images, [batch_size_scope, self.xsize, self.xsize, 1])
+
+    def wiener2DFilter(self, images):
+        images = tf.cast(images, tf.float32)
+
+        # Get current batch size (function scope)
+        batch_size_scope = tf.shape(images)[0]
+
+        # Sizes
+        pad_size = tf.constant(int(self.pad_factor * self.xsize), dtype=tf.int32)
+        size = tf.constant(int(self.xsize), dtype=tf.int32)
+
+        ctf_2 = self.ctf * self.ctf
+        # epsilon = 1e-5
+        epsilon = 0.1 * tf.reduce_mean(ctf_2)
+
+        ft_images = fft_pad(images, pad_size, pad_size)
+        ft_w_images_real = tf.math.real(ft_images) * self.ctf / (ctf_2 + epsilon)
+        ft_w_images_imag = tf.math.imag(ft_images) * self.ctf / (ctf_2 + epsilon)
+        ft_w_images = tf.complex(ft_w_images_real, ft_w_images_imag)
+        w_images = tf.cast(ifft_pad(ft_w_images, size, size), self.precision)
+        return tf.reshape(w_images, [batch_size_scope, self.xsize, self.xsize, 1])
+
+    def resizeImageFourier(self, images, out_size):
+        images = tf.cast(images, tf.float32)
+
+        # Sizes
+        xsize = tf.shape(images)[1]
+        pad_size = self.pad_factor * xsize
+        pad_out_size = self.pad_factor * out_size
+
+        # Fourier transform
+        ft_images = full_fft_pad(images, pad_size, pad_size)
+
+        # Normalization constant
+        norm = tf.cast(pad_out_size, dtype=tf.float32) / tf.cast(pad_size, dtype=tf.float32)
+
+        # Resizing
+        ft_images = tf.image.resize_with_crop_or_pad(ft_images[..., None], pad_out_size, pad_out_size)[..., 0]
+
+        # Inverse transform
+        images = full_ifft_pad(ft_images, out_size, out_size)
+        images *= norm * norm
+
+        return tf.cast(images, self.precision)
 
     # ----- -------- -----#

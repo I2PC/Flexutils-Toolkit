@@ -48,7 +48,8 @@ from tensorflow_toolkit.networks.het_siren import AutoEncoder
 
 
 def predict(md_file, weigths_file, refinePose, architecture, ctfType,
-            pad=2, sr=1.0, applyCTF=1, hetDim=10, trainSize=None, outSize=None):
+            pad=2, sr=1.0, applyCTF=1, hetDim=10, trainSize=None, outSize=None, addCTF=False,
+            poseReg=0.0, ctfReg=0.0):
     # Create data generator
     generator = Generator(md_file=md_file, shuffle=False, batch_size=16,
                           step=1, splitTrain=1.0, pad_factor=pad, sr=sr,
@@ -60,7 +61,7 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType,
 
     # Load model
     autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
-                              het_dim=hetDim, train_size=trainSize)
+                              het_dim=hetDim, train_size=trainSize, poseReg=poseReg, ctfReg=ctfReg)
     if generator.mode == "spa":
         autoencoder.build(input_shape=(None, autoencoder.xsize, autoencoder.xsize, 1))
     elif generator.mode == "tomo":
@@ -77,8 +78,8 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType,
     mrc = mrcfile.new_mmap(particles_path,
                            shape=(len(generator.file_idx), generator.xsize, generator.xsize),
                            mrc_mode=2, overwrite=True)
-    autoencoder.predict_mode = "particles"
-    autoencoder.applyCTF = 0
+    autoencoder.predict_mode = "particles" if not addCTF else "particles_ctf"
+    autoencoder.applyCTF = 0 if not addCTF else 1
     idx = 0
     for data in tqdm.tqdm(generator, file=sys.stdout):
         idx_init = idx * generator.batch_size
@@ -127,6 +128,9 @@ def main():
     parser.add_argument('--apply_ctf', type=int, required=True)
     parser.add_argument('--trainSize', type=int, required=True)
     parser.add_argument('--outSize', type=int, required=True)
+    parser.add_argument('--addCTF', action='store_true')
+    parser.add_argument('--pose_reg', type=float, required=False, default=0.0)
+    parser.add_argument('--ctf_reg', type=float, required=False, default=0.0)
     parser.add_argument('--gpu', type=str)
 
     args = parser.parse_args()
@@ -141,7 +145,8 @@ def main():
               "refinePose": args.refine_pose, "architecture": args.architecture,
               "ctfType": args.ctf_type, "pad": args.pad, "sr": args.sr,
               "applyCTF": args.apply_ctf, "hetDim": args.het_dim,
-              "trainSize": args.trainSize, "outSize": args.outSize}
+              "trainSize": args.trainSize, "outSize": args.outSize,
+              "addCTF": args.addCTF, "poseReg": args.pose_reg, "ctfReg": args.ctf_reg}
 
     # Initialize volume slicer
     predict(**inputs)

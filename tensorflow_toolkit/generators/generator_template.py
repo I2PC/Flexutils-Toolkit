@@ -189,10 +189,15 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
         # self.values = np.ones(self.coords.shape[0])
         # self.values = (pdb_info[:, -1]).reshape(-1)
 
-        # Connectivity
-        connect_file = str(Path(structure.parent, 'connectivity.txt'))
-        if os.path.isfile(connect_file):
-            self.connectivity = np.loadtxt(connect_file).astype(int)
+        # Bonds
+        bonds_file = str(Path(structure.parent, 'bonds.txt'))
+        if os.path.isfile(bonds_file):
+            self.bonds = np.loadtxt(bonds_file).astype(int)
+
+        # Dihedrals
+        dihedrals_file = str(Path(structure.parent, 'dihedrals.txt'))
+        if os.path.isfile(dihedrals_file):
+            self.dihedrals = np.loadtxt(dihedrals_file).astype(int)
 
         # CA indices
         ca_file = str(Path(structure.parent, 'ca_indices.txt'))
