@@ -46,7 +46,7 @@ from tensorflow_toolkit.utils import epochs_from_iterations
 def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epochs, cost,
           radius_mask, smooth_mask, refinePose, architecture="convnn", ctfType="apply", pad=2,
           sr=1.0, applyCTF=1, lr=1e-5, jit_compile=True, regNorm=1e-4, regBond=0.01, regAngle=0.01, regClashes=None,
-          tensorboard=True, weigths_file=None):
+          tensorboard=True, weigths_file=None, poseReg=0.0, ctfReg=0.0):
 
     # We need to import network and generators here instead of at the beginning of the script to allow Tensorflow
     # get the right GPUs set in CUDA_VISIBLE_DEVICES
@@ -78,11 +78,13 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
         # with strategy.scope():
         if regClashes is not None:
             autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, l_bond=regBond,
-                                      l_angle=regAngle, l_clashes=regClashes, jit_compile=jit_compile)
+                                      l_angle=regAngle, l_clashes=regClashes, jit_compile=jit_compile,
+                                      poseReg=poseReg, ctfReg=ctfReg)
             jit_compile = False
         else:
             autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, l_bond=regBond,
-                                      l_angle=regAngle, l_clashes=regClashes, l_norm=regNorm, jit_compile=False)
+                                      l_angle=regAngle, l_clashes=regClashes, l_norm=regNorm, jit_compile=False,
+                                      poseReg=poseReg, ctfReg=ctfReg)
 
         # Fine tune a previous model
         if weigths_file:
@@ -187,6 +189,8 @@ def main():
     parser.add_argument('--regBond', type=float, default=0.01)
     parser.add_argument('--regAngle', type=float, default=0.01)
     parser.add_argument('--regClashes', type=float, default=None)
+    parser.add_argument('--pose_reg', type=float, required=False, default=0.0)
+    parser.add_argument('--ctf_reg', type=float, required=False, default=0.0)
     parser.add_argument('--tensorboard', action='store_true')
     parser.add_argument('--gpu', type=str)
 
@@ -215,6 +219,7 @@ def main():
               "ctfType": args.ctf_type, "pad": args.pad, "sr": args.sr,
               "applyCTF": args.apply_ctf, "lr": args.lr, "jit_compile": args.jit_compile,
               "regNorm": args.regNorm, "regBond": args.regBond, "regAngle": args.regAngle,
+              "poseReg": args.pose_reg, "ctfReg": args.ctf_reg,
               "regClashes": args.regClashes, "tensorboard": args.tensorboard, "weigths_file": args.weigths_file}
 
     # Initialize volume slicer

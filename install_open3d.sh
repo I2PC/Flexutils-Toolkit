@@ -70,16 +70,45 @@ for pkg in "${required_packages[@]}"; do
     fi
 done
 
-# Inform the user about missing packages
-if [ ${#missing_packages[@]} -ne 0 ]; then
-    colored_echo "yellow" "The following packages are missing:"
-    for pkg in "${missing_packages[@]}"; do
-        colored_echo "yellow" " - $pkg"
+# Compare versions
+compare_versions() {
+    local IFS=.
+    local i
+    local ver1=($1)
+    local ver2=($2)
+
+    # Determine the maximum length of the version arrays
+    local max_length=${#ver1[@]}
+    (( ${#ver2[@]} > max_length )) && max_length=${#ver2[@]}
+
+    # Fill empty fields with zeros
+    for ((i=0; i<max_length; i++)); do
+        [[ -z ${ver1[i]} ]] && ver1[i]=0
+        [[ -z ${ver2[i]} ]] && ver2[i]=0
     done
-    colored_echo "yellow" "Open3D functionalities will not be available. If you want them to be used, please, install the listed
-    packages as sudo and rerun the scipion-em-flexutils plugin installation."
-    exit 0
-fi
+
+    # Compare version components
+    for ((i=0; i<max_length; i++)); do
+        if ((10#${ver1[i]} > 10#${ver2[i]})); then
+            return 1
+        fi
+        if ((10#${ver1[i]} < 10#${ver2[i]})); then
+            return 2
+        fi
+    done
+    return 0
+}
+
+# Inform the user about missing packages
+#if [ ${#missing_packages[@]} -ne 0 ]; then
+#    colored_echo "yellow" "The following packages are missing:"
+#    for pkg in "${missing_packages[@]}"; do
+#        colored_echo "yellow" " - $pkg"
+#    done
+#    colored_echo "yellow" "Open3D functionalities will not be available. If you want them to be used, please, install the listed
+#    packages as sudo and rerun the scipion-em-flexutils plugin installation."
+#    exit 0
+#fi
 
 # Activate conda in shell
 if which conda | sed 's: ::g' &> /dev/null ; then
@@ -120,23 +149,25 @@ colored_echo "green" "##### Done! #####"
 #echo "##### Done! #####"
 
 # Check Cuda is installed in the system
-colored_echo "green" "##### Checking Cuda... #####"
-if command -v nvcc > /dev/null 2>&1; then
-    cuda_version=$(nvcc --version | grep "release" | awk '{print $6}' | cut -d',' -f1)
-    cleaned_version=$(echo $cuda_version | sed 's/V//;s/\([0-9]*\.[0-9]*\).*/\1/')
-    cuda_version_number=$(echo $cleaned_version | awk -F. '{printf "%d%02d", $1, $2}')
-    if [ "$cuda_version_number" -ge 1202 ]; then
-        colored_echo "green" "Cuda found in the system."
+colored_echo "green" "##### Checking Nvidia Drivers version... #####"
+if command -v nvidia-smi > /dev/null 2>&1; then
+    nvidia_minimum_version="535.054.03"
+    nvidia_driver_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader,nounits | head -n 1)
+    # nvidia_driver_version=$(echo $nvidia_driver_version | sed 's/V//;s/\([0-9]*\.[0-9]*\).*/\1/')
+#    nvidia_driver_version_cleaned=$(echo $nvidia_driver_version | awk -F. '{printf "%d%02d%02d", $1, $2, $3}')
+    compare_versions "$version1" "$version2"
+    result=$?
+    if [ "$result" -ge 0 ]; then
+        colored_echo "green" "Nvidia Drivers OK"
     else
-        colored_echo "yellow" "Cuda has been found in your system, but does not fulfill versio requirements. Currently,
-        Open3D can only be installed if the Cuda version in the system is at least 12.2. If you want to use Open3D,
-        please update your Cuda version."
+        colored_echo "yellow" "The version of the Nvidia Drivers available in your system does not meet Open3D
+        requirements. Your current version is $nvidia_driver_version, but you will need at least 535.054.03. Please,
+        update your drivers and run the installation again to get Open3D."
         exit 0
     fi
 else
-    colored_echo "yellow" "CUDA not found, exiting. To installed Open3D capabilities, please, install Cuda in your system
-    and retry the installation. If Cuda is already installed and you are seeing this message, you might need to
-    manually add Cuda to the bashrc file so it can be found."
+    colored_echo "yellow" "Nvidia Drivers not found, exiting. To installed Open3D capabilities, please, install at
+    least Nvidia Drivers v535.054.03 and run the installation again to get Open3D."
     exit 0
 fi
 colored_echo "green" "##### Done! #####"
@@ -145,24 +176,18 @@ colored_echo "green" "##### Done! #####"
 colored_echo "green" "##### Getting Flexutils-Tensorflow python... #####"
 conda activate flexutils-tensorflow
 PYTHON_CONDA=$CONDA_PREFIX"/bin/python"
-conda deactivate
 colored_echo "green" "##### Done! #####"
 
 # CMake call (including Tensorflow)
 colored_echo "green" "##### Generating building files... #####"
-conda activate flexutils-tensorflow
-cmake -DBUILD_CUDA_MODULE=ON -DGLIBCXX_USE_CXX11_ABI=ON -DBUILD_TENSORFLOW_OPS=ON -DBUNDLE_OPEN3D_ML=ON -DOPEN3D_ML_ROOT=./Open3D-ML -DCMAKE_INSTALL_PREFIX=../open3d_install -DPython3_ROOT=$PYTHON_CONDA ..
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib/
+#cmake -DCMAKE_CXX_FLAGS="-Wno-error=unused-result" -DBUILD_CUDA_MODULE=ON -DGLIBCXX_USE_CXX11_ABI=ON -DBUILD_TENSORFLOW_OPS=ON -DBUNDLE_OPEN3D_ML=ON -DBUILD_GUI=ON -DBUILD_WEBRTC=ON -DBUILD_EXAMPLES=OFF -DOPEN3D_ML_ROOT=./Open3D-ML -DCMAKE_INSTALL_PREFIX=../open3d_install -DPython3_ROOT=$PYTHON_CONDA ..
+cmake -DBUILD_CUDA_MODULE=ON -DGLIBCXX_USE_CXX11_ABI=ON -DBUILD_TENSORFLOW_OPS=ON -DBUNDLE_OPEN3D_ML=ON -DBUILD_GUI=ON -DBUILD_WEBRTC=ON -DBUILD_EXAMPLES=OFF -DOPEN3D_ML_ROOT=./Open3D-ML -DCMAKE_INSTALL_PREFIX=../open3d_install -DPython3_ROOT=$PYTHON_CONDA ..
 colored_echo "green" "##### Done! #####"
 
-# Install (needs Flexutils-Tensorflow environment)
-colored_echo "green" "##### Installing Open3D... #####"
-#conda activate flexutils-tensorflow
-make -j12
-colored_echo "green" "##### Done! #####"
-
-# Install Python package in environment
-colored_echo "green" "##### Installing Open3D in Flexutils-Tensorflow environment... #####"
-make install-pip-package
+# Build and install Python package in environment (needs Flexutils-Tensorflow environment)
+colored_echo "green" "##### Installing Open3D in Flexutils-Tensorflow environment...... #####"
+make install-pip-package -j12
 colored_echo "green" "##### Done! #####"
 
 # Deactivate Flexutils-Tensorflow environment

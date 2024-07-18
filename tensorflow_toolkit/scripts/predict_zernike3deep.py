@@ -42,7 +42,7 @@ from tensorboard.plugins import projector
 
 
 def predict(md_file, weigths_file, L1, L2, refinePose, architecture, ctfType, pad=2,
-            sr=1.0, applyCTF=1):
+            sr=1.0, applyCTF=1, poseReg=0.0, ctfReg=0.0):
 
     # We need to import network and generators here instead of at the beginning of the script to allow Tensorflow
     # get the right GPUs set in CUDA_VISIBLE_DEVICES
@@ -59,7 +59,7 @@ def predict(md_file, weigths_file, L1, L2, refinePose, architecture, ctfType, pa
     # dataset = create_dataset(generator_dataset, generator, shuffle=False, batch_size=32)
 
     # Load model
-    autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType)
+    autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, poseReg=poseReg, ctfReg=ctfReg)
     if generator.mode == "spa":
         autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
     elif generator.mode == "tomo":
@@ -134,6 +134,8 @@ def main():
     parser.add_argument('--L2', type=int, required=True)
     parser.add_argument('--refine_pose', action='store_true')
     parser.add_argument('--architecture', type=str, required=True)
+    parser.add_argument('--pose_reg', type=float, required=False, default=0.0)
+    parser.add_argument('--ctf_reg', type=float, required=False, default=0.0)
     parser.add_argument('--ctf_type', type=str, required=True)
     parser.add_argument('--pad', type=int, required=False, default=2)
     parser.add_argument('--gpu', type=str)
@@ -151,7 +153,8 @@ def main():
     inputs = {"md_file": args.md_file, "weigths_file": args.weigths_file,
               "L1": args.L1, "L2": args.L2, "refinePose": args.refine_pose,
               "architecture": args.architecture, "ctfType": args.ctf_type,
-              "pad": args.pad, "sr": args.sr, "applyCTF": args.apply_ctf}
+              "pad": args.pad, "sr": args.sr, "applyCTF": args.apply_ctf,
+              "poseReg": args.pose_reg, "ctfReg": args.ctf_reg}
 
     # Initialize volume slicer
     predict(**inputs)
