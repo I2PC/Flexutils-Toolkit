@@ -29,6 +29,35 @@ import tensorflow as tf
 import numpy as np
 
 
+class DenseResidualLayer(tf.keras.layers.Layer):
+    def __init__(self, units, activation='relu', **kwargs):
+        super(DenseResidualLayer, self).__init__(**kwargs)
+        self.units = units
+        self.activation = activation
+        self.dense1 = tf.keras.layers.Dense(units, activation=activation)
+
+    def call(self, inputs, training=None):
+        # Pass the input through two dense layers
+        x = self.dense1(inputs)
+
+        # Add the input to the output (residual connection)
+        if inputs.shape[-1] == self.units:
+            x = x + inputs
+        else:
+            # If dimensions mismatch, project the input to match output shape
+            shortcut = tf.keras.layers.Dense(self.units)(inputs)
+            x = x + shortcut
+
+        return x
+
+    def get_config(self):
+        config = super(DenseResidualLayer, self).get_config()
+        config.update({
+            'units': self.units,
+            'activation': self.activation
+        })
+        return config
+
 class SpaceEncoder(tf.keras.Model):
     # def __init__(self, input_dim, latent_dim):
     def __init__(self, input_dim, latent_space):
@@ -37,8 +66,7 @@ class SpaceEncoder(tf.keras.Model):
 
         x = tf.keras.layers.Dense(1024, activation="relu")(input_data)
         for _ in range(3):
-            aux_x = tf.keras.layers.Dense(1024, activation="relu")(x)
-            x = tf.keras.layers.Add()([x, aux_x])
+            x = DenseResidualLayer(1024, activation="relu")(x)
 
         # x = tf.keras.layers.Dense(latent_dim, activation="linear")(x)
         x = latent_space(x)
@@ -73,6 +101,10 @@ class AutoEncoder(tf.keras.Model):
     def __init__(self, generator, **kwargs):
         super(AutoEncoder, self).__init__(**kwargs)
         self.generator = generator
+        # self.latent_space = tf.keras.Sequential([DenseResidualLayer(1024, activation="relu"),
+        #                                          DenseResidualLayer(1024, activation="relu"),
+        #                                          DenseResidualLayer(1024, activation="relu"),
+        #                                          tf.keras.layers.Dense(generator.lat_dim, activation="linear")])
         self.latent_space = tf.keras.layers.Dense(generator.lat_dim, activation="linear")
         self.space_encoders = [SpaceEncoder(input_dim, self.latent_space) for input_dim in generator.space_dims]
         self.space_decoders = [SpaceDecoder(input_dim, generator.lat_dim) for input_dim in generator.space_dims]
@@ -97,31 +129,31 @@ class AutoEncoder(tf.keras.Model):
         decoder_losses = []
         total_losses = []
 
-        for idx, space_decoder in enumerate(self.space_decoders):
+        for idx, data in enumerate(inputs):
             weights_to_train = []
             with tf.GradientTape() as tape:
 
                 # Encode spaces
-                space_encoded = [space_encoder(input_data)
-                                 for space_encoder, input_data in zip(self.space_encoders, inputs)]
+                space_encoded = [space_encoder(d) for d, space_encoder in zip(inputs, self.space_encoders)]
 
                 # Decode spaces
-                space_decoded = []
-                for input_features in space_encoded:
-                    space_decoded.append(space_decoder(input_features))
+                space_decoded = [space_decoder(space_encoded[idx]) for space_decoder in self.space_decoders]
 
                 # Encoder losses (single space)
                 encoder_loss_1 = self.generator.compute_encoder_loss(space_encoded)
 
                 # Encoder losses (keep distances)
-                encoder_loss_2 = self.generator.compute_shannon_loss(inputs, space_encoded)
+                encoder_loss_2 = self.generator.compute_shannon_loss(inputs, space_encoded[idx])
+
+                # Encoder losses (Center of mass)
+                encoder_loss_3 = self.generator.compute_centering_loss(space_encoded[idx])
 
                 # Encoder loss
-                encoder_loss = encoder_loss_1 + encoder_loss_2
+                encoder_loss = encoder_loss_1 + 1.0 * encoder_loss_2 + encoder_loss_3
                 encoder_losses.append(encoder_loss)
 
                 # Decoder losses
-                decoder_loss = self.generator.compute_decoder_loss(inputs[idx], space_decoded)
+                decoder_loss = self.generator.compute_decoder_loss(inputs, space_decoded)
                 decoder_losses.append(decoder_loss)
 
                 # Total loss
@@ -129,9 +161,9 @@ class AutoEncoder(tf.keras.Model):
                 total_losses.append(total_loss)
 
             # Get Submodel weights
-            for space_encoder in self.space_encoders:
-                weights_to_train += space_encoder.trainable_weights
-            weights_to_train += space_decoder.trainable_weights
+            weights_to_train += self.space_encoders[idx].trainable_weights
+            for space_decoder in self.space_decoders:
+                weights_to_train += space_decoder.trainable_weights
 
             grads = tape.gradient(total_loss, weights_to_train)
             self.optimizer.apply_gradients(zip(grads, weights_to_train))
@@ -151,28 +183,28 @@ class AutoEncoder(tf.keras.Model):
         decoder_losses = []
         total_losses = []
 
-        for idx, space_decoder in enumerate(self.space_decoders):
+        for idx, data in enumerate(inputs):
             # Encode spaces
-            space_encoded = [space_encoder(input_data)
-                             for space_encoder, input_data in zip(self.space_encoders, inputs)]
+            space_encoded = [space_encoder(d) for d, space_encoder in zip(inputs, self.space_encoders)]
 
             # Decode spaces
-            space_decoded = []
-            for input_features in space_encoded:
-                space_decoded.append(space_decoder(input_features))
+            space_decoded = [space_decoder(space_encoded[idx]) for space_decoder in self.space_decoders]
 
             # Encoder losses (single space)
             encoder_loss_1 = self.generator.compute_encoder_loss(space_encoded)
 
             # Encoder losses (keep distances)
-            encoder_loss_2 = self.generator.compute_shannon_loss(inputs, space_encoded)
+            encoder_loss_2 = self.generator.compute_shannon_loss(inputs, space_encoded[idx])
+
+            # Encoder losses (Center of mass)
+            encoder_loss_3 = self.generator.compute_centering_loss(space_encoded[idx])
 
             # Encoder loss
-            encoder_loss = encoder_loss_1 + encoder_loss_2
+            encoder_loss = encoder_loss_1 + 1.0 * encoder_loss_2 + encoder_loss_3
             encoder_losses.append(encoder_loss)
 
             # Decoder losses
-            decoder_loss = self.generator.compute_decoder_loss(inputs[idx], space_decoded)
+            decoder_loss = self.generator.compute_decoder_loss(inputs, space_decoded)
             decoder_losses.append(decoder_loss)
 
             # Total loss

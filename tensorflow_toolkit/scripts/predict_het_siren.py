@@ -48,7 +48,8 @@ from tensorflow_toolkit.networks.het_siren import AutoEncoder
 
 
 def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=1.0,
-            applyCTF=1, filter=False, only_pos=False, hetDim=10, numVol=20, trainSize=None, outSize=None):
+            applyCTF=1, filter=False, only_pos=False, hetDim=10, numVol=20, trainSize=None, outSize=None,
+            poseReg=0.0, ctfReg=0.0):
     # Create data generator
     generator = Generator(md_file=md_file, shuffle=False, batch_size=16,
                           step=1, splitTrain=1.0, pad_factor=pad, sr=sr,
@@ -60,7 +61,7 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
 
     # Load model
     autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
-                              het_dim=hetDim, train_size=trainSize, only_pos=True)
+                              het_dim=hetDim, train_size=trainSize, only_pos=True, poseReg=poseReg, ctfReg=ctfReg)
     if generator.mode == "spa":
         autoencoder.build(input_shape=(None, autoencoder.xsize, autoencoder.xsize, 1))
     elif generator.mode == "tomo":
@@ -126,6 +127,8 @@ def main():
     parser.add_argument('--ctf_type', type=str, required=True)
     parser.add_argument('--pad', type=int, required=False, default=2)
     parser.add_argument('--sr', type=float, required=True)
+    parser.add_argument('--pose_reg', type=float, required=False, default=0.0)
+    parser.add_argument('--ctf_reg', type=float, required=False, default=0.0)
     parser.add_argument('--apply_ctf', type=int, required=True)
     parser.add_argument('--apply_filter', action='store_true')
     parser.add_argument('--only_pos', action='store_true')
@@ -147,7 +150,7 @@ def main():
               "ctfType": args.ctf_type, "pad": args.pad, "sr": args.sr,
               "applyCTF": args.apply_ctf, "filter": args.apply_filter,
               "only_pos": args.only_pos, "hetDim": args.het_dim, "numVol": args.num_vol,
-              "trainSize": args.trainSize, "outSize": args.outSize}
+              "trainSize": args.trainSize, "outSize": args.outSize, "poseReg": args.pose_reg, "ctfReg": args.ctf_reg}
 
     # Initialize volume slicer
     predict(**inputs)

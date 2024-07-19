@@ -33,9 +33,8 @@ import glob
 from xmipp_metadata.metadata import XmippMetaData
 
 import tensorflow as tf
+from tensorflow.keras import mixed_precision
 
-from tensorflow_toolkit.generators.generator_het_siren import Generator
-from tensorflow_toolkit.networks.het_siren import AutoEncoder
 # from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
 from tensorflow_toolkit.utils import epochs_from_iterations
 
@@ -48,15 +47,23 @@ from tensorflow_toolkit.utils import epochs_from_iterations
 
 def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
           radius_mask, smooth_mask, refinePose, architecture="convnn", weigths_file=None,
-          ctfType="apply", pad=2, sr=1.0, applyCTF=1, hetDim=10, l1Reg=0.5, tvReg=0.1, mseReg=0.1,
-          lr=1e-5, only_pos=False, multires=None, jit_compile=True, trainSize=None, outSize=None, tensorboard=True):
+          ctfType="apply", pad=2, sr=1.0, applyCTF=1, hetDim=10, l1Reg=0.5, tvReg=0.1, mseReg=0.1, poseReg=0.0,
+          ctfReg=0.0, lr=1e-5, only_pos=False, multires=None, jit_compile=True, trainSize=None, outSize=None,
+          tensorboard=True, useMirrorStrategy=False, precision="mixed_float16"):
+    # We need to import network and generators here instead of at the beginning of the script to allow Tensorflow
+    # get the right GPUs set in CUDA_VISIBLE_DEVICES
+    assert precision in ["float32", "mixed_float16"]
+    mixed_precision.set_global_policy(precision)
+    precision = tf.float32 if precision == "float32" else tf.float16
+    from tensorflow_toolkit.generators.generator_het_siren import Generator
+    from tensorflow_toolkit.networks.het_siren import AutoEncoder
 
     try:
         # Create data generator
         generator = Generator(md_file=md_file, shuffle=shuffle, batch_size=batch_size,
                               step=step, splitTrain=splitTrain, cost=cost, radius_mask=radius_mask,
                               smooth_mask=smooth_mask, pad_factor=pad, sr=sr,
-                              applyCTF=applyCTF, xsize=outSize)
+                              applyCTF=applyCTF, xsize=outSize, precision=precision)
 
 
         # Create validation generator
@@ -64,7 +71,7 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
             generator_val = Generator(md_file=md_file, shuffle=shuffle, batch_size=batch_size,
                                       step=step, splitTrain=(splitTrain - 1.0), cost=cost, radius_mask=radius_mask,
                                       smooth_mask=smooth_mask, pad_factor=pad, sr=sr,
-                                      applyCTF=applyCTF, xsize=outSize)
+                                      applyCTF=applyCTF, xsize=outSize, precision=precision)
         else:
             generator_val = None
 
@@ -72,69 +79,77 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
         # generator_dataset, generator = sequence_to_data_pipeline(generator)
         # dataset = create_dataset(generator_dataset, generator, batch_size=batch_size)
 
-        # Train model
-        autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
-                                  het_dim=hetDim, l1_lambda=l1Reg, tv_lambda=tvReg, mse_lambda=mseReg,
-                                  train_size=trainSize, only_pos=only_pos, multires_levels=multires)
+        if useMirrorStrategy:
+            strategy = tf.distribute.MirroredStrategy()
+        else:
+            strategy = tf.distribute.get_strategy()  # Default strategy
 
-        # Fine tune a previous model
-        if weigths_file:
-            if generator.mode == "spa":
-                autoencoder.build(input_shape=(None, autoencoder.xsize, autoencoder.xsize, 1))
-            elif generator.mode == "tomo":
-                autoencoder.build(input_shape=[(None, autoencoder.xsize, autoencoder.xsize, 1),
-                                               [None, generator.sinusoid_table.shape[1]]])
-            autoencoder.load_weights(weigths_file)
+        with strategy.scope():
+            # Train model
+            autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
+                                      het_dim=hetDim, l1_lambda=l1Reg, tv_lambda=tvReg, mse_lambda=mseReg,
+                                      train_size=trainSize, only_pos=only_pos, multires_levels=multires,
+                                      poseReg=poseReg, ctfReg=ctfReg, precision=precision)
 
-        optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
-
-        # Callbacks list
-        callbacks = []
-
-        # Create a callback that saves the model's weights
-        initial_epoch = 0
-        checkpoint_path = os.path.join(outPath, "training", "cp-{epoch:04d}.hdf5")
-        if not os.path.isdir(os.path.dirname(checkpoint_path)):
-            os.mkdir(os.path.dirname(checkpoint_path))
-        cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
-                                                         save_weights_only=True,
-                                                         verbose=1)
-        callbacks.append(cp_callback)
-
-        # Callbacks list
-        if tensorboard:
-            # Tensorboard callback
-            log_dir = os.path.join(outPath, "logs")
-            if not os.path.isdir(log_dir):
-                os.mkdir(log_dir)
-            tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1,
-                                                                  write_graph=True, write_steps_per_second=True)
-
-            callbacks.append(tensorboard_callback)
-
-        checkpoint = os.path.join(outPath, "training")
-        if os.path.isdir(checkpoint):
-            files = glob.glob(os.path.join(checkpoint, "*"))
-            if len(files) > 1:
-                files.sort()
-                latest = files[-2]
+            # Fine tune a previous model
+            if weigths_file:
                 if generator.mode == "spa":
                     autoencoder.build(input_shape=(None, autoencoder.xsize, autoencoder.xsize, 1))
                 elif generator.mode == "tomo":
                     autoencoder.build(input_shape=[(None, autoencoder.xsize, autoencoder.xsize, 1),
                                                    [None, generator.sinusoid_table.shape[1]]])
-                autoencoder.load_weights(latest)
-                latest = os.path.basename(latest)
-                initial_epoch = int(re.findall(r'\d+', latest)[0]) - 1
+                autoencoder.load_weights(weigths_file)
 
-        autoencoder.compile(optimizer=optimizer, jit_compile=jit_compile)
+            optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+            # optimizer = mixed_precision.LossScaleOptimizer(optimizer)
 
-        if generator_val is not None:
-            autoencoder.fit(generator, validation_data=generator_val, epochs=epochs, validation_freq=2,
-                            callbacks=callbacks, initial_epoch=initial_epoch)
-        else:
-            autoencoder.fit(generator, epochs=epochs,
-                            callbacks=callbacks, initial_epoch=initial_epoch)
+            # Callbacks list
+            callbacks = []
+
+            # Create a callback that saves the model's weights
+            initial_epoch = 0
+            checkpoint_path = os.path.join(outPath, "training", "cp-{epoch:04d}.hdf5")
+            if not os.path.isdir(os.path.dirname(checkpoint_path)):
+                os.mkdir(os.path.dirname(checkpoint_path))
+            cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
+                                                             save_weights_only=True,
+                                                             verbose=1)
+            callbacks.append(cp_callback)
+
+            # Callbacks list
+            if tensorboard:
+                # Tensorboard callback
+                log_dir = os.path.join(outPath, "logs")
+                if not os.path.isdir(log_dir):
+                    os.mkdir(log_dir)
+                tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1,
+                                                                      write_graph=True, write_steps_per_second=True)
+
+                callbacks.append(tensorboard_callback)
+
+            checkpoint = os.path.join(outPath, "training")
+            if os.path.isdir(checkpoint):
+                files = glob.glob(os.path.join(checkpoint, "*"))
+                if len(files) > 1:
+                    files.sort()
+                    latest = files[-2]
+                    if generator.mode == "spa":
+                        autoencoder.build(input_shape=(None, autoencoder.xsize, autoencoder.xsize, 1))
+                    elif generator.mode == "tomo":
+                        autoencoder.build(input_shape=[(None, autoencoder.xsize, autoencoder.xsize, 1),
+                                                       [None, generator.sinusoid_table.shape[1]]])
+                    autoencoder.load_weights(latest)
+                    latest = os.path.basename(latest)
+                    initial_epoch = int(re.findall(r'\d+', latest)[0]) - 1
+
+            autoencoder.compile(optimizer=optimizer, jit_compile=jit_compile)
+
+            if generator_val is not None:
+                autoencoder.fit(generator, validation_data=generator_val, epochs=epochs, validation_freq=2,
+                                callbacks=callbacks, initial_epoch=initial_epoch)
+            else:
+                autoencoder.fit(generator, epochs=epochs,
+                                callbacks=callbacks, initial_epoch=initial_epoch)
     except tf.errors.ResourceExhaustedError as error:
         msg = "GPU memory has been exhausted. Usually this can be solved by " \
               "downsampling further your particles or by decreasing the batch size. " \
@@ -166,6 +181,8 @@ def main():
     parser.add_argument('--cost', type=str, required=True)
     parser.add_argument('--l1_reg', type=float, required=True)
     parser.add_argument('--tv_reg', type=float, required=True)
+    parser.add_argument('--pose_reg', type=float, required=False, default=0.0)
+    parser.add_argument('--ctf_reg', type=float, required=False, default=0.0)
     parser.add_argument('--mse_reg', type=float, required=True)
     parser.add_argument('--multires', type=int, required=False)
     parser.add_argument('--het_dim', type=int, required=True)
@@ -190,6 +207,7 @@ def main():
     if args.gpu:
         os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
     physical_devices = tf.config.list_physical_devices('GPU')
+    useMirrorStrategy = False if len(physical_devices) <= 1 else True
     for gpu_instance in physical_devices:
         tf.config.experimental.set_memory_growth(gpu_instance, True)
 
@@ -210,9 +228,10 @@ def main():
               "weigths_file": args.weigths_file, "ctfType": args.ctf_type, "pad": args.pad,
               "sr": args.sr, "applyCTF": args.apply_ctf, "hetDim": args.het_dim,
               "l1Reg": args.l1_reg, "tvReg": args.tv_reg, "mseReg": args.mse_reg, "lr": args.lr,
+              "poseReg": args.pose_reg, "ctfReg": args.ctf_reg,
               "multires": args.multires, "jit_compile": args.jit_compile,
               "trainSize": args.trainSize, "outSize": args.outSize, "tensorboard": args.tensorboard,
-              "only_pos": args.only_pos}
+              "only_pos": args.only_pos, "useMirrorStrategy": useMirrorStrategy}
 
     # Initialize volume slicer
     train(**inputs)
