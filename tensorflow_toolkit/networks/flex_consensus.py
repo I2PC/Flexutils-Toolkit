@@ -227,12 +227,12 @@ class AutoEncoder(tf.keras.Model):
                          for space_decoder, encoded in zip(self.space_decoders, space_encoded)]
         return space_decoded
 
-    def encode_space(self, input_features, input_encoder_idx):
-        encoded = self.space_encoders[input_encoder_idx].predict(input_features)
+    def encode_space(self, input_features, input_encoder_idx, batch_size=1024):
+        encoded = self.space_encoders[input_encoder_idx].predict(input_features, batch_size=batch_size)
         return encoded
 
-    def decode_space(self, input_features, output_decoder_idx):
-        decoded = self.space_decoders[output_decoder_idx].predict(input_features)
+    def decode_space(self, input_features, output_decoder_idx, batch_size=1024):
+        decoded = self.space_decoders[output_decoder_idx].predict(input_features, batch_size=batch_size)
         return decoded
 
     def find_encoder(self, data):
@@ -251,10 +251,10 @@ class AutoEncoder(tf.keras.Model):
             idx += 1
         return encoder_idx
 
-    def predict(self, data, encoder_idx, decoder_idx):
+    def predict(self, data, encoder_idx, decoder_idx, batch_size=1024):
         self.encoder_idx, self.decoder_idx = encoder_idx, decoder_idx
         self.predict_function = None
-        decoded = super().predict(data)
+        decoded = super().predict(data, batch_size)
         return decoded
 
     def predict_step(self, data):
