@@ -28,14 +28,13 @@
 
 import os
 import numpy as np
-import mrcfile
 from pathlib import Path
 from scipy.ndimage import gaussian_filter
 from xmipp_metadata.image_handler import ImageHandler
 
 import tensorflow as tf
 
-from tensorflow_toolkit.generators.generator_deep_nma import Generator
+from deprecated.generator_deep_nma import Generator
 
 
 # # os.environ["CUDA_VISIBLE_DEVICES"]="0,2,3,4"

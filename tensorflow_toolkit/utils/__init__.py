@@ -26,4 +26,3 @@
 
 from .utils import *
 from .utils_zernike3d import *
-from .NMA import *
