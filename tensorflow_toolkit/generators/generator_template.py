@@ -49,14 +49,16 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
         self.batch_size = batch_size
         self.indexes = np.arange(self.batch_size)
         self.pad_factor = pad_factor
+        self.filename = Path(md_file)
         # self.cap_def = 3.
 
         # Read metadata
-        mask, volume, structure = self.readMetadata(md_file)
+        metadata = XmippMetaData(file_name=str(md_file))
+        mask, volume, structure = self.readMetadata(metadata)
         self.sr = tf.constant(sr, dtype=tf.float32)
         self.applyCTF = applyCTF
-        if self.metadata.binaries:
-            self.xsize = self.metadata.getMetaDataImage(0).shape[1]
+        if metadata.binaries:
+            self.xsize = metadata.getMetaDataImage(0).shape[1]
         else:
             self.xsize = xsize
         self.xmipp_origin = getXmippOrigin(self.xsize)
@@ -116,7 +118,7 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
 
         # Generator mode
         if mode is None:
-            if self.metadata.isMetaDataLabel("subtomo_labels"):
+            if metadata.isMetaDataLabel("subtomo_labels"):
                 self.mode = "tomo"
             else:
                 self.mode = "spa"
@@ -125,33 +127,30 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
 
         # Positional encoding of subtomo labels (Tomo only)
         if self.mode == "tomo":
-            unique_labels = np.unique(self.metadata[:, "subtomo_labels"]).astype(int)
+            unique_labels = np.unique(metadata[:, "subtomo_labels"]).astype(int)
             # self.get_sinusoid_encoding_table(len(unique_labels), 10)
             self.get_sinusoid_encoding_table(np.amax(unique_labels), 100)
 
 
     #----- Initialization methods -----#
 
-    def readMetadata(self, filename):
-        filename = Path(filename)
-        self.filename = filename
-        self.metadata = XmippMetaData(file_name=str(filename))
-        mask = Path(filename.parent, 'mask.mrc')
-        volume = Path(filename.parent, 'volume.mrc')
-        structure = Path(filename.parent, 'structure.txt')
-        self.angle_rot = tf.constant(np.asarray(self.metadata[:, 'angleRot']), dtype=tf.float32)
-        self.angle_tilt = tf.constant(np.asarray(self.metadata[:, 'angleTilt']), dtype=tf.float32)
-        self.angle_psi = tf.constant(np.asarray(self.metadata[:, 'anglePsi']), dtype=tf.float32)
-        self.shift_x = tf.constant(self.metadata[:, 'shiftX'], dtype=tf.float32)
-        self.shift_y = tf.constant(np.asarray(self.metadata[:, 'shiftY']), dtype=tf.float32)
+    def readMetadata(self, metadata):
+        mask = Path(self.filename.parent, 'mask.mrc')
+        volume = Path(self.filename.parent, 'volume.mrc')
+        structure = Path(self.filename.parent, 'structure.txt')
+        self.angle_rot = tf.constant(np.asarray(metadata[:, 'angleRot']), dtype=tf.float32)
+        self.angle_tilt = tf.constant(np.asarray(metadata[:, 'angleTilt']), dtype=tf.float32)
+        self.angle_psi = tf.constant(np.asarray(metadata[:, 'anglePsi']), dtype=tf.float32)
+        self.shift_x = tf.constant(metadata[:, 'shiftX'], dtype=tf.float32)
+        self.shift_y = tf.constant(np.asarray(metadata[:, 'shiftY']), dtype=tf.float32)
         self.shift_z = tf.constant(np.zeros(self.shift_x.shape), dtype=tf.float32)
         self.shifts = [self.shift_x, self.shift_y, self.shift_z]
-        self.defocusU = tf.constant(self.metadata[:, 'ctfDefocusU'], dtype=tf.float32)
-        self.defocusV = tf.constant(self.metadata[:, 'ctfDefocusV'], dtype=tf.float32)
-        self.defocusAngle = tf.constant(self.metadata[:, 'ctfDefocusAngle'], dtype=tf.float32)
-        self.cs = tf.constant(self.metadata[:, 'ctfSphericalAberration'], dtype=tf.float32)
-        self.kv = tf.constant(self.metadata[:, 'ctfVoltage'][0], dtype=tf.float32)
-        self.file_idx = np.arange(len(self.metadata))
+        self.defocusU = tf.constant(metadata[:, 'ctfDefocusU'], dtype=tf.float32)
+        self.defocusV = tf.constant(metadata[:, 'ctfDefocusV'], dtype=tf.float32)
+        self.defocusAngle = tf.constant(metadata[:, 'ctfDefocusAngle'], dtype=tf.float32)
+        self.cs = tf.constant(metadata[:, 'ctfSphericalAberration'], dtype=tf.float32)
+        self.kv = tf.constant(metadata[:, 'ctfVoltage'][0], dtype=tf.float32)
+        self.file_idx = np.arange(len(metadata))
 
         return mask, volume, structure
 
@@ -235,36 +234,17 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
 
 
     # ----- Data generation methods -----#
-
-    def on_epoch_end(self):
-        if self.shuffle == True:
-            indexes = np.arange(self.file_idx.size)
-            np.random.shuffle(indexes)
-            self.file_idx = self.file_idx[indexes]
-
-    def __data_generation(self):
-        images = self.metadata.getMetaDataImage(self.indexes)[..., None]
-        if len(images.shape) == 3:
-            images = images[None, ...]
-        if self.mode == "spa":
-            return images, self.indexes
-        elif self.mode == "tomo":
-            subtomo_labels = self.metadata[self.indexes, "subtomo_labels"].astype(int) - 1
-            subtomo_pe = self.sinusoid_table[subtomo_labels]
-            if len(images.shape) == 1:
-                subtomo_pe = subtomo_pe[None, ...]
-            return [images, subtomo_pe], [self.indexes, self.indexes]
-
-
-    def __getitem__(self, index):
-        # Generate indexes of the batch
-        self.indexes = self.file_idx[index * self.batch_size:(index + 1) * self.batch_size]
-        # Generate data
-        X, y = self.__data_generation()
-        return X, y
-
-    def __len__(self):
-        return int(np.ceil(len(self.file_idx) / self.batch_size))
+    def return_tf_dataset(self):
+        metadata = XmippMetaData(file_name=str(self.filename))
+        images = metadata.getMetaDataImage(self.file_idx)[..., None]
+        if self.mode == "tomo":
+            subtomo_labels = metadata[self.file_idx, "subtomo_labels"].astype(int) - 1
+            dataset = tf.data.Dataset.from_tensor_slices(((images, subtomo_labels), (self.file_idx, self.file_idx)))
+        else:
+            dataset = tf.data.Dataset.from_tensor_slices((images, self.file_idx))
+        if self.shuffle:
+            dataset = dataset.shuffle(len(self.file_idx))
+        return dataset.batch(self.batch_size).prefetch(2)
 
     # ----- -------- -----#
 

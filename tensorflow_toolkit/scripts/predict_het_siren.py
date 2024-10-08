@@ -71,7 +71,7 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
 
     # Get poses
     print("------------------ Predicting particles... ------------------")
-    alignment, shifts, het = autoencoder.predict(generator, predict_mode="het")
+    alignment, shifts, het = autoencoder.predict(generator.return_tf_dataset(), predict_mode="het")
 
     # Get map
     pool_info = threadpool_info()

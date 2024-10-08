@@ -81,6 +81,7 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
 
         if useMirrorStrategy:
             strategy = tf.distribute.MirroredStrategy()
+            strategy.run = tf.function()(strategy.run)
         else:
             strategy = tf.distribute.get_strategy()  # Default strategy
 
@@ -145,10 +146,10 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
             autoencoder.compile(optimizer=optimizer, jit_compile=jit_compile)
 
             if generator_val is not None:
-                autoencoder.fit(generator, validation_data=generator_val, epochs=epochs, validation_freq=2,
+                autoencoder.fit(generator.return_tf_dataset(), validation_data=generator_val.return_tf_dataset(), epochs=epochs, validation_freq=2,
                                 callbacks=callbacks, initial_epoch=initial_epoch)
             else:
-                autoencoder.fit(generator, epochs=epochs,
+                autoencoder.fit(generator.return_tf_dataset(), epochs=epochs,
                                 callbacks=callbacks, initial_epoch=initial_epoch)
     except tf.errors.ResourceExhaustedError as error:
         msg = "GPU memory has been exhausted. Usually this can be solved by " \

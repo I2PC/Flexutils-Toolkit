@@ -74,7 +74,7 @@ def predict(md_file, weigths_file, L1, L2, refinePose, architecture, ctfType, pa
 
     # Predict step
     print("------------------ Predicting Zernike3D coefficients... ------------------")
-    encoded = autoencoder.predict(generator)
+    encoded = autoencoder.predict(generator.return_tf_dataset())
 
     # Get encoded data in right format
     zernike_space = np.hstack([encoded[0], encoded[1], encoded[2]])
