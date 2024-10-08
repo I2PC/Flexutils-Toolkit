@@ -19,9 +19,9 @@ This package provides a neural network environment integrating the deep learning
 # Included Networks
 
 - **Zernike3Deep**: Semi-classical neural network to analyze continuous heterogeneity with the Zernike3D basis
-- **HomoSIREN**: Neural network homogeneous reconstruction for real space
+- **FlexSIREN**: Smooth and regularized deformation field estimated with neural networks
+- **ReconSIREN**: Neural network for ab initio reconstruction and global angular assignment
 - **HetSIREN**: Neural network heterogeneous reconstruction for real space
-- **DeepPose**: Particle pose and shift refinement with neural networks
 - **FlexConsensus**: Consensus neural network for conformational landscapes
 
 # Installation
