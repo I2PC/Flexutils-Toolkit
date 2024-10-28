@@ -238,7 +238,7 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
         metadata = XmippMetaData(file_name=str(self.filename))
         images = metadata.getMetaDataImage(self.file_idx)[..., None]
         if self.mode == "tomo":
-            subtomo_labels = metadata[self.file_idx, "subtomo_labels"].astype(int) - 1
+            subtomo_labels = self.sinusoid_table[metadata[self.file_idx, "subtomo_labels"].astype(int) - 1]
             dataset = tf.data.Dataset.from_tensor_slices(((images, subtomo_labels), (self.file_idx, self.file_idx)))
         else:
             dataset = tf.data.Dataset.from_tensor_slices((images, self.file_idx))
