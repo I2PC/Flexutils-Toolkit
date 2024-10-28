@@ -34,6 +34,7 @@ import tqdm
 from pathlib import Path
 from importlib.metadata import version
 from xmipp_metadata.image_handler import ImageHandler
+from xmipp_metadata.metadata import XmippMetaData
 
 if version("tensorflow") >= "2.16.0":
     os.environ["TF_USE_LEGACY_KERAS"] = "1"
@@ -65,12 +66,11 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType,
     # Load model
     autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
                               het_dim=hetDim, train_size=trainSize, poseReg=poseReg, ctfReg=ctfReg)
-    if generator.mode == "spa":
-        autoencoder.build(input_shape=(None, autoencoder.xsize, autoencoder.xsize, 1))
-    elif generator.mode == "tomo":
-        autoencoder.build(input_shape=[(None, autoencoder.xsize, autoencoder.xsize, 1),
-                                       [None, generator.sinusoid_table.shape[1]]])
+    _ = autoencoder(next(iter(generator.return_tf_dataset()))[0])
     autoencoder.load_weights(weigths_file)
+
+    # Metadata
+    metadata = XmippMetaData(md_file)
 
     # Get poses
     print("------------------ Predicting alignment and het info... ------------------")
@@ -97,22 +97,22 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType,
     shifts = np.vstack(shifts)
     het = np.vstack(het)
 
-    generator.metadata[:, 'latent_space'] = np.asarray([",".join(item) for item in het.astype(str)])
-    generator.metadata[:, 'delta_angle_rot'] = alignment[:, 0]
-    generator.metadata[:, 'delta_angle_tilt'] = alignment[:, 1]
-    generator.metadata[:, 'delta_angle_psi'] = alignment[:, 2]
-    generator.metadata[:, 'delta_shift_x'] = shifts[:, 0]
-    generator.metadata[:, 'delta_shift_y'] = shifts[:, 1]
+    metadata[:, 'latent_space'] = np.asarray([",".join(item) for item in het.astype(str)])
+    metadata[:, 'delta_angle_rot'] = alignment[:, 0]
+    metadata[:, 'delta_angle_tilt'] = alignment[:, 1]
+    metadata[:, 'delta_angle_psi'] = alignment[:, 2]
+    metadata[:, 'delta_shift_x'] = shifts[:, 0]
+    metadata[:, 'delta_shift_y'] = shifts[:, 1]
 
     # Replace image paths
     idx = 0
-    for image_path in generator.metadata[:, 'image']:
+    for image_path in metadata[:, 'image']:
         index, file = image_path.split("@")
         file = str(Path(Path(file).parent, "decoded_particles.mrcs"))
-        generator.metadata[idx, 'image'] = index + "@" + file
+        metadata[idx, 'image'] = index + "@" + file
         idx += 1
 
-    generator.metadata.write(md_file, overwrite=True)
+    metadata.write(md_file, overwrite=True)
 
 
 def main():

@@ -43,6 +43,8 @@ from tensorflow_toolkit.generators.generator_het_siren import Generator
 from tensorflow_toolkit.networks.het_siren import AutoEncoder
 # from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
 
+from xmipp_metadata.metadata import XmippMetaData
+
 
 # # os.environ["CUDA_VISIBLE_DEVICES"]="0,2,3,4"
 # physical_devices = tf.config.list_physical_devices('GPU')
@@ -65,16 +67,18 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
     # Load model
     autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
                               het_dim=hetDim, train_size=trainSize, only_pos=True, poseReg=poseReg, ctfReg=ctfReg)
-    if generator.mode == "spa":
-        autoencoder.build(input_shape=(None, autoencoder.xsize, autoencoder.xsize, 1))
-    elif generator.mode == "tomo":
-        autoencoder.build(input_shape=[(None, autoencoder.xsize, autoencoder.xsize, 1),
-                                       [None, generator.sinusoid_table.shape[1]]])
+    _ = autoencoder(next(iter(generator.return_tf_dataset()))[0])
     autoencoder.load_weights(weigths_file)
+
+    # Metadata
+    metadata = XmippMetaData(md_file)
 
     # Get poses
     print("------------------ Predicting particles... ------------------")
-    alignment, shifts, het = autoencoder.predict(generator.return_tf_dataset(), predict_mode="het")
+    if generator.mode == "spa":
+        alignment, shifts, het = autoencoder.predict(generator.return_tf_dataset(), predict_mode="het")
+    elif generator.mode == "tomo":
+        alignment, shifts, _, het = autoencoder.predict(generator.return_tf_dataset(), predict_mode="het")
 
     # Get map
     pool_info = threadpool_info()
@@ -102,14 +106,14 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
     shifts = np.vstack(shifts)
     het = np.vstack(het)
 
-    generator.metadata[:, 'latent_space'] = np.asarray([",".join(item) for item in het.astype(str)])
-    generator.metadata[:, 'delta_angle_rot'] = alignment[:, 0]
-    generator.metadata[:, 'delta_angle_tilt'] = alignment[:, 1]
-    generator.metadata[:, 'delta_angle_psi'] = alignment[:, 2]
-    generator.metadata[:, 'delta_shift_x'] = shifts[:, 0]
-    generator.metadata[:, 'delta_shift_y'] = shifts[:, 1]
+    metadata[:, 'latent_space'] = np.asarray([",".join(item) for item in het.astype(str)])
+    metadata[:, 'delta_angle_rot'] = alignment[:, 0]
+    metadata[:, 'delta_angle_tilt'] = alignment[:, 1]
+    metadata[:, 'delta_angle_psi'] = alignment[:, 2]
+    metadata[:, 'delta_shift_x'] = shifts[:, 0]
+    metadata[:, 'delta_shift_y'] = shifts[:, 1]
 
-    generator.metadata.write(md_file, overwrite=True)
+    metadata.write(md_file, overwrite=True)
 
     # Save map
     for idx, decoded_map in enumerate(decoded_maps):

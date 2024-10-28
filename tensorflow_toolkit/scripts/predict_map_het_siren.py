@@ -50,7 +50,7 @@ from tensorflow_toolkit.networks.het_siren import AutoEncoder
 
 
 def predict(weigths_file, het_file, out_path, allCoords=False, filter=True, architecture="convnn",
-            poseReg=0.0, ctfReg=0.0, **kwargs):
+            poseReg=0.0, ctfReg=0.0, refPose=True, **kwargs):
     x_het = np.loadtxt(het_file)
     if len(x_het.shape) == 1:
         x_het = x_het.reshape((1, -1))
@@ -66,12 +66,12 @@ def predict(weigths_file, het_file, out_path, allCoords=False, filter=True, arch
 
     # Load model
     autoencoder = AutoEncoder(generator, het_dim=x_het.shape[1], architecture=architecture,
-                              poseReg=poseReg, ctfReg=ctfReg, **kwargs)
+                              poseReg=poseReg, ctfReg=ctfReg, refPose=refPose, **kwargs)
     if generator.mode == "spa":
-        autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
+        data = np.zeros((1, generator.xsize, generator.xsize, 1))
     elif generator.mode == "tomo":
-        autoencoder.build(input_shape=[(None, generator.xsize, generator.xsize, 1),
-                                       [None, generator.sinusoid_table.shape[1]]])
+        data = [np.zeros((1, generator.xsize, generator.xsize, 1)), np.zeros((1, generator.sinusoid_table.shape[1]))]
+    _ = autoencoder(data)
     autoencoder.load_weights(weigths_file)
 
     # Decode maps
@@ -93,6 +93,7 @@ def main():
     parser.add_argument('--architecture', type=str, required=True)
     parser.add_argument('--pose_reg', type=float, required=False, default=0.0)
     parser.add_argument('--ctf_reg', type=float, required=False, default=0.0)
+    parser.add_argument('--refine_pose', action='store_true')
     parser.add_argument('--gpu', type=str)
 
     args = parser.parse_args()
@@ -107,7 +108,7 @@ def main():
 
     inputs = {"weigths_file": args.weigths_file, "het_file": args.het_file,
               "out_path": args.out_path, "step": args.step, "architecture": args.architecture,
-              "poseReg": args.pose_reg, "ctfReg": args.ctf_reg}
+              "poseReg": args.pose_reg, "ctfReg": args.ctf_reg, "refPose": args.refine_pose}
 
     # Initialize volume slicer
     predict(**inputs)
