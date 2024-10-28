@@ -79,7 +79,8 @@ class Generator(DataGeneratorBase):
 
         # Precompute Zernike3D basis
         self.half_xsize = 0.5 * self.xsize
-        # self.scaled_coords = tf.cast(self.coords_to_9D(self.coords, self.half_xsize), self.precision)
+        # self.scaled_coords = tf.cast(self.coords_to_9D(self.coords / self.half_xsize), self.precision)
+        # self.scaled_coords = tf.constant(self.positional_encode_coords(self.coords / self.half_xsize), self.precision)
         self.scaled_coords = tf.constant(self.coords / self.half_xsize, dtype=self.precision)
 
         if self.ref_is_struct:
@@ -127,11 +128,18 @@ class Generator(DataGeneratorBase):
 
         return groups, centers
 
-    def coords_to_9D(self, coords, half_xsize):
-        coords_corner_1 = (self.coords + self.half_xsize) / (2.0 * half_xsize)
-        coords_corner_2 = (self.coords - self.half_xsize) / (2.0 * half_xsize)
-        spherical = self.cartesian_to_spherical(coords / half_xsize)
+    def coords_to_9D(self, coords):
+        coords_corner_1 = coords + 1.0
+        coords_corner_2 = coords - 1.0
+        spherical = self.cartesian_to_spherical(coords)
         return tf.concat([coords_corner_1, coords_corner_2, spherical], axis=-1)
+
+    def positional_encode_coords(self, coords):
+        self.get_sinusoid_encoding_table(np.amax(self.indices) + 1, 100)
+        pe_x = self.sinusoid_table[self.indices[:, 2]]
+        pe_y = self.sinusoid_table[self.indices[:, 1]]
+        pe_z = self.sinusoid_table[self.indices[:, 0]]
+        return np.concatenate([coords, pe_x, pe_y, pe_z], axis=-1)
 
     def cartesian_to_spherical(self, coords):
         coords_2 = coords ** 2.0

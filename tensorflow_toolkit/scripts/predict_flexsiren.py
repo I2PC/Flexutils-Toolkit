@@ -35,6 +35,9 @@ if version("tensorflow") >= "2.16.0":
 import tensorflow as tf
 from tensorboard.plugins import projector
 
+from xmipp_metadata.metadata import XmippMetaData
+
+
 # from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
 
 
@@ -45,12 +48,12 @@ from tensorboard.plugins import projector
 
 
 def predict(md_file, weigths_file, latDim, refinePose, architecture, ctfType, pad=2,
-            sr=1.0, applyCTF=1):
+            sr=1.0, applyCTF=1, poseReg=0.0, ctfReg=0.0):
 
     # We need to import network and generators here instead of at the beginning of the script to allow Tensorflow
     # get the right GPUs set in CUDA_VISIBLE_DEVICES
     from tensorflow_toolkit.generators.generator_flexsiren import Generator
-    from tensorflow_toolkit.networks.flexsiren import AutoEncoder
+    from tensorflow_toolkit.networks.flexsiren_basis import AutoEncoder
 
     # Create data generator
     generator = Generator(md_file=md_file, shuffle=False, batch_size=32,
@@ -62,12 +65,9 @@ def predict(md_file, weigths_file, latDim, refinePose, architecture, ctfType, pa
     # dataset = create_dataset(generator_dataset, generator, shuffle=False, batch_size=32)
 
     # Load model
-    autoencoder = AutoEncoder(generator, latDim=latDim, architecture=architecture, CTF=ctfType)
-    if generator.mode == "spa":
-        autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
-    elif generator.mode == "tomo":
-        autoencoder.build(input_shape=[(None, generator.xsize, generator.xsize, 1),
-                                       [None, generator.sinusoid_table.shape[1]]])
+    autoencoder = AutoEncoder(generator, latDim=latDim, architecture=architecture, CTF=ctfType,
+                              poseReg=poseReg, ctfReg=ctfReg)
+    _ = autoencoder(next(iter(generator.return_tf_dataset()))[0])
     autoencoder.load_weights(weigths_file)
 
     # Get Zernike3DSpace
@@ -75,9 +75,12 @@ def predict(md_file, weigths_file, latDim, refinePose, architecture, ctfType, pa
     # delta_euler = []
     # delta_shifts = []
 
+    # Metadata
+    metadata = XmippMetaData(md_file)
+
     # Predict step
     print("------------------ Predicting Zernike3D coefficients... ------------------")
-    encoded = autoencoder.predict(generator)
+    encoded = autoencoder.predict(generator.return_tf_dataset())
 
     # Get encoded data in right format
     z_space = encoded[0]
@@ -111,19 +114,19 @@ def predict(md_file, weigths_file, latDim, refinePose, architecture, ctfType, pa
     # zernike_space = np.vstack(zernike_space)
 
     # Save space to metadata file
-    generator.metadata[:, 'zCoefficients'] = np.asarray([",".join(item) for item in z_space.astype(str)])
+    metadata[:, 'zCoefficients'] = np.asarray([",".join(item) for item in z_space.astype(str)])
 
     if refinePose:
         delta_euler = np.vstack(delta_euler)
         delta_shifts = np.vstack(delta_shifts)
 
-        generator.metadata[:, 'delta_angle_rot'] = delta_euler[:, 0]
-        generator.metadata[:, 'delta_angle_tilt'] = delta_euler[:, 1]
-        generator.metadata[:, 'delta_angle_psi'] = delta_euler[:, 2]
-        generator.metadata[:, 'delta_shift_x'] = delta_shifts[:, 0]
-        generator.metadata[:, 'delta_shift_y'] = delta_shifts[:, 1]
+        metadata[:, 'delta_angle_rot'] = delta_euler[:, 0]
+        metadata[:, 'delta_angle_tilt'] = delta_euler[:, 1]
+        metadata[:, 'delta_angle_psi'] = delta_euler[:, 2]
+        metadata[:, 'delta_shift_x'] = delta_shifts[:, 0]
+        metadata[:, 'delta_shift_y'] = delta_shifts[:, 1]
 
-    generator.metadata.write(md_file, overwrite=True)
+    metadata.write(md_file, overwrite=True)
 
 
 def main():
@@ -140,6 +143,8 @@ def main():
     parser.add_argument('--pad', type=int, required=False, default=2)
     parser.add_argument('--gpu', type=str)
     parser.add_argument('--sr', type=float, required=True)
+    parser.add_argument('--pose_reg', type=float, required=False, default=0.0)
+    parser.add_argument('--ctf_reg', type=float, required=False, default=0.0)
     parser.add_argument('--apply_ctf', type=int, required=True)
 
     args = parser.parse_args()
@@ -153,7 +158,8 @@ def main():
     inputs = {"md_file": args.md_file, "weigths_file": args.weigths_file,
               "latDim": args.lat_dim, "refinePose": args.refine_pose,
               "architecture": args.architecture, "ctfType": args.ctf_type,
-              "pad": args.pad, "sr": args.sr, "applyCTF": args.apply_ctf}
+              "pad": args.pad, "sr": args.sr, "applyCTF": args.apply_ctf,
+              "poseReg": args.pose_reg, "ctfReg": args.ctf_reg}
 
     # Initialize volume slicer
     predict(**inputs)

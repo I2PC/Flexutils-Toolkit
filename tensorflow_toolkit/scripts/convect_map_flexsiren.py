@@ -38,10 +38,11 @@ if version("tensorflow") >= "2.16.0":
 import tensorflow as tf
 
 from tensorflow_toolkit.generators.generator_flexsiren import Generator
-from tensorflow_toolkit.networks.flexsiren import AutoEncoder
+from tensorflow_toolkit.networks.flexsiren_basis import AutoEncoder
 
 
-def predict(weigths_file, het_file, out_path, architecture="mlpnn", **kwargs):
+def predict(weigths_file, het_file, out_path, architecture="mlpnn",
+            poseReg=0.0, ctfReg=0.0, refinePose=True, **kwargs):
     x_het = np.loadtxt(het_file)
     if len(x_het.shape) == 1:
         x_het = x_het.reshape((1, -1))
@@ -53,10 +54,11 @@ def predict(weigths_file, het_file, out_path, architecture="mlpnn", **kwargs):
 
     # Create data generator
     generator = Generator(md_file=md_file, step=kwargs.pop("step"), shuffle=False,
-                          xsize=xsize)
+                          xsize=xsize, refinePose=refinePose)
 
     # Load model
-    autoencoder = AutoEncoder(generator, latDim=x_het.shape[1], architecture=architecture, **kwargs)
+    autoencoder = AutoEncoder(generator, latDim=x_het.shape[1], architecture=architecture,
+                              poseReg=poseReg, ctfReg=ctfReg, **kwargs)
     if generator.mode == "spa":
         autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
     elif generator.mode == "tomo":
@@ -81,6 +83,9 @@ def main():
     parser.add_argument('--out_path', type=str, required=True)
     parser.add_argument('--step', type=int, required=True)
     parser.add_argument('--architecture', type=str, required=True)
+    parser.add_argument('--pose_reg', type=float, required=False, default=0.0)
+    parser.add_argument('--ctf_reg', type=float, required=False, default=0.0)
+    parser.add_argument('--refine_pos', type=float, required=False, default=0.0)
     parser.add_argument('--gpu', type=str)
 
     args = parser.parse_args()
@@ -94,7 +99,8 @@ def main():
         tf.config.experimental.set_memory_growth(gpu_instance, True)
 
     inputs = {"weigths_file": args.weigths_file, "het_file": args.het_file,
-              "out_path": args.out_path, "step": args.step, "architecture": args.architecture}
+              "out_path": args.out_path, "step": args.step, "architecture": args.architecture,
+              "poseReg": args.pose_reg, "ctfReg": args.ctf_reg, "refinePose": args.refine_pose}
 
     # Initialize volume slicer
     predict(**inputs)
