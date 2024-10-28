@@ -730,19 +730,13 @@ class AutoEncoder(tf.keras.Model):
             indexes = data[1][0]
             images = inputs[0]
 
-        # self.decoder.generator.indexes = indexes
-        # self.decoder.generator.current_images = images
-
-        # Row splits
         if allow_open3d and self.generator.ref_is_struct:
+            # Row splits
             B = tf.shape(images)[0]
             # num_points = self.generator.atom_coords.shape[0]
             num_points = tf.cast(tf.shape(self.generator.ca_indices)[0], tf.int64)
             points_row_splits = tf.range(B + 1, dtype=tf.int64) * num_points
             queries_row_splits = tf.range(B + 1, dtype=tf.int64) * num_points
-
-        # Prepare batch
-        # images = self.decoder.prepare_batch([images, indexes])
 
         if self.CTF == "wiener":
             # Precompute batch CTFs
@@ -762,33 +756,116 @@ class AutoEncoder(tf.keras.Model):
             elif self.mode == "tomo":
                 inputs[0] = images
 
+        coords = self.generator.scaled_coords  # TESTING: Autograd for field derivatives
+
+        # tape.watch(coords)  # TESTING: Autograd for field derivatives
+        B, C = tf.shape(inputs)[0], tf.shape(coords)[0]
+
         # Forward pass (first encoder and decoder)
         if self.mode == "spa":
-            x = self.encoder_exp(inputs)
-            het = self.activation(self.z_space(x))
-            encoded = [tf.tranpose(self.field_decoder([het, self.generator.scaled_coords]), (1, 0, 2)),
-                       self.activation(self.delta_euler(x)), self.activation(self.delta_shifts(x))]
+            x, euler, shifts = self.encoder_exp(inputs)
+            het_x = self.activation(self.z_space_x(x))
+            het_y = self.activation(self.z_space_y(x))
+            het_z = self.activation(self.z_space_z(x))
+            het = tf.stack([het_x, het_y, het_z], axis=-1)
+
+            basis = self.basis_decoder(coords)
+            basis = tf.tile(basis[None, ...], (B, 1, 1))
+            field = tf.matmul(basis, het)
+
+            if self.compute_delta:
+                volume_basis = self.basis_volume_decoder(coords)
+                volume_basis = tf.tile(volume_basis[None, ...], (B, 1, 1))
+                delta_volume = tf.squeeze(tf.matmul(volume_basis, tf.reduce_mean(het, axis=-1, keepdims=True)))
+                # delta_volume = tf.squeeze(tf.matmul(volume_basis, tf.reshape(het, (B, 3 * self.latDim, 1))))
+            else:
+                delta_volume = 0.0
+
+            encoded = [tf.transpose(field, (1, 0, 2)), delta_volume,
+                       self.activation(self.delta_euler(euler)), self.activation(self.delta_shifts(shifts))]
         elif self.mode == "tomo":
             x, latent = self.encoder_exp(inputs)
             het = self.activation(self.z_space(latent))
-            encoded = [tf.tranpose(self.field_decoder([het, self.generator.scaled_coords]), (1, 0, 2)),
+
+            het_tiled = tf.tile(het[:, None, :], (1, C, 1))
+            coords_tiled = tf.tile(coords[None, :, :], (B, 1, 1))
+            coords_het = tf.concat([coords_tiled, het_tiled], axis=-1)
+
+            field = self.basis_decoder(coords_het)
+            encoded = [tf.transpose(field, (1, 0, 2)),
                        self.activation(self.delta_euler(x)), self.activation(self.delta_shifts(x))]
+
+        # Field losses
+
+        loss = tf.cast(self.compute_field_loss(het, precision=tf.float32), self.precision)
+
+        ##########################
+
+        # Diffeomorphism loss
+
+        if self.l_dfm > 0.0:
+            # Better performance and memory saved
+            indices = tf.range(C, dtype=tf.int32)
+            indices = tf.random.shuffle(indices)
+            indices = indices[:1000]
+            field_rnd = tf.gather(field, indices, axis=1)
+            coords_tiled_rnd = tf.gather(self.generator.scaled_coords, indices, axis=0)
+
+            convected_coords_rnd = field_rnd + coords_tiled_rnd[None, ...]
+            convected_coords_rnd = tf.reshape(convected_coords_rnd, (B * 1000, 3))
+            inv_basis_rnd = self.inverse_basis_decoder(convected_coords_rnd)
+            inv_basis_rnd = tf.reshape(inv_basis_rnd, (B, 1000, self.latDim))
+            inv_field_rnd = tf.matmul(inv_basis_rnd, het)
+
+            loss_dfm = tf.cast(
+                tf.reduce_mean(tf.abs(tf.cast(field_rnd, tf.float32) + tf.cast(inv_field_rnd, tf.float32))),
+                self.precision)
+        else:
+            loss_dfm = 0.0
+
+        ##########################
+
         encoded[1] *= self.refPose
         encoded[2] *= self.refPose
-        decoded_vec, bondk, anglek, coords, _, loss = self.phys_decoder([encoded, indexes], permute_view=False)
-        decoded, decoded_ctf, decoded_only_field_ctf = decoded_vec[0], decoded_vec[1], decoded_vec[2]
+        decoded_vec, bondk, anglek, coords, ctf = self.phys_decoder([encoded, indexes], permute_view=False)
+        decoded, decoded_ctf = decoded_vec[0], decoded_vec[1]
 
-        if self.disantangle and self.mode == "spa":
+        if self.disantangle_pose and self.mode == "spa":
             # Forward pass (second decoder - no permutation)
-            x = self.encoder_clean(decoded)
-            het_clean = self.activation(self.z_space(x))
+            x, _, _ = self.encoder_clean(decoded)
+            het_x = self.activation(self.z_space_x(x))
+            het_y = self.activation(self.z_space_y(x))
+            het_z = self.activation(self.z_space_z(x))
+            het_clean = tf.stack([het_x, het_y, het_z], axis=-1)
+
+            # Forward pass (third encoder - permuted CTF)
+            if self.disantangle_ctf and self.CTF is not None:
+                x, _, _ = self.encoder_ctf(decoded_ctf)
+                het_x = self.activation(self.z_space_x(x))
+                het_y = self.activation(self.z_space_y(x))
+                het_z = self.activation(self.z_space_z(x))
+                het_ctf = tf.stack([het_x, het_y, het_z], axis=-1)
+                ctf_perm = tf.random.shuffle(ctf)
+                decoded_ctf_perm = tf.cast(
+                    self.generator.ctfFilterImage(tf.cast(decoded, tf.float32), tf.cast(ctf_perm, tf.float32)),
+                    self.precision)
+                x, _, _ = self.encoder_ctf(decoded_ctf_perm)
+                het_x = self.activation(self.z_space_x(x))
+                het_y = self.activation(self.z_space_y(x))
+                het_z = self.activation(self.z_space_z(x))
+                het_ctf_perm = tf.stack([het_x, het_y, het_z], axis=-1)
+            else:
+                het_ctf_perm = het
 
             # Forward pass (second decoder - permutation)
-            decoded_vec, _, _, _, _, loss = self.phys_decoder([encoded, indexes], permute_view=True)
-            x = self.encoder_clean(decoded_vec[0])
-            het_clean_perm = self.activation(self.z_space(x))
+            decoded_vec, _, _, _, _ = self.phys_decoder([encoded, indexes], permute_view=True)
+            x, _, _ = self.encoder_clean(decoded_vec[0])
+            het_x = self.activation(self.z_space_x(x))
+            het_y = self.activation(self.z_space_y(x))
+            het_z = self.activation(self.z_space_z(x))
+            het_clean_perm = tf.stack([het_x, het_y, het_z], axis=-1)
 
-        if allow_open3d and self.generator.ref_is_struct:
+        if allow_open3d and self.generator.ref_is_struct and self.l_clashes > 0.0:
             # Fixed radius search
             result = self.nsearch(coords, coords, 0.5 * self.extent, points_row_splits, queries_row_splits)
 
@@ -798,35 +875,54 @@ class AutoEncoder(tf.keras.Model):
                                 user_neighbors_index=result.neighbors_index,
                                 user_neighbors_importance=self.fn(result.neighbors_distance,
                                                                   result.neighbors_row_splits))
-            clashes = tf.reduce_max(tf.reshape(clashes, (B, -1)), axis=-1)
+            clashes = tf.cast(tf.reduce_max(tf.reshape(tf.cast(clashes, tf.float32), (B, -1)), axis=-1),
+                              self.precision)
         else:
             clashes = tf.constant(0.0, self.precision)
 
-        img_loss = self.cost_function(images, decoded_ctf)
+        img_loss = tf.cast(self.cost_function(tf.cast(images, tf.float32),
+                                              tf.cast(decoded_ctf, tf.float32)), self.precision)
 
         # Bond and angle losses
         if self.generator.ref_is_struct:
-            bond_loss = tf.sqrt(tf.reduce_max(tf.keras.losses.MSE(self.generator.bond0, bondk)))
-            angle_loss = tf.sqrt(tf.reduce_max(tf.keras.losses.MSE(self.generator.angle0, anglek)))
+            bond_loss = tf.cast(tf.sqrt(tf.reduce_max(tf.keras.losses.MSE(tf.cast(self.generator.bond0, tf.float32),
+                                                                          tf.cast(bondk, tf.float32)))),
+                                self.precision)
+            angle_loss = tf.cast(
+                tf.sqrt(tf.reduce_max(tf.keras.losses.MSE(tf.cast(self.generator.angle0, tf.float32),
+                                                          tf.cast(anglek, tf.float32)))), self.precision)
         else:
             bond_loss, angle_loss = tf.constant(0.0, self.precision), tf.constant(0.0, self.precision)
 
-        # Loss disantagled
-        if self.disantangle and self.mode == "spa":
-            loss_disantagled = tf.keras.losses.MSE(het, het_clean) + tf.keras.losses.MSE(het, het_clean_perm)
+        # Loss disantagled (pose)
+        if self.disantangle_pose and self.mode == "spa":
+            loss_disantagled_pose = tf.cast(
+                tf.keras.losses.MSE(tf.cast(het, tf.float32), tf.cast(het_clean, tf.float32))
+                + tf.keras.losses.MSE(tf.cast(het, tf.float32), tf.cast(het_clean_perm, tf.float32)),
+                self.precision)
         else:
-            loss_disantagled = 0.0
+            loss_disantagled_pose = 0.0
+
+        # Loss disantagled (CTF)
+        if self.disantangle_ctf and self.mode == "spa" and self.CTF is not None:
+            loss_disantagled_ctf = tf.cast(
+                tf.keras.losses.MSE(tf.cast(het, tf.float32), tf.cast(het_ctf, tf.float32))
+                + tf.keras.losses.MSE(tf.cast(het, tf.float32), tf.cast(het_ctf_perm, tf.float32)),
+                self.precision)
+        else:
+            loss_disantagled_ctf = 0.0
 
         total_loss = (img_loss + self.l_bond * bond_loss
                       + self.l_angle * angle_loss + self.l_clashes * clashes
-                      + 0.001 * loss + 0.01 * loss_disantagled)  # 0.001 works on HetSIREN
+                      + 1.0 * loss + self.l_dfm * loss_dfm + self.poseReg * loss_disantagled_pose +
+                      self.ctfReg * loss_disantagled_ctf)  # 0.001 works on HetSIREN
 
         self.total_loss_tracker.update_state(total_loss)
         self.img_loss_tracker.update_state(img_loss)
         self.angle_loss_tracker.update_state(angle_loss)
         self.bond_loss_tracker.update_state(bond_loss)
         self.clash_loss_tracker.update_state(clashes)
-        self.loss_disantangle_tracker.update_state(loss_disantagled)
+        self.loss_disantangle_tracker.update_state(loss_disantagled_pose + loss_disantagled_ctf)
         return {
             "loss": self.total_loss_tracker.result(),
             "img_loss": self.img_loss_tracker.result(),
