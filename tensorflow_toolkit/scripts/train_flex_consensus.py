@@ -30,10 +30,13 @@ import os
 import shutil
 import glob
 import re
+from importlib.metadata import version
 from scipy.stats import entropy
 from scipy.interpolate import NearestNDInterpolator
-
 import numpy as np
+
+if version("tensorflow") >= "2.16.0":
+    os.environ["TF_USE_LEGACY_KERAS"] = "1"
 import tensorflow as tf
 
 from tensorflow_toolkit.generators.generator_flex_consensus import Generator

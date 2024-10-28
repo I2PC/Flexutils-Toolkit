@@ -30,8 +30,11 @@ import os
 import re
 import shutil
 import glob
+from importlib.metadata import version
 from xmipp_metadata.metadata import XmippMetaData
 
+if version("tensorflow") >= "2.16.0":
+    os.environ["TF_USE_LEGACY_KERAS"] = "1"
 import tensorflow as tf
 
 # from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset

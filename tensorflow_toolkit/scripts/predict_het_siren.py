@@ -30,9 +30,12 @@ import os
 import numpy as np
 from pathlib import Path
 from sklearn.cluster import KMeans
+from importlib.metadata import version
 from xmipp_metadata.image_handler import ImageHandler
 from threadpoolctl import threadpool_limits, threadpool_info
 
+if version("tensorflow") >= "2.16.0":
+    os.environ["TF_USE_LEGACY_KERAS"] = "1"
 import tensorflow as tf
 from tensorboard.plugins import projector
 

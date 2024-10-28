@@ -32,8 +32,11 @@ import numpy as np
 import mrcfile
 import tqdm
 from pathlib import Path
+from importlib.metadata import version
 from xmipp_metadata.image_handler import ImageHandler
 
+if version("tensorflow") >= "2.16.0":
+    os.environ["TF_USE_LEGACY_KERAS"] = "1"
 import tensorflow as tf
 
 from tensorflow_toolkit.generators.generator_het_siren import Generator
