@@ -83,7 +83,7 @@ def euler_from_matrix(matrix):
     j = _NEXT_AXIS[i + parity]
     k = _NEXT_AXIS[i - parity + 1]
 
-    M = np.array(matrix, dtype=np.float64, copy=False)[:3, :3]
+    M = np.array(matrix, dtype=np.float64, copy=False)
     if repetition:
         sy = math.sqrt(M[i, j] * M[i, j] + M[i, k] * M[i, k])
         if sy > _EPS:
@@ -266,12 +266,35 @@ def full_ifft_pad(ft_imgs, size_x, size_y):
     imgs = tf.image.resize_with_crop_or_pad(padded_imgs, size_x, size_y)
     return imgs
 
-def gramSchmidt(r):
-    c1 = tf.nn.l2_normalize(r[:, :3], axis=-1)
-    c2 = tf.nn.l2_normalize(r[:, 3:] - dot(c1, r[:, 3:]) * c1, axis=-1)
-    c3 = tf.linalg.cross(c1, c2)
-    c = tf.stack([c1, c2, c3], axis=2)
-    return c[:, 0, :], c[:, 1, :], c[:, 2, :]
+def gramSchmidt(vectors):
+    """
+    Apply the Gram-Schmidt process to orthogonalize a set of vectors.
+
+    Args:
+    vectors (Tensor): A batch of vectors of shape (batch_size, 6),
+                      where each instance contains two 3D vectors.
+
+    Returns:
+    Tensor: A batch of orthogonal vectors of shape (batch_size, 9),
+            where each instance forms the basis of a rotation matrix.
+    """
+    vec1, vec2 = tf.split(vectors, 2, axis=1)
+
+    # Normalize the first vector
+    e1 = tf.nn.l2_normalize(vec1, axis=1)
+
+    # Make the second vector orthogonal to the first
+    proj = dot(vec2, e1) * e1
+    orthogonal_vec2 = vec2 - proj
+    e2 = tf.nn.l2_normalize(orthogonal_vec2, axis=1)
+
+    # Compute the third vector as the cross product of the first two
+    e3 = tf.linalg.cross(e1, e2)
+
+    # Concatenate the vectors to form a rotation matrix
+    rotation_matrices = tf.stack([e1, e2, e3], axis=2)
+
+    return rotation_matrices
 
 def dot(a, b):
     return tf.reduce_sum(a * b, axis=-1, keepdims=True)
