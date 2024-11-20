@@ -57,7 +57,8 @@ def compute_distance_matrix(outPath, references_file, targets_file, L1, L2, batc
     volIds = np.repeat(np.arange(targets.shape[0]), 20)
     if not os.path.isfile(md_file):
         for volume in tqdm(targets, desc="Projecting volumes: "):
-            volume = np.reshape(volume, (target_bx, target_bx, target_bx))
+            if volume.ndim == 2:
+                volume = np.reshape(volume, (target_bx, target_bx, target_bx))
             volume = ih.scaleSplines(data=volume, finalDimension=64)
             proj, angles = ih.generateProjections(20, volume=volume,
                                                   n_jobs=thr, useFourier=True)
@@ -78,7 +79,8 @@ def compute_distance_matrix(outPath, references_file, targets_file, L1, L2, batc
     for volume in references:
         # Prepare data
         md.write(filename=md_file, overwrite=True)
-        volume = np.reshape(volume, (reference_bx, reference_bx, reference_bx))
+        if volume.ndim == 2:
+              volume = np.reshape(volume, (reference_bx, reference_bx, reference_bx))
         volume = ih.scaleSplines(data=volume, finalDimension=64)
         ImageHandler().write(volume, os.path.join(outPath, "volume.mrc"), overwrite=True)
         mask = ih.generateMask(inputFn=os.path.join(outPath, "volume.mrc"),
