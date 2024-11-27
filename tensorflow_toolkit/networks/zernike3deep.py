@@ -728,7 +728,7 @@ class AutoEncoder(tf.keras.Model):
             encoded = [self.z_space_x(x), self.z_space_y(x), self.z_space_z(x), self.delta_euler(x),
                        self.delta_shifts(x)]
         elif self.mode == "tomo":
-            x, latent = self.encoder(inputs)
+            x, latent = self.encoder_exp(inputs)
             encoded = [self.z_space_x(latent), self.z_space_y(latent), self.z_space_z(latent),
                        self.delta_euler(x),
                        self.delta_shifts(x)]
