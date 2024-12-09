@@ -52,12 +52,13 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
           radius_mask, smooth_mask, refinePose, architecture="convnn", weigths_file=None,
           ctfType="apply", pad=2, sr=1.0, applyCTF=1, hetDim=10, l1Reg=0.5, tvReg=0.1, mseReg=0.1, poseReg=0.0,
           ctfReg=0.0, lr=1e-5, only_pos=False, multires=None, jit_compile=True, trainSize=None, outSize=None,
-          tensorboard=True, useMirrorStrategy=False, precision="mixed_float16"):
+          tensorboard=True, useMirrorStrategy=False, use_hyper_network=True, precision="mixed_float16"):
     # We need to import network and generators here instead of at the beginning of the script to allow Tensorflow
     # get the right GPUs set in CUDA_VISIBLE_DEVICES
     assert precision in ["float32", "mixed_float16"]
     mixed_precision.set_global_policy(precision)
     precision = tf.float32 if precision == "float32" else tf.float16
+    precision_scaled = tf.float32 if os.environ["TF_USE_LEGACY_KERAS"] == "1" else precision
     from tensorflow_toolkit.generators.generator_het_siren import Generator
     from tensorflow_toolkit.networks.het_siren import AutoEncoder
 
@@ -93,7 +94,8 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
             autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
                                       het_dim=hetDim, l1_lambda=l1Reg, tv_lambda=tvReg, mse_lambda=mseReg,
                                       train_size=trainSize, only_pos=only_pos, multires_levels=multires,
-                                      poseReg=poseReg, ctfReg=ctfReg, precision=precision)
+                                      poseReg=poseReg, ctfReg=ctfReg, precision=precision,
+                                      precision_scaled=precision_scaled, use_hyper_network=use_hyper_network)
 
             # Fine tune a previous model
             if weigths_file:
@@ -152,7 +154,7 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
                                 callbacks=callbacks, initial_epoch=initial_epoch)
             else:
                 autoencoder.fit(generator.return_tf_dataset(), epochs=epochs,
-                                callbacks=callbacks, initial_epoch=initial_epoch)
+                                initial_epoch=initial_epoch)
     except tf.errors.ResourceExhaustedError as error:
         msg = "GPU memory has been exhausted. Usually this can be solved by " \
               "downsampling further your particles or by decreasing the batch size. " \
@@ -161,7 +163,10 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
         raise error
 
     # Save model
-    autoencoder.save_weights(os.path.join(outPath, "het_siren_model.h5"))
+    if tf.__version__ < "2.16.0" or os.environ["TF_USE_LEGACY_KERAS"] == "1":
+        autoencoder.save_weights(os.path.join(outPath, "het_siren_model.h5"))
+    else:
+        autoencoder.save_weights(os.path.join(outPath, "het_siren_model.weights.h5"))
 
     # Remove checkpoints
     shutil.rmtree(checkpoint)
@@ -196,6 +201,7 @@ def main():
     parser.add_argument('--smooth_mask', action='store_true')
     parser.add_argument('--refine_pose', action='store_true')
     parser.add_argument('--only_pos', action='store_true')
+    parser.add_argument('--use_hyper_network', action='store_true')
     parser.add_argument('--weigths_file', type=str, required=False, default=None)
     parser.add_argument('--sr', type=float, required=True)
     parser.add_argument('--trainSize', type=int, required=True)
@@ -234,7 +240,8 @@ def main():
               "poseReg": args.pose_reg, "ctfReg": args.ctf_reg,
               "multires": args.multires, "jit_compile": args.jit_compile,
               "trainSize": args.trainSize, "outSize": args.outSize, "tensorboard": args.tensorboard,
-              "only_pos": args.only_pos, "useMirrorStrategy": useMirrorStrategy}
+              "only_pos": args.only_pos, "useMirrorStrategy": useMirrorStrategy,
+              "use_hyper_network": args.use_hyper_network}
 
     # Initialize volume slicer
     train(**inputs)
