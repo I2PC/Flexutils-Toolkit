@@ -50,7 +50,7 @@ from tensorflow_toolkit.networks.het_siren import AutoEncoder
 
 
 def predict(weigths_file, het_file, out_path, allCoords=False, filter=True, architecture="convnn",
-            poseReg=0.0, ctfReg=0.0, refPose=True, **kwargs):
+            poseReg=0.0, ctfReg=0.0, refPose=True, use_hyper_network=True, **kwargs):
     x_het = np.loadtxt(het_file)
     if len(x_het.shape) == 1:
         x_het = x_het.reshape((1, -1))
@@ -66,7 +66,8 @@ def predict(weigths_file, het_file, out_path, allCoords=False, filter=True, arch
 
     # Load model
     autoencoder = AutoEncoder(generator, het_dim=x_het.shape[1], architecture=architecture,
-                              poseReg=poseReg, ctfReg=ctfReg, refPose=refPose, **kwargs)
+                              poseReg=poseReg, ctfReg=ctfReg, refPose=refPose, use_hyper_network=use_hyper_network,
+                              **kwargs)
     if generator.mode == "spa":
         data = np.zeros((1, generator.xsize, generator.xsize, 1))
     elif generator.mode == "tomo":
@@ -94,6 +95,7 @@ def main():
     parser.add_argument('--pose_reg', type=float, required=False, default=0.0)
     parser.add_argument('--ctf_reg', type=float, required=False, default=0.0)
     parser.add_argument('--refine_pose', action='store_true')
+    parser.add_argument('--use_hyper_network', action='store_true')
     parser.add_argument('--gpu', type=str)
 
     args = parser.parse_args()
@@ -108,7 +110,8 @@ def main():
 
     inputs = {"weigths_file": args.weigths_file, "het_file": args.het_file,
               "out_path": args.out_path, "step": args.step, "architecture": args.architecture,
-              "poseReg": args.pose_reg, "ctfReg": args.ctf_reg, "refPose": args.refine_pose}
+              "poseReg": args.pose_reg, "ctfReg": args.ctf_reg, "refPose": args.refine_pose,
+              "use_hyper_network": args.use_hyper_network}
 
     # Initialize volume slicer
     predict(**inputs)
