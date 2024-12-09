@@ -112,7 +112,7 @@ def predict(md_file, weigths_file, L1, L2, refinePose, architecture, ctfType, pa
     # zernike_space = np.vstack(zernike_space)
 
     # Save space to metadata file
-    generator.metadata[:, 'zernikeCoefficients'] = np.asarray([",".join(item) for item in zernike_space.astype(str)])
+    metadata[:, 'zernikeCoefficients'] = np.asarray([",".join(item) for item in zernike_space.astype(str)])
 
     if refinePose:
         delta_euler = np.vstack(delta_euler)
