@@ -25,10 +25,10 @@
 # **************************************************************************
 
 
-from packaging import version
 import numpy as np
 import mrcfile
 from pathlib import Path
+from xmipp_metadata.metadata import XmippMetaData
 
 import tensorflow as tf
 
@@ -78,18 +78,19 @@ class Generator(DataGeneratorBase):
 
         # Initialize zernike information
         size = self.zernike_size.shape[0]
-        if self.metadata.isMetaDataLabel('zernikeCoefficients'):
+        metadata = XmippMetaData(kwargs.get("md_file"))
+        if metadata.isMetaDataLabel('zernikeCoefficients'):
             z_space = np.asarray([np.fromstring(item, sep=',')
-                                  for item in self.metadata[:, 'zernikeCoefficients']])
+                                  for item in metadata[:, 'zernikeCoefficients']])
             self.z_x_space = tf.constant(z_space[:, :size], dtype=tf.float32)
             self.z_y_space = tf.constant(z_space[:, size:2 * size], dtype=tf.float32)
             self.z_z_space = tf.constant(z_space[:, 2 * size:], dtype=tf.float32)
             self.weight_initializer = tf.keras.initializers.RandomUniform(minval=-0.001, maxval=0.001,
                                                                           seed=None)
         else:
-            self.z_x_space = tf.zeros((len(self.metadata), size), dtype=tf.float32)
-            self.z_y_space = tf.zeros((len(self.metadata), size), dtype=tf.float32)
-            self.z_z_space = tf.zeros((len(self.metadata), size), dtype=tf.float32)
+            self.z_x_space = tf.zeros((len(metadata), size), dtype=tf.float32)
+            self.z_y_space = tf.zeros((len(metadata), size), dtype=tf.float32)
+            self.z_z_space = tf.zeros((len(metadata), size), dtype=tf.float32)
             self.weight_initializer = "glorot_uniform"
         self.z_x_batch = np.zeros(self.batch_size)
         self.z_y_batch = np.zeros(self.batch_size)
