@@ -66,6 +66,7 @@ class Generator(DataGeneratorBase):
 
         # Get Zernike3D vector size
         self.zernike_size = basisDegreeVectors(L1, L2)
+        self.num_coeff = list(range(self.zernike_size.shape[0]))
 
         # Precompute Zernike3D basis
         self.Z = computeBasis(self.coords, L1=L1, L2=L2, r=0.5 * self.xsize,
