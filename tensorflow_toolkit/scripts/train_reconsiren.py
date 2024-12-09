@@ -33,6 +33,8 @@ import glob
 import numpy as np
 from math import ceil
 from importlib.metadata import version
+
+from sklearn.cluster import KMeans
 from xmipp_metadata.metadata import XmippMetaData
 from xmipp_metadata.image_handler import ImageHandler
 
@@ -47,7 +49,8 @@ from tensorflow_toolkit.utils import epochs_from_iterations, xmippEulerFromMatri
 
 def train(outPath, md_file, batch_size, shuffle, splitTrain, epochs, only_pose=False, n_candidates=6,
           architecture="convnn", weigths_file=None, ctfType=None, pad=4, sr=1.0, applyCTF=0, l1Reg=0.5,
-          tvReg=0.1, mseReg=0.1, udLambda=0.000001, unLambda=0.0001, only_pos=False, jit_compile=True, tensorboard=True):
+          tvReg=0.1, mseReg=0.1, udLambda=0.000001, unLambda=0.0001, only_pos=False, useHet=False,
+          jit_compile=True, tensorboard=True):
     # We need to import network and generators here instead of at the beginning of the script to allow Tensorflow
     # get the right GPUs set in CUDA_VISIBLE_DEVICES
     from tensorflow_toolkit.generators.generator_reconsiren import Generator
@@ -77,7 +80,7 @@ def train(outPath, md_file, batch_size, shuffle, splitTrain, epochs, only_pose=F
             autoencoder = AutoEncoder(generator, architecture=architecture, CTF=None,
                                       l1_lambda=l1Reg, tv_lambda=tvReg, mse_lambda=mseReg, un_lambda=unLambda,
                                       ud_lambda=udLambda, only_pose=only_pose, n_candidates=n_candidates,
-                                      only_pos=only_pos, multires=None)
+                                      only_pos=only_pos, multires=None, useHet=useHet)
 
             # Fine tune a previous model
             if weigths_file:
@@ -86,16 +89,23 @@ def train(outPath, md_file, batch_size, shuffle, splitTrain, epochs, only_pose=F
 
             if only_pose:
                 optimizer_encoder = [tf.keras.optimizers.RMSprop(learning_rate=1e-5),
-                                     tf.keras.optimizers.RMSprop(learning_rate=1e-5)]
-                optimizer_decoder = tf.keras.optimizers.Adam(learning_rate=1e-4)
+                                     tf.keras.optimizers.Adam(learning_rate=1e-5)]
+                optimizer_decoder = tf.keras.optimizers.Adam(learning_rate=1e-5)
+                optimizer_het = [tf.keras.optimizers.RMSprop(learning_rate=1e-4),
+                                 tf.keras.optimizers.Adam(learning_rate=1e-4)]
             else:
-                optimizer_encoder = [tf.keras.optimizers.RMSprop(learning_rate=1e-3),
-                                     tf.keras.optimizers.RMSprop(learning_rate=1e-5)]
                 if only_pos:
+                    optimizer_encoder = [tf.keras.optimizers.RMSprop(learning_rate=1e-3),
+                                         tf.keras.optimizers.Adam(learning_rate=1e-5)]
+                    optimizer_het = [tf.keras.optimizers.Adam(learning_rate=1e-4),
+                                     tf.keras.optimizers.Adam(learning_rate=1e-4)]
                     optimizer_decoder = tf.keras.optimizers.Adam(learning_rate=1e-3)  # Classes
                 else:
-                    optimizer_decoder = tf.keras.optimizers.Adam(learning_rate=1e-3)  # Classes
-                    # optimizer_decoder = tf.keras.optimizers.Adam(learning_rate=1e-4)  # Particles
+                    optimizer_encoder = [tf.keras.optimizers.RMSprop(learning_rate=1e-3),
+                                         tf.keras.optimizers.Adam(learning_rate=1e-5)]
+                    optimizer_het = [tf.keras.optimizers.Adam(learning_rate=1e-4),
+                                     tf.keras.optimizers.Adam(learning_rate=1e-4)]
+                    optimizer_decoder = tf.keras.optimizers.Adam(learning_rate=1e-4)  # Particles
 
             # Callbacks list
             callbacks = []
@@ -135,19 +145,26 @@ def train(outPath, md_file, batch_size, shuffle, splitTrain, epochs, only_pose=F
                     latest = os.path.basename(latest)
                     initial_epoch = int(re.findall(r'\d+', latest)[0]) - 1
 
-            autoencoder.compile(e_optimizer=optimizer_encoder, d_optimizer=optimizer_decoder, jit_compile=jit_compile)
+            autoencoder.compile(e_optimizer=optimizer_encoder, d_optimizer=optimizer_decoder, het_optimizer=optimizer_het,
+                                jit_compile=jit_compile)
 
             steps = ceil(epochs / 5)
             md = XmippMetaData(md_file)
+
+            train_dataset = generator.return_tf_dataset(preShuffle=True)
+            predict_dataset = generator_pred.return_tf_dataset()
+            if generator_val is not None:
+                validation_dataset = generator_val.return_tf_dataset()
+
             for idx in range(steps):
                 if generator_val is not None:
-                    autoencoder.fit(generator.return_tf_dataset(), validation_data=generator_val.return_tf_dataset(), epochs=5, validation_freq=2,
+                    autoencoder.fit(train_dataset, validation_data=validation_dataset, epochs=5, validation_freq=2,
                                     callbacks=callbacks, initial_epoch=initial_epoch)
                 else:
-                    autoencoder.fit(generator.return_tf_dataset(), epochs=5,
+                    autoencoder.fit(train_dataset, epochs=5,
                                     initial_epoch=initial_epoch)  # Adding callback (checkpoint) fail?
 
-                r, shifts, imgs = autoencoder.predict(generator_pred.return_tf_dataset())
+                r, shifts, imgs, het, loss, loss_cons = autoencoder.predict(predict_dataset)
 
                 # Rotation matrix to euler angles
                 euler_angles = np.zeros((r.shape[0], 3))
@@ -162,13 +179,30 @@ def train(outPath, md_file, batch_size, shuffle, splitTrain, epochs, only_pose=F
                 md[:, 'anglePsi'] = euler_angles[:, 2]
                 md[:, 'shiftX'] = shifts[:, 0]
                 md[:, 'shiftY'] = shifts[:, 1]
-                md.write(os.path.join(outPath, f'metadata_pred_angles.xmd'), overwrite=True)
+                md[:, "reproj_cons_error"] = loss_cons
 
                 # Save map
                 if not autoencoder.only_pose:
-                    decoded_map = autoencoder.eval_volume(filter=True)
-                    decoded_path = os.path.join(outPath, f'decoded_map.mrc')
+
+                    decoded_map = autoencoder.eval_volume(filter=True, het=None)
+                    decoded_path = os.path.join(outPath, f'decoded_map_no_het.mrc')
                     ImageHandler().write(decoded_map, decoded_path, overwrite=True)
+
+                if useHet:
+                    kmeans = KMeans(n_clusters=20).fit(het)
+                    labels = kmeans.predict(het)
+                    unique_labels = np.unique(labels)
+                    centers = kmeans.cluster_centers_
+                    decoded_maps = autoencoder.eval_volume(filter=True, het=centers)
+                    idx = 0
+                    for decoded_map in decoded_maps:
+                        decoded_path = os.path.join(outPath, f'decoded_map_{unique_labels[idx]:02}.mrc')
+                        ImageHandler().write(decoded_map, decoded_path, overwrite=True)
+                        idx += 1
+                    md[:, "cluster_labels"] = labels
+                    md[:, "reproj_het_error"] = loss
+
+                md.write(os.path.join(outPath, f'metadata_pred_angles.xmd'), overwrite=True)
 
     except tf.errors.ResourceExhaustedError as error:
         msg = "GPU memory has been exhausted. Usually this can be solved by " \
@@ -178,7 +212,10 @@ def train(outPath, md_file, batch_size, shuffle, splitTrain, epochs, only_pose=F
         raise error
 
     # Save model
-    autoencoder.save_weights(os.path.join(outPath, "reconsiren_model.h5"))
+    if tf.__version__ < "2.16.0" or os.environ["TF_USE_LEGACY_KERAS"] == "1":
+        autoencoder.save_weights(os.path.join(outPath, "reconsiren_model.h5"))
+    else:
+        autoencoder.save_weights(os.path.join(outPath, "reconsiren_model.weights.h5"))
 
     # Remove checkpoints
     shutil.rmtree(checkpoint)
@@ -207,6 +244,7 @@ def main():
     parser.add_argument('--pad', type=int, required=False, default=2)
     parser.add_argument('--only_pose', action='store_true')
     parser.add_argument('--only_pos', action='store_true')
+    parser.add_argument('--heterogeneous', action='store_true')
     parser.add_argument('--n_candidates', type=int, required=True)
     parser.add_argument('--weigths_file', type=str, required=False, default=None)
     parser.add_argument('--sr', type=float, required=True)
@@ -240,7 +278,8 @@ def main():
               "l1Reg": args.l1_reg, "tvReg": args.tv_reg, "mseReg": args.mse_reg,
               "udLambda": args.ud_lambda, "unLambda": args.un_lambda,
               "jit_compile": args.jit_compile, "tensorboard": args.tensorboard,
-              "only_pose": args.only_pose, "only_pos": args.only_pos, "n_candidates": args.n_candidates}
+              "only_pose": args.only_pose, "only_pos": args.only_pos, "n_candidates": args.n_candidates,
+              "useHet": args.heterogeneous}
 
     # Initialize volume slicer
     train(**inputs)
