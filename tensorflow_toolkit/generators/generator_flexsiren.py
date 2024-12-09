@@ -69,6 +69,7 @@ class Generator(DataGeneratorBase):
             self.mask_map = mrc.data
             coords = np.asarray(np.where(mrc.data == 1))
             self.indices = tf.constant(coords.T, dtype=tf.int32)
+        self.total_voxels = self.indices.shape[0]
 
         # Get coords group
         mask_file = Path(Path(kwargs.get("md_file")).parent, 'mask.mrc')
