@@ -98,6 +98,10 @@ class Generator(DataGeneratorBase):
         self.tilt_batch = np.zeros(self.batch_size, dtype=np.float32)
         self.psi_batch = np.zeros(self.batch_size, dtype=np.float32)
         self.shifts_batch = [np.zeros(self.batch_size), np.zeros(self.batch_size)]
+        if np.all(self.angle_rot == 0.0) and np.all(self.angle_tilt == 0.0) and np.all(self.angle_psi == 0.0):
+            self.refinement = False
+        else:
+            self.refinement = True
 
         # Cost functions
         cost = kwargs.get("cost")
