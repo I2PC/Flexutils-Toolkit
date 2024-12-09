@@ -296,6 +296,33 @@ def gramSchmidt(vectors):
 
     return rotation_matrices
 
+def quaternion_to_rotation_matrix(q):
+    # Ensure the quaternion is a unit quaternion
+    q = tf.linalg.l2_normalize(q, axis=-1)
+
+    q0, q1, q2, q3 = tf.unstack(q, axis=-1)
+
+    # Compute the elements of the rotation matrix
+    R00 = 1 - 2 * (q2**2 + q3**2)
+    R01 = 2 * (q1 * q2 - q0 * q3)
+    R02 = 2 * (q1 * q3 + q0 * q2)
+
+    R10 = 2 * (q1 * q2 + q0 * q3)
+    R11 = 1 - 2 * (q1**2 + q3**2)
+    R12 = 2 * (q2 * q3 - q0 * q1)
+
+    R20 = 2 * (q1 * q3 - q0 * q2)
+    R21 = 2 * (q2 * q3 + q0 * q1)
+    R22 = 1 - 2 * (q1**2 + q2**2)
+
+    # Stack the elements into a 3x3 rotation matrix
+    rotation_matrix = tf.stack([tf.stack([R00, R01, R02], axis=-1),
+                                tf.stack([R10, R11, R12], axis=-1),
+                                tf.stack([R20, R21, R22], axis=-1)], axis=1)
+
+    return tf.transpose(rotation_matrix, (0, 2, 1))
+
+
 def dot(a, b):
     return tf.reduce_sum(a * b, axis=-1, keepdims=True)
 
