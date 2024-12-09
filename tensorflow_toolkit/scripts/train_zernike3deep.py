@@ -91,11 +91,7 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
 
         # Fine tune a previous model
         if weigths_file:
-            if generator.mode == "spa":
-                autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
-            elif generator.mode == "tomo":
-                autoencoder.build(input_shape=[(None, generator.xsize, generator.xsize, 1),
-                                               [None, generator.sinusoid_table.shape[1]]])
+            _ = autoencoder(next(iter(generator.return_tf_dataset()))[0])
             autoencoder.load_weights(weigths_file)
 
         optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
@@ -105,7 +101,10 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
 
         # Create a callback that saves the model's weights
         initial_epoch = 0
-        checkpoint_path = os.path.join(outPath, "training", "cp-{epoch:04d}.hdf5")
+        if tf.__version__ < "2.16.0" or os.environ["TF_USE_LEGACY_KERAS"] == "1":
+            checkpoint_path = os.path.join(outPath, "training", "cp-{epoch:04d}.hdf5")
+        else:
+            checkpoint_path = os.path.join(outPath, "training", "cp-{epoch:04d}.weights.h5")
         if not os.path.isdir(os.path.dirname(checkpoint_path)):
             os.mkdir(os.path.dirname(checkpoint_path))
         cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
@@ -131,9 +130,9 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
                 files.sort()
                 latest = files[-2]
                 if generator.mode == "spa":
-                    autoencoder.build(input_shape=(None, autoencoder.xsize, autoencoder.xsize, 1))
+                    autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
                 elif generator.mode == "tomo":
-                    autoencoder.build(input_shape=[(None, autoencoder.xsize, autoencoder.xsize, 1),
+                    autoencoder.build(input_shape=[(None, generator.xsize, generator.xsize, 1),
                                                    [None, generator.sinusoid_table.shape[1]]])
                 autoencoder.load_weights(latest)
                 latest = os.path.basename(latest)
@@ -155,7 +154,10 @@ def train(outPath, md_file, L1, L2, batch_size, shuffle, step, splitTrain, epoch
         raise error
 
     # Save model
-    autoencoder.save_weights(os.path.join(outPath, "zernike3deep_model.h5"))
+    if tf.__version__ < "2.16.0" or os.environ["TF_USE_LEGACY_KERAS"] == "1":
+        autoencoder.save_weights(os.path.join(outPath, "zernike3deep_model.h5"))
+    else:
+        autoencoder.save_weights(os.path.join(outPath, "zernike3deep_model.weights.h5"))
 
     # Remove checkpoints
     shutil.rmtree(checkpoint)
