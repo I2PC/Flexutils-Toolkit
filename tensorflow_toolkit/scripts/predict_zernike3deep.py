@@ -35,6 +35,8 @@ if version("tensorflow") >= "2.16.0":
 import tensorflow as tf
 from tensorboard.plugins import projector
 
+from xmipp_metadata.metadata import XmippMetaData
+
 # from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
 
 
@@ -63,17 +65,16 @@ def predict(md_file, weigths_file, L1, L2, refinePose, architecture, ctfType, pa
 
     # Load model
     autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, poseReg=poseReg, ctfReg=ctfReg)
-    if generator.mode == "spa":
-        autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
-    elif generator.mode == "tomo":
-        autoencoder.build(input_shape=[(None, generator.xsize, generator.xsize, 1),
-                                       [None, generator.sinusoid_table.shape[1]]])
+    _ = autoencoder(next(iter(generator.return_tf_dataset()))[0])
     autoencoder.load_weights(weigths_file)
 
     # Get Zernike3DSpace
     # zernike_space = []
     # delta_euler = []
     # delta_shifts = []
+
+    # Metadata
+    metadata = XmippMetaData(md_file)
 
     # Predict step
     print("------------------ Predicting Zernike3D coefficients... ------------------")
@@ -117,13 +118,13 @@ def predict(md_file, weigths_file, L1, L2, refinePose, architecture, ctfType, pa
         delta_euler = np.vstack(delta_euler)
         delta_shifts = np.vstack(delta_shifts)
 
-        generator.metadata[:, 'delta_angle_rot'] = delta_euler[:, 0]
-        generator.metadata[:, 'delta_angle_tilt'] = delta_euler[:, 1]
-        generator.metadata[:, 'delta_angle_psi'] = delta_euler[:, 2]
-        generator.metadata[:, 'delta_shift_x'] = delta_shifts[:, 0]
-        generator.metadata[:, 'delta_shift_y'] = delta_shifts[:, 1]
+        metadata[:, 'delta_angle_rot'] = delta_euler[:, 0]
+        metadata[:, 'delta_angle_tilt'] = delta_euler[:, 1]
+        metadata[:, 'delta_angle_psi'] = delta_euler[:, 2]
+        metadata[:, 'delta_shift_x'] = delta_shifts[:, 0]
+        metadata[:, 'delta_shift_y'] = delta_shifts[:, 1]
 
-    generator.metadata.write(md_file, overwrite=True)
+    metadata.write(md_file, overwrite=True)
 
 
 def main():
