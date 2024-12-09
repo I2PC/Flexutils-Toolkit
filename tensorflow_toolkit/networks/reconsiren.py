@@ -27,14 +27,15 @@
 
 import tensorflow as tf
 import tensorflow_addons as tfa
-from keras.initializers import RandomUniform, RandomNormal
+from keras.initializers import RandomUniform, RandomNormal, Zeros, Constant, Orthogonal
 from tensorflow.keras import layers, Input, Model
 
 import numpy as np
 from scipy.ndimage import gaussian_filter
 import scipy.stats as st
 
-from tensorflow_toolkit.utils import computeCTF, gramSchmidt, euler_matrix_batch, full_fft_pad, full_ifft_pad, fft_pad
+from tensorflow_toolkit.utils import computeCTF, gramSchmidt, euler_matrix_batch, full_fft_pad, full_ifft_pad, \
+    quaternion_to_rotation_matrix
 from tensorflow_toolkit.layers.siren import Sine, SIRENFirstLayerInitializer, SIRENInitializer
 
 
@@ -323,6 +324,17 @@ def l1_distance_norm(volumes, coords):
     return 0.01 * l1_dist / (tf.cast(tf.shape(coords)[1], tf.float32) * total_mass)
 
 
+class QuaternionLayer(tf.keras.layers.Layer):
+    def call(self, inputs):
+        # The network predicts a 4D vector for the quaternion
+        q = inputs
+
+        # Normalize the quaternion to ensure it represents a valid rotation
+        q_normalized = tf.linalg.l2_normalize(q, axis=-1)
+
+        return q_normalized
+
+
 class CommonEncoder(Model):
     def __init__(self, input_dim, architecture="convnn"):
         super(CommonEncoder, self).__init__()
@@ -338,32 +350,32 @@ class CommonEncoder(Model):
 
             x = layers.Lambda(lambda y: apply_blur_filters_to_batch(y, filters))(x)
 
-            x = tf.keras.layers.Conv2D(4, 5, activation="relu", strides=(2, 2), padding="same")(x)
-            b1_out = tf.keras.layers.Conv2D(8, 5, activation="relu", strides=(2, 2), padding="same")(x)
+            x = tf.keras.layers.Conv2D(64, 5, activation="relu", strides=(2, 2), padding="same")(x)
+            b1_out = tf.keras.layers.Conv2D(128, 5, activation="relu", strides=(2, 2), padding="same")(x)
 
-            b2_x = tf.keras.layers.Conv2D(8, 1, activation="relu", strides=(1, 1), padding="same")(b1_out)
-            b2_x = tf.keras.layers.Conv2D(8, 1, activation="linear", strides=(1, 1), padding="same")(b2_x)
+            b2_x = tf.keras.layers.Conv2D(128, 1, activation="relu", strides=(1, 1), padding="same")(b1_out)
+            b2_x = tf.keras.layers.Conv2D(128, 1, activation="linear", strides=(1, 1), padding="same")(b2_x)
             b2_add = layers.Add()([b1_out, b2_x])
             b2_add = layers.ReLU()(b2_add)
 
-            for _ in range(1):
-                b2_x = tf.keras.layers.Conv2D(8, 1, activation="linear", strides=(1, 1), padding="same")(b2_add)
+            for _ in range(12):
+                b2_x = tf.keras.layers.Conv2D(128, 1, activation="linear", strides=(1, 1), padding="same")(b2_add)
                 b2_add = layers.Add()([b2_add, b2_x])
                 b2_add = layers.ReLU()(b2_add)
 
-            b2_out = tf.keras.layers.Conv2D(16, 3, activation="relu", strides=(2, 2), padding="same")(b2_add)
+            b2_out = tf.keras.layers.Conv2D(256, 3, activation="relu", strides=(2, 2), padding="same")(b2_add)
 
-            b3_x = tf.keras.layers.Conv2D(16, 1, activation="relu", strides=(1, 1), padding="same")(b2_out)
-            b3_x = tf.keras.layers.Conv2D(16, 1, activation="linear", strides=(1, 1), padding="same")(b3_x)
+            b3_x = tf.keras.layers.Conv2D(256, 1, activation="relu", strides=(1, 1), padding="same")(b2_out)
+            b3_x = tf.keras.layers.Conv2D(256, 1, activation="linear", strides=(1, 1), padding="same")(b3_x)
             b3_add = layers.Add()([b2_out, b3_x])
             b3_add = layers.ReLU()(b3_add)
 
-            for _ in range(1):
-                b3_x = tf.keras.layers.Conv2D(16, 1, activation="linear", strides=(1, 1), padding="same")(b3_add)
+            for _ in range(12):
+                b3_x = tf.keras.layers.Conv2D(256, 1, activation="linear", strides=(1, 1), padding="same")(b3_add)
                 b3_add = layers.Add()([b3_add, b3_x])
                 b3_add = layers.ReLU()(b3_add)
 
-            b3_out = tf.keras.layers.Conv2D(16, 3, activation="relu", strides=(2, 2), padding="same")(b3_add)
+            b3_out = tf.keras.layers.Conv2D(512, 3, activation="relu", strides=(2, 2), padding="same")(b3_add)
             x = tf.keras.layers.Flatten()(b3_out)
 
             x = layers.Flatten()(x)
@@ -382,29 +394,100 @@ class CommonEncoder(Model):
                 aux = layers.Dense(1024, activation='relu')(x)
                 x = layers.Add()([x, aux])
 
-        self.encoder = tf.keras.Model(images, x, name="encoder")
+        self.encoder = tf.keras.Model(images, x)
 
     def call(self, x):
         encoded = self.encoder(x)
         return encoded
 
 class HeadEncoder(Model):
-    def __init__(self):
+    def __init__(self, refinement=False, suffix="1", useQuaternions=False):
         super(HeadEncoder, self).__init__()
+        if useQuaternions:
+            bias_values = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        else:
+            bias_values = np.array([1.0, 0.0, 0.0, 0.0, 1.0, 0.0], dtype=np.float32)
 
         x = Input(shape=(1024,))
 
         rows = layers.Dense(1024, activation="relu")(x)
         for _ in range(3):
             rows = layers.Dense(1024, activation="relu")(rows)
-        rows = layers.Dense(6, activation="linear")(rows)
+        if refinement:
+            if useQuaternions:
+                rows = layers.Dense(4, activation="linear", kernel_initializer=Zeros(),
+                                    bias_initializer=Constant(bias_values))(rows)
+                rows = QuaternionLayer()(rows)
+            else:
+                rows = layers.Dense(6, activation="linear", kernel_initializer=Zeros(),
+                                    bias_initializer=Constant(bias_values))(rows)
+        else:
+            if useQuaternions:
+                rows = layers.Dense(4, activation="linear")(rows)
+                rows = QuaternionLayer()(rows)
+            else:
+                rows = layers.Dense(6, activation="linear")(rows)
 
         shifts = layers.Dense(1024, activation="relu")(x)
         for _ in range(3):
             shifts = layers.Dense(1024, activation="relu")(shifts)
         shifts = layers.Dense(2, activation="linear", kernel_initializer=RandomNormal(stddev=0.0001))(shifts)
 
-        self.encoder = tf.keras.Model(x, [rows, shifts], name="encoder")
+        self.encoder = tf.keras.Model(x, [rows, shifts])
+
+    def call(self, x):
+        encoded = self.encoder(x)
+        return encoded
+
+
+class HetEncoder(Model):
+    def __init__(self, input_dim, latDim=8):
+        super(HetEncoder, self).__init__()
+        images = Input(shape=(input_dim, input_dim, 1))
+
+        x = layers.Flatten()(images)
+        x = layers.Dense(64 * 64)(x)
+        x = layers.Reshape((64, 64, 1))(x)
+
+        x = layers.Conv2D(4, 5, activation="relu", strides=(2, 2), padding="same")(x)
+        b1_out = layers.Conv2D(8, 5, activation="relu", strides=(2, 2), padding="same")(x)
+
+        b2_x = layers.Conv2D(8, 1, activation="relu", strides=(1, 1), padding="same")(b1_out)
+        b2_x = layers.Conv2D(8, 1, activation="linear", strides=(1, 1), padding="same")(b2_x)
+        b2_add = layers.Add()([b1_out, b2_x])
+        b2_add = layers.ReLU()(b2_add)
+
+        for _ in range(1):
+            b2_x = layers.Conv2D(8, 1, activation="linear", strides=(1, 1), padding="same")(b2_add)
+            b2_add = layers.Add()([b2_add, b2_x])
+            b2_add = layers.ReLU()(b2_add)
+
+        b2_out = layers.Conv2D(16, 3, activation="relu", strides=(2, 2), padding="same")(b2_add)
+
+        b3_x = layers.Conv2D(16, 1, activation="relu", strides=(1, 1), padding="same")(b2_out)
+        b3_x = layers.Conv2D(16, 1, activation="linear", strides=(1, 1), padding="same")(b3_x)
+        b3_add = layers.Add()([b2_out, b3_x])
+        b3_add = layers.ReLU()(b3_add)
+
+        for _ in range(1):
+            b3_x = layers.Conv2D(16, 1, activation="linear", strides=(1, 1), padding="same")(b3_add)
+            b3_add = layers.Add()([b3_add, b3_x])
+            b3_add = layers.ReLU()(b3_add)
+
+        b3_out = layers.Conv2D(16, 3, activation="relu", strides=(2, 2), padding="same")(b3_add)
+        x = layers.Flatten()(b3_out)
+
+        x = layers.Flatten()(x)
+        for _ in range(4):
+            x = layers.Dense(256, activation='relu')(x)
+        x = layers.Dense(latDim, activation="linear")(x)
+
+        latent = layers.Dense(256, activation="relu")(x)
+        for _ in range(2):
+            latent = layers.Dense(256, activation="relu")(latent)
+        latent = layers.Dense(latDim, activation="linear")(latent)
+
+        self.encoder = tf.keras.Model(images, latent)
 
     def call(self, x):
         encoded = self.encoder(x)
@@ -430,26 +513,57 @@ class Decoder(Model):
         else:
             delta_vol = layers.Dense(total_voxels, activation='relu')(delta_vol)  # For classes works fine
 
-        self.decoder = Model(coords, delta_vol, name="delta_decoder")
+        self.decoder = tf.keras.Model(coords, delta_vol)
 
     def call(self, x):
         decoded = self.decoder(x)
         return decoded
 
 
+class HetDecoder(Model):
+    def __init__(self, generator, latDim=8, num_neurons=8):
+        super(HetDecoder, self).__init__()
+
+        latent = Input(shape=(latDim, ))
+
+        delta_het = layers.Dense(num_neurons, activation=Sine(30.0),
+                                 kernel_initializer=SIRENFirstLayerInitializer(scale=1.0))(latent)
+        for _ in range(3):
+            aux = layers.Dense(num_neurons, activation=Sine(1.0),
+                               kernel_initializer=SIRENInitializer())(latent)
+            delta_het = layers.Add()([delta_het, aux])
+        delta_het = layers.Dense(generator.total_voxels, activation="linear",
+                                 kernel_initializer=RandomUniform(-1e-5, 1e-5))(delta_het)
+
+        self.delta_decoder = tf.keras.Model(latent, delta_het)
+
+    def call(self, inputs):
+        delta = self.delta_decoder(inputs)
+        return delta
+
+
 class AutoEncoder(Model):
     def __init__(self, generator, architecture="convnn", CTF="wiener",
                  l1_lambda=0.1, multires=None, tv_lambda=0.5, mse_lambda=0.5,
-                 ud_lambda=0.000001, un_lambda=0.0001,
-                 only_pos=True, only_pose=False, n_candidates=6, **kwargs):
+                 ud_lambda=0.000001, un_lambda=0.0001, useQuaternions=False,
+                 only_pos=True, only_pose=False, n_candidates=6, useHet=False, latDim=8, **kwargs):
         super(AutoEncoder, self).__init__(**kwargs)
         self.CTF = CTF if generator.applyCTF == 1 else None
         self.applyCTF = bool(generator.applyCTF)
         self.multires = multires
+        self.useHet = useHet
+        self.useQuaternions = useQuaternions
         self.common_encoder = CommonEncoder(generator.xsize, architecture=architecture)
-        self.head_encoder = [HeadEncoder() for _ in range(n_candidates)]
+        self.head_encoder = [HeadEncoder(generator.refinement, suffix=str(idx + 1), useQuaternions=useQuaternions) for idx in range(n_candidates)]
+        if self.useHet:
+            self.het_encoder = HetEncoder(generator.xsize, latDim=latDim)
+            self.het_decoder = HetDecoder(generator, latDim=latDim)
         self.decoder_delta = Decoder(generator.total_voxels, CTF=CTF, only_pos=only_pos)
         self.n_candidates = n_candidates
+
+        self.e_optimizer = None
+        self.d_optimizer = None
+        self.het_optimizer = None
 
         if multires is None:
             self.filters = None
@@ -469,24 +583,30 @@ class AutoEncoder(Model):
             self.cost = correlation_coefficient_loss
         else:
             self.cost = self.generator.mse
-        self.steps_gen = 1
-        self.filters = create_blur_filters(3, 3, 9)
-        self.optimize_decoder = tf.Variable(1, dtype=tf.int64, trainable=False)
-        self.gen_loss_tracker = tf.keras.metrics.Mean(name="gen_loss")
-        self.disc_loss_tracker = tf.keras.metrics.Mean(name="disc_loss")
         self.rec_loss_tracker = tf.keras.metrics.Mean(name="rec_loss")
+        self.het_rec_loss_tracker = tf.keras.metrics.Mean(name="het_rec_loss")
 
     @property
     def metrics(self):
         return [
-            self.gen_loss_tracker,
-            self.disc_loss_tracker,
-            self.rec_loss_tracker
+            self.rec_loss_tracker,
+            self.het_rec_loss_tracker,
         ]
 
     def prepare_batch(self, indexes):
         # Update batch_size (in case it is incomplete)
         batch_size_scope = tf.shape(indexes)[0]
+
+        if self.generator.refinement:
+            # Precompute batch alignments
+            self.generator.rot_batch = tf.gather(self.generator.angle_rot, indexes, axis=0)
+            self.generator.tilt_batch = tf.gather(self.generator.angle_tilt, indexes, axis=0)
+            self.generator.psi_batch = tf.gather(self.generator.angle_psi, indexes, axis=0)
+
+            # Precompute shifts
+            shifts_x = tf.gather(self.generator.shifts[0], indexes, axis=0)
+            shifts_y = tf.gather(self.generator.shifts[1], indexes, axis=0)
+            self.generator.shifts_batch = tf.stack([shifts_x, shifts_y], axis=1)
 
         # Precompute batch CTFs
         defocusU_batch = tf.gather(self.generator.defocusU, indexes, axis=0)
@@ -500,10 +620,11 @@ class AutoEncoder(Model):
                          batch_size_scope, self.generator.applyCTF)
         self.generator.ctf = ctf
 
-    def compile(self, e_optimizer, d_optimizer, jit_compile=False):
+    def compile(self, e_optimizer, d_optimizer, het_optimizer, jit_compile=False):
         super().compile(jit_compile=jit_compile)
         self.e_optimizer = e_optimizer
         self.d_optimizer = d_optimizer
+        self.het_optimizer = het_optimizer
 
     def decode_images_with_loss(self, images, images_corrected):
         B = tf.shape(images)[0]
@@ -514,7 +635,12 @@ class AutoEncoder(Model):
         u_norm_loss = 0.0
         uniform_dist_loss = 0.0
 
+        keep_r = tf.zeros((B, 3, 3), dtype=tf.float32)
+        keep_shifts = tf.zeros((B, 2), dtype=tf.float32)
+
         encoded = self.common_encoder(images_corrected)
+
+        # Consensus volume decoder
         if not self.only_pose:
             delta = self.decoder_delta(o)
         else:
@@ -527,7 +653,13 @@ class AutoEncoder(Model):
             rows, shifts = self.head_encoder[idr](encoded)
 
             # Compute rotation matrix
-            r_no_sym = gramSchmidt(rows)
+            if self.useQuaternions:
+                r_no_sym = quaternion_to_rotation_matrix(rows)
+            else:
+                r_no_sym = gramSchmidt(rows)
+
+            if self.generator.refinement:
+                shifts = shifts + self.generator.shifts_batch
 
             # Symmetry loop
             loss_rec = 0.0
@@ -537,7 +669,12 @@ class AutoEncoder(Model):
 
                 # Apply symmetrix matrix
                 r = tf.matmul(r_no_sym, tf.transpose(R, perm=[0, 2, 1]))
-                # r = tf.matmul(r_no_sym, R)
+
+                if self.generator.refinement:
+                    r_o = euler_matrix_batch(self.generator.rot_batch, self.generator.tilt_batch, self.generator.psi_batch)
+                    r_o = tf.stack(r_o, axis=1)
+                    r_o = tf.matmul(r_o, tf.transpose(R, perm=[0, 2, 1]))
+                    r = tf.matmul(r, r_o)
 
                 # Get rotated coords
                 ro = tf.matmul(o, tf.transpose(r, perm=[0, 2, 1]))
@@ -556,7 +693,7 @@ class AutoEncoder(Model):
 
                 # Image values
                 original_values = tf.tile(self.generator.values[None, :], (B, 1))
-                values = original_values + delta
+                values = tf.cast(original_values, tf.float32) + delta
 
                 # Backprop through coords
                 bpos_round = tf.round(ro)
@@ -587,20 +724,35 @@ class AutoEncoder(Model):
                     filt_decoded = apply_blur_filters_to_batch(imgs, self.filters)
                     for idx in range(self.multires):
                         loss_rec += 0.001 * self.cost(filt_images[..., idx], filt_decoded[..., idx])
-                    # loss_rec = loss_rec / (float(self.multires) + 1)
 
             loss_rec /= self.generator.noSym
+
+            # Preparing indexing for "winner's takes it all"
+            mask = tf.less_equal(loss_rec, prev_loss_rec)  # Shape: (B,)
+            mask_shape_r = tf.concat([tf.shape(mask), tf.ones(2, dtype=tf.int32)], axis=0)
+            mask_shape_shifts = tf.concat([tf.shape(mask), tf.ones(1, dtype=tf.int32)], axis=0)
+            mask_r = tf.reshape(mask, mask_shape_r)
+            mask_shifts = tf.reshape(mask, mask_shape_shifts)
+
+            # Minimum indexing
+            keep_r = tf.where(mask_r, r_no_sym, keep_r)
+            keep_shifts = tf.where(mask_shifts, shifts, keep_shifts)
 
             loss_rec = tf.reduce_min(tf.stack([loss_rec, prev_loss_rec], axis=-1), axis=-1)
 
             # Unit norm constrain
-            n1 = tf.reduce_sum(tf.square(rows[..., :3]), axis=-1)
-            n2 = tf.reduce_sum(tf.square(rows[..., 3:]), axis=-1)
-            x = (0.5 * (tf.reduce_mean(n1) + tf.reduce_mean(n2)))
+            if self.useQuaternions:
+                x = tf.abs(tf.reduce_sum(tf.square(rows), axis=-1) - 1.0)
+            else:
+                n1 = tf.abs(tf.reduce_sum(tf.square(rows[..., :3]), axis=-1) - 1.0)
+                n2 = tf.abs(tf.reduce_sum(tf.square(rows[..., 3:]), axis=-1) - 1.0)
+                x = (0.5 * (tf.reduce_mean(n1) + tf.reduce_mean(n2)))
             u_norm_loss += x
 
             # Uniform distribution loss
-            x = uniform_distribution_loss(r[..., -1])
+            z_vec = tf.tile(tf.constant([0, 0, 1], tf.float32)[None, None, :], (B, 1, 1))
+            r_z_vec = tf.squeeze(tf.matmul(z_vec, tf.transpose(r_no_sym, perm=[0, 2, 1])))
+            x = uniform_distribution_loss(r_z_vec)
             uniform_dist_loss += x
 
             # Keep best loss
@@ -611,10 +763,10 @@ class AutoEncoder(Model):
 
         # L1 penalization delta_het
         values = delta + self.generator.values[None, :]
-        l1_loss_het = tf.reduce_mean(tf.reduce_sum(tf.abs(values), axis=1))
-        l1_loss_het = self.l1_lambda * l1_loss_het / self.generator.total_voxels
-        l1_dist_loss_het = l1_distance_norm(values, tf.constant(self.generator.coords, tf.float32))
-        l1_loss_het += self.l1_lambda * l1_dist_loss_het
+        l1_loss = tf.reduce_mean(tf.reduce_sum(tf.abs(values), axis=1))
+        l1_loss = self.l1_lambda * l1_loss / self.generator.total_voxels
+        l1_dist_loss = l1_distance_norm(values, tf.constant(self.generator.coords, tf.float32))
+        l1_loss += self.l1_lambda * l1_dist_loss
 
         # Total variation and MSE losses
         tv_loss, d_mse_loss = densitySmoothnessVolume(self.generator.xsize,
@@ -627,17 +779,117 @@ class AutoEncoder(Model):
             mask = tf.less(values, 0.0)
             delta_neg = tf.boolean_mask(values, mask)
             delta_neg = tf.reduce_mean(tf.abs(tf.cast(delta_neg, tf.float32)), keepdims=True)
-            neg_loss_het = tf.cast(self.only_pos, tf.float32) * self.l1_lambda * delta_neg
+            neg_loss = tf.cast(self.only_pos, tf.float32) * self.l1_lambda * delta_neg
+
         else:
-            neg_loss_het = 0.0
+            neg_loss = 0.0
 
         # Reconstruction loss
-        # loss_rec += (0.1 * l1_loss_het + self.ud_lambda * uniform_dist_loss + self.un_lambda * u_norm_loss
-                     # + tv_loss + d_mse_loss + neg_loss_het)
-        loss_rec += (l1_loss_het + self.ud_lambda * uniform_dist_loss + self.un_lambda * u_norm_loss
-                     + tv_loss + d_mse_loss + 0.1 * neg_loss_het)
+        loss_rec += (l1_loss + self.ud_lambda * uniform_dist_loss + self.un_lambda * u_norm_loss
+                     + tv_loss + d_mse_loss + 0.1 * neg_loss)
 
-        return loss_rec
+        return loss_rec, keep_r, keep_shifts, delta
+
+    def decode_images_het_with_loss(self, images, images_corrected, r_no_sym, shifts, delta):
+        B = tf.shape(images)[0]
+
+        # Original coordinates
+        o = tf.constant(self.generator.coords, dtype=tf.float32)[None, ...]
+
+        # Heterogeneous volume decoder
+        het = self.het_encoder(images_corrected)
+        delta_het = self.het_decoder(het)
+
+        # Coordinates with batch dimension
+        o = self.generator.scale_factor * tf.tile(o, (B, 1, 1))
+
+        if self.generator.refinement:
+            shifts = shifts + self.generator.shifts_batch
+
+        if self.generator.refinement:
+            r_o = euler_matrix_batch(self.generator.rot_batch, self.generator.tilt_batch, self.generator.psi_batch)
+            r_o = tf.stack(r_o, axis=1)
+            r_no_sym = tf.matmul(r_no_sym, r_o)
+
+        # if useHet:
+        #     if self.useQuaternions:
+        #         r_het = quaternion_to_rotation_matrix(rows_het)
+        #     else:
+        #         r_het = gramSchmidt(rows_het)
+        #     # r_het = tf.matmul(r_het, tf.transpose(R, perm=[0, 2, 1]))
+        #     r = tf.matmul(r_het, r)
+
+        # Get rotated coords
+        ro = tf.matmul(o, tf.transpose(r_no_sym, perm=[0, 2, 1]))
+
+        # Get XY coords
+        ro = ro[..., :-1]
+
+        # Apply shifts
+        ro = ro - (shifts[:, None, :]) + self.generator.xmipp_origin[0]
+
+        # Permute coords
+        ro = tf.stack([ro[..., 1], ro[..., 0]], axis=-1)
+
+        # Initialize images
+        imgs_with_het = tf.zeros((B, self.generator.xsize, self.generator.xsize), dtype=tf.float32)
+
+        # Image values
+        original_values = tf.tile(self.generator.values[None, :], (B, 1))
+        values_with_het = tf.cast(original_values, tf.float32) + delta_het
+
+        # Backprop through coords
+        bpos_round = tf.round(ro)
+        bpos_flow = tf.cast(bpos_round, tf.int32)
+        num = tf.reduce_sum(((bpos_round - ro) ** 2.), axis=-1)
+        weight = tf.exp(-num / (2. * 1. ** 2.))
+        values_with_het = values_with_het * weight
+
+        # Scatter images
+        fn = lambda inp: tf.tensor_scatter_nd_add(inp[0], inp[1], inp[2])
+        imgs_with_het = tf.map_fn(fn, [imgs_with_het, bpos_flow, values_with_het], fn_output_signature=tf.float32)
+
+        # Reshape images
+        imgs_with_het = tf.reshape(imgs_with_het, [-1, self.xsize, self.xsize, 1])
+
+        # Gaussian filtering
+        imgs_with_het = tfa.image.gaussian_filter2d(imgs_with_het, 3, 1)
+
+        # CTF corruption
+        if self.applyCTF:
+            imgs_with_het = self.generator.ctfFilterImage(imgs_with_het)
+
+        loss_rec_with_het = self.cost(images, imgs_with_het)
+
+        if self.multires is not None:
+            filt_images = apply_blur_filters_to_batch(images_corrected, self.filters)
+            filt_decoded = apply_blur_filters_to_batch(imgs_with_het, self.filters)
+            for idx in range(self.multires):
+                loss_rec_with_het += 0.001 * self.cost(filt_images[..., idx], filt_decoded[..., idx])
+
+        # L1 penalization delta_het
+        values_het = delta + self.generator.values[None, :] + delta_het
+        l1_loss_het = tf.reduce_mean(tf.reduce_sum(tf.abs(values_het), axis=1))
+        l1_loss_het = self.l1_lambda * l1_loss_het / self.generator.total_voxels
+        l1_dist_loss = l1_distance_norm(values_het, tf.constant(self.generator.coords, tf.float32))
+        l1_loss_het += self.l1_lambda * l1_dist_loss
+
+        # Total variation and MSE losses
+        tv_loss_het, d_mse_loss_het = densitySmoothnessVolume(self.generator.xsize,
+                                                              self.generator.indices, values_het)
+        tv_loss_het *= self.tv_lambda
+        d_mse_loss_het *= self.mse_lambda
+
+        # Negative loss
+        mask = tf.less(values_with_het, 0.0)
+        delta_neg_het = tf.boolean_mask(values_with_het, mask)
+        delta_neg_het = tf.reduce_mean(tf.abs(tf.cast(delta_neg_het, tf.float32)), keepdims=True)
+        neg_loss_het = tf.cast(self.only_pos, tf.float32) * self.l1_lambda * delta_neg_het
+
+        # Reconstruction loss
+        loss_rec_with_het += tv_loss_het + d_mse_loss_het + l1_loss_het + 0.1 * neg_loss_het
+
+        return loss_rec_with_het
 
     def train_step(self, data):
         images = data[0]
@@ -653,14 +905,14 @@ class AutoEncoder(Model):
 
         # Encoder tape
         with tf.GradientTape() as tape_e:
-            loss_rec_e = self.decode_images_with_loss(images, images_corrected)
+            loss_rec_e, r_no_sym, shifts, delta = self.decode_images_with_loss(images, images_corrected)
 
-        # Get weights encoder + pose + shifts
+        # Get weights encoder + pose + shifts + het
         encoder_weights = self.common_encoder.trainable_weights
         for model in self.head_encoder:
             encoder_weights += model.trainable_weights
 
-        # Gradients (Alternative)
+        # Gradients
         if self.only_pose:
             grads_e = tape_e.gradient(loss_rec_e, encoder_weights)
         else:
@@ -675,10 +927,25 @@ class AutoEncoder(Model):
         if not self.only_pose:
             self.d_optimizer.apply_gradients(zip(grads_d, self.decoder_delta.trainable_weights))
 
+        if self.useHet:
+            with tf.GradientTape() as tape_het:
+                loss_rec_with_het = self.decode_images_het_with_loss(images, images_corrected, tf.stop_gradient(r_no_sym),  tf.stop_gradient(shifts),  tf.stop_gradient(delta))
+
+        if self.useHet:
+            grads_het_e, grads_het_d = tape_het.gradient(loss_rec_with_het, [self.het_encoder.trainable_weights,
+                                                                             self.het_decoder.trainable_weights])
+
+        # Apply het encoder gradients
+        if self.useHet:
+            self.het_optimizer[0].apply_gradients(zip(grads_het_e, self.het_encoder.trainable_weights))
+            self.het_optimizer[1].apply_gradients(zip(grads_het_d, self.het_decoder.trainable_weights))
+
         self.rec_loss_tracker.update_state(loss_rec_e)
-        return {
-            "rec_loss": self.rec_loss_tracker.result(),
-        }
+        return_dict = {"rec_loss": self.rec_loss_tracker.result(),}
+        if self.useHet:
+            self.het_rec_loss_tracker.update_state(loss_rec_with_het)
+            return_dict["het_rec_loss"] = self.het_rec_loss_tracker.result()
+        return return_dict
 
     def apply_opt_ab_initio(self, grads, weights):
         self.e_optimizer[0].apply_gradients(zip(grads, weights))
@@ -693,29 +960,50 @@ class AutoEncoder(Model):
         self.prepare_batch(data[1])
 
         # Wiener filter
-        if self.CTF == "wiener":
-            images = self.generator.wiener2DFilter(images)
+        if self.applyCTF:
+            images_corrected = self.generator.wiener2DFilter(images)
+        else:
+            images_corrected = images
 
-        loss_rec = self.decode_images_with_loss(images)
+        # Encoder
+        loss_rec_e, r_no_sym, shifts, delta = self.decode_images_with_loss(images, images_corrected)
 
-        self.rec_loss_tracker.update_state(loss_rec)
-        return {
-            "rec_loss": self.rec_loss_tracker.result(),
-        }
+        if self.useHet:
+            loss_rec_with_het = self.decode_images_het_with_loss(images, images_corrected,
+                                                                     tf.stop_gradient(r_no_sym),
+                                                                     tf.stop_gradient(shifts), tf.stop_gradient(delta))
 
-    def eval_volume(self, filter=True):
-        # Original coordinates
+        self.rec_loss_tracker.update_state(loss_rec_e)
+        return_dict = {"rec_loss": self.rec_loss_tracker.result(), }
+        if self.useHet:
+            self.het_rec_loss_tracker.update_state(loss_rec_with_het)
+            return_dict["het_rec_loss"] = self.het_rec_loss_tracker.result()
+        return return_dict
+
+    def eval_volume(self, filter=True, het=None):
         coords = tf.constant(self.generator.coords, dtype=tf.float32)[None, ...]
         o = self.generator.indices[None, ...]
 
         # Delta volume
-        delta = self.decoder_delta(coords)
+        if not self.only_pose and het is None:
+            delta = self.decoder_delta(coords)
+        else:
+            delta = 0.0
+
+        # Heterogeneous delta volume
+        if self.useHet and het is not None:
+            delta_het = self.het_decoder(het)
+            num_vols = het.shape[0]
+            o = tf.tile(o, (num_vols, 1, 1))
+        else:
+            delta_het = 0.0
+            num_vols = 1
 
         # Decode map
-        values = self.generator.values[None, ...] + delta
+        values = self.generator.values[None, ...] + delta + delta_het
 
         # Create volume grid
-        volumes = tf.zeros((1, self.generator.xsize, self.generator.xsize, self.generator.xsize),
+        volumes = tf.zeros((num_vols, self.generator.xsize, self.generator.xsize, self.generator.xsize),
                            dtype=tf.float32)
 
         # Scatter in volumes
@@ -724,7 +1012,8 @@ class AutoEncoder(Model):
 
         # Filter volumes
         if filter:
-            volumes[0] = gaussian_filter(volumes[0], sigma=1)
+            for idx in range(num_vols):
+                volumes[idx] = gaussian_filter(volumes[idx], sigma=1)
 
         return volumes
 
@@ -736,6 +1025,17 @@ class AutoEncoder(Model):
 
         # Update batch_size (in case it is incomplete)
         batch_size_scope = tf.shape(data[0])[0]
+
+        if self.generator.refinement:
+            # Precompute batch alignments
+            rot_batch = tf.gather(self.generator.angle_rot, data[1], axis=0)
+            tilt_batch = tf.gather(self.generator.angle_tilt, data[1], axis=0)
+            psi_batch = tf.gather(self.generator.angle_psi, data[1], axis=0)
+
+            # Precompute shifts
+            shifts_x = tf.gather(self.generator.shifts[0], data[1], axis=0)
+            shifts_y = tf.gather(self.generator.shifts[1], data[1], axis=0)
+            shifts_batch = tf.stack([shifts_x, shifts_y], axis=1)
 
         # Precompute batch CTFs
         defocusU_batch = tf.gather(self.generator.defocusU, data[1], axis=0)
@@ -760,23 +1060,60 @@ class AutoEncoder(Model):
 
         # Common encoder and volume decoder
         encoded = self.common_encoder(images_corrected)
-        delta = self.decoder_delta(o)
+
+        # Consensus volume decoder
+        if not self.only_pose:
+            delta = self.decoder_delta(o)
+        else:
+            delta = 0.0
+
+        # Heterogeneous volume decoder
+        if self.useHet:
+            # het, rows_het, shifts_het = self.het_encoder(images_corrected)
+            het = self.het_encoder(images_corrected)
+            delta_het = self.het_decoder(het)
+        else:
+            het = 0.0
+            delta_het = 0.0
 
         # Coordinates with batch dimension
         o = self.generator.scale_factor * tf.tile(o, (batch_size_scope, 1, 1))
 
         # Prepare outputs
         prev_loss_rec = 10000. * tf.ones(batch_size_scope, dtype=tf.float32)
+        prev_loss_rec_cons = 10000. * tf.ones(batch_size_scope, dtype=tf.float32)
         keep_r = tf.zeros((batch_size_scope, 3, 3), dtype=tf.float32)
         keep_shifts = tf.zeros((batch_size_scope, 2), dtype=tf.float32)
         keep_imgs = tf.zeros((batch_size_scope, self.generator.xsize, self.generator.xsize), dtype=tf.float32)
+        keep_imgs_cons = tf.zeros((batch_size_scope, self.generator.xsize, self.generator.xsize), dtype=tf.float32)
 
         # Multi-head encoders
         for idr in range(self.n_candidates):
             rows, shifts = self.head_encoder[idr](encoded)
 
+            if self.generator.refinement:
+                shifts = shifts + shifts_batch
+
+            # if self.useHet:
+            #     shifts = shifts + shifts_het
+
             # Get rotation matrices
-            r = gramSchmidt(rows)
+            if self.useQuaternions:
+                r = quaternion_to_rotation_matrix(rows)
+            else:
+                r = gramSchmidt(rows)
+
+            if self.generator.refinement:
+                r_o = euler_matrix_batch(rot_batch, tilt_batch, psi_batch)
+                r_o = tf.stack(r_o, axis=1)
+                r = tf.matmul(r, r_o)
+
+            # if self.useHet:
+            #     if self.useQuaternions:
+            #         r_het = quaternion_to_rotation_matrix(rows_het)
+            #     else:
+            #         r_het = gramSchmidt(rows_het)
+            #     r = tf.matmul(r_het, r)
 
             # Get rotated coords
             ro = tf.matmul(o, tf.transpose(r, perm=[0, 2, 1]))
@@ -791,52 +1128,65 @@ class AutoEncoder(Model):
             ro = tf.stack([ro[..., 1], ro[..., 0]], axis=-1)
 
             # Initialize images
+            imgs_cons = tf.zeros((batch_size_scope, self.generator.xsize, self.generator.xsize), dtype=tf.float32)
             imgs = tf.zeros((batch_size_scope, self.generator.xsize, self.generator.xsize), dtype=tf.float32)
 
             # Image values
             original_values = tf.tile(self.generator.values[None, :], (batch_size_scope, 1))
-            values = original_values + delta
+            values_cons = original_values + delta
+            values = original_values + delta_het
 
             # Backprop through coords
             bpos_round = tf.round(ro)
             bpos_flow = tf.cast(bpos_round, tf.int32)
             num = tf.reduce_sum(((bpos_round - ro) ** 2.), axis=-1)
             weight = tf.exp(-num / (2. * 1. ** 2.))
+            values_cons = values_cons * weight
             values = values * weight
 
             # Scatter images
             fn = lambda inp: tf.tensor_scatter_nd_add(inp[0], inp[1], inp[2])
+            imgs_cons = tf.map_fn(fn, [imgs_cons, bpos_flow, values_cons], fn_output_signature=tf.float32)
             imgs = tf.map_fn(fn, [imgs, bpos_flow, values], fn_output_signature=tf.float32)
 
             # Reshape images
+            imgs_cons = tf.reshape(imgs_cons, [-1, self.xsize, self.xsize, 1])
             imgs = tf.reshape(imgs, [-1, self.xsize, self.xsize, 1])
 
             # Gaussian filtering
+            imgs_cons = tfa.image.gaussian_filter2d(imgs_cons, 3, 1)
             imgs = tfa.image.gaussian_filter2d(imgs, 3, 1)
 
             # CTF corruption
             if self.applyCTF:
+                imgs_cons = self.generator.ctfFilterImage(imgs_cons)
                 imgs = self.generator.ctfFilterImage(imgs)
 
             # Image loss
+            loss_rec_cons = self.cost(images, imgs_cons)
             loss_rec = self.cost(images, imgs)
 
             # Preparing indexing for "winner's takes it all"
-            mask = tf.less_equal(loss_rec, prev_loss_rec)  # Shape: (B,)
+            # mask = tf.less_equal(loss_rec, prev_loss_rec)  # Shape: (B,)
+            mask = tf.less_equal(loss_rec_cons, prev_loss_rec_cons)  # Shape: (B,)
             mask_shape_r = tf.concat([tf.shape(mask), tf.ones(2, dtype=tf.int32)], axis=0)
             mask_shape_shifts = tf.concat([tf.shape(mask), tf.ones(1, dtype=tf.int32)], axis=0)
+            mask_shape_imgs_cons = tf.concat([tf.shape(mask), tf.ones(2, dtype=tf.int32)], axis=0)
             mask_shape_imgs = tf.concat([tf.shape(mask), tf.ones(2, dtype=tf.int32)], axis=0)
             mask_r = tf.reshape(mask, mask_shape_r)
             mask_shifts = tf.reshape(mask, mask_shape_shifts)
+            mask_imgs_cons = tf.reshape(mask, mask_shape_imgs_cons)
             mask_imgs = tf.reshape(mask, mask_shape_imgs)
 
             # Minimum indexing
             prev_loss_rec = tf.where(mask, loss_rec, prev_loss_rec)
+            prev_loss_rec_cons = tf.where(mask, loss_rec_cons, prev_loss_rec_cons)
             keep_r = tf.where(mask_r, r, keep_r)
             keep_shifts = tf.where(mask_shifts, shifts, keep_shifts)
+            keep_imgs_cons = tf.where(mask_imgs_cons, imgs_cons[..., 0], keep_imgs_cons)
             keep_imgs = tf.where(mask_imgs, imgs[..., 0], keep_imgs)
 
-        return keep_r, keep_shifts, keep_imgs
+        return keep_r, keep_shifts, keep_imgs, het, prev_loss_rec, prev_loss_rec_cons
 
     def call(self, input_features):
         # Original coordinates
