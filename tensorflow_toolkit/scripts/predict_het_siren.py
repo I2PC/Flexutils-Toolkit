@@ -54,7 +54,7 @@ from xmipp_metadata.metadata import XmippMetaData
 
 def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=1.0,
             applyCTF=1, filter=False, only_pos=False, hetDim=10, numVol=20, trainSize=None, outSize=None,
-            poseReg=0.0, ctfReg=0.0):
+            poseReg=0.0, ctfReg=0.0, use_hyper_network=True):
     # Create data generator
     generator = Generator(md_file=md_file, shuffle=False, batch_size=16,
                           step=1, splitTrain=1.0, pad_factor=pad, sr=sr,
@@ -66,7 +66,8 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
 
     # Load model
     autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, refPose=refinePose,
-                              het_dim=hetDim, train_size=trainSize, only_pos=True, poseReg=poseReg, ctfReg=ctfReg)
+                              het_dim=hetDim, train_size=trainSize, only_pos=True, poseReg=poseReg, ctfReg=ctfReg,
+                              use_hyper_network=use_hyper_network)
     _ = autoencoder(next(iter(generator.return_tf_dataset()))[0])
     autoencoder.load_weights(weigths_file)
 
@@ -142,6 +143,7 @@ def main():
     parser.add_argument('--num_vol', type=int, required=True)
     parser.add_argument('--trainSize', type=int, required=True)
     parser.add_argument('--outSize', type=int, required=True)
+    parser.add_argument('--use_hyper_network', action='store_true')
     parser.add_argument('--gpu', type=str)
 
     args = parser.parse_args()
@@ -157,7 +159,8 @@ def main():
               "ctfType": args.ctf_type, "pad": args.pad, "sr": args.sr,
               "applyCTF": args.apply_ctf, "filter": args.apply_filter,
               "only_pos": args.only_pos, "hetDim": args.het_dim, "numVol": args.num_vol,
-              "trainSize": args.trainSize, "outSize": args.outSize, "poseReg": args.pose_reg, "ctfReg": args.ctf_reg}
+              "trainSize": args.trainSize, "outSize": args.outSize, "poseReg": args.pose_reg, "ctfReg": args.ctf_reg,
+              "use_hyper_network": args.use_hyper_network}
 
     # Initialize volume slicer
     predict(**inputs)
