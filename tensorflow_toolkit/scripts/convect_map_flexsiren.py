@@ -38,8 +38,7 @@ if version("tensorflow") >= "2.16.0":
 import tensorflow as tf
 
 from tensorflow_toolkit.generators.generator_flexsiren import Generator
-from tensorflow_toolkit.networks.flexsiren_basis import AutoEncoder
-
+from tensorflow_toolkit.networks.flexsiren import AutoEncoder
 
 def predict(weigths_file, het_file, out_path, architecture="mlpnn",
             poseReg=0.0, ctfReg=0.0, refinePose=True, **kwargs):
