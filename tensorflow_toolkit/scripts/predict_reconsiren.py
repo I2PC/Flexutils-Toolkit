@@ -29,12 +29,12 @@
 import os
 import numpy as np
 from pathlib import Path
-from importlib.metadata import version
+
+from sklearn.cluster import KMeans
 from xmipp_metadata.image_handler import ImageHandler
 from xmipp_metadata.metadata import XmippMetaData
 
-if version("tensorflow") >= "2.16.0":
-    os.environ["TF_USE_LEGACY_KERAS"] = "1"
+os.environ["TF_USE_LEGACY_KERAS"] = "0"
 import tensorflow as tf
 
 from tensorflow_toolkit.generators.generator_reconsiren import Generator
@@ -43,26 +43,29 @@ from tensorflow_toolkit.utils import xmippEulerFromMatrix
 
 
 def predict(md_file, weigths_file, architecture, ctfType, pad=2, sr=1.0, n_candidates=6,
-            applyCTF=1, filter=False, only_pose=False, only_pos=False):
+            applyCTF=1, filter=True, only_pose=False, only_pos=False, useHet=False):
     # Create data generator
     generator = Generator(md_file=md_file, shuffle=False, batch_size=32,
                           step=1, splitTrain=1.0, cost="mse", pad_factor=pad, sr=sr,
-                          applyCTF=applyCTF)
+                          applyCTF=0)
 
     # Load model
-    autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType,
+    autoencoder = AutoEncoder(generator, architecture=architecture, CTF=None,
                               l1_lambda=0.0, tv_lambda=0.0, mse_lambda=0.0, un_lambda=0.0001,
                               ud_lambda=0.000001, only_pose=only_pose, n_candidates=n_candidates,
-                              only_pos=only_pos)
+                              only_pos=only_pos, useHet=useHet)
     _ = autoencoder(next(iter(generator.return_tf_dataset()))[0])
     autoencoder.load_weights(weigths_file)
 
     # Metadata
     metadata = XmippMetaData(md_file)
 
+    # Dataset
+    predict_dataset = generator.return_tf_dataset()
+
     # Get poses
     print("------------------ Predicting angles and shifts... ------------------")
-    r, shifts, imgs = autoencoder.predict(generator.return_tf_dataset())
+    r, shifts, imgs, het, loss, loss_cons = autoencoder.predict(predict_dataset)
 
     # Rotation matrix to euler angles
     euler_angles = np.zeros((r.shape[0], 3))
@@ -73,7 +76,14 @@ def predict(md_file, weigths_file, architecture, ctfType, pad=2, sr=1.0, n_candi
 
     # Get map
     print("------------------ Decoding volume... ------------------")
-    decoded_map = autoencoder.eval_volume(filter=filter)
+    decoded_map = autoencoder.eval_volume(filter=True)
+
+    if useHet:
+        kmeans = KMeans(n_clusters=20).fit(het)
+        centers = kmeans.cluster_centers_
+        labels = kmeans.predict(het)
+        unique_labels = np.unique(labels)
+        het_maps = autoencoder.eval_volume(filter=True, het=centers)
 
     # Save space to metadata file
     metadata[:, 'angleRot'] = euler_angles[:, 0]
@@ -81,11 +91,22 @@ def predict(md_file, weigths_file, architecture, ctfType, pad=2, sr=1.0, n_candi
     metadata[:, 'anglePsi'] = euler_angles[:, 2]
     metadata[:, 'shiftX'] = shifts[:, 0]
     metadata[:, 'shiftY'] = shifts[:, 1]
-    metadata.write(md_file, overwrite=True)
+    metadata[:, "reproj_cons_error"] = loss_cons
 
     # Save map
     decoded_path = Path(Path(md_file).parent, 'decoded_map.mrc')
     ImageHandler().write(decoded_map, decoded_path, overwrite=True)
+
+    if useHet:
+        idx = 0
+        for het_map in het_maps:
+            decoded_path = os.path.join(Path(md_file).parent, f'decoded_map_{unique_labels[idx]:02}.mrc')
+            ImageHandler().write(het_map, decoded_path, overwrite=True)
+            idx += 1
+        metadata[:, "cluster_labels"] = labels
+        metadata[:, "reproj_het_error"] = loss
+
+    metadata.write(md_file, overwrite=True)
 
 
 def main():
@@ -101,6 +122,7 @@ def main():
     parser.add_argument('--apply_filter', action='store_true')
     parser.add_argument('--only_pose', action='store_true')
     parser.add_argument('--only_pos', action='store_true')
+    parser.add_argument('--heterogeneous', action='store_true')
     parser.add_argument('--n_candidates', type=int, required=True)
     parser.add_argument('--gpu', type=str)
 
@@ -115,7 +137,8 @@ def main():
     inputs = {"md_file": args.md_file, "weigths_file": args.weigths_file,
               "architecture": args.architecture, "ctfType": None, "pad": args.pad, "sr": args.sr,
               "applyCTF": 0, "filter": args.apply_filter,
-              "only_pose": args.only_pose, "only_pos": args.only_pos, "n_candidates": args.n_candidates}
+              "only_pose": args.only_pose, "only_pos": args.only_pos, "n_candidates": args.n_candidates,
+              "useHet": args.heterogeneous}
 
     # Initialize volume slicer
     predict(**inputs)
