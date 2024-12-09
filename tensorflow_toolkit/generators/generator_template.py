@@ -29,6 +29,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 import mrcfile
 import os
+import random
 from pathlib import Path
 from xmipp_metadata.metadata import XmippMetaData
 
@@ -39,7 +40,7 @@ import tensorflow_addons as tfa
 from tensorflow_toolkit.utils import getXmippOrigin, fft_pad, ifft_pad, full_fft_pad, full_ifft_pad
 
 
-class DataGeneratorBase(tf.keras.utils.Sequence):
+class DataGeneratorBase:
     def __init__(self, md_file, batch_size=32, shuffle=True, step=1, splitTrain=None,
                  radius_mask=2, smooth_mask=True, cost="corr", keepMap=False, pad_factor=2,
                  sr=1., applyCTF=1, xsize=128, mode=None):
@@ -234,17 +235,83 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
 
 
     # ----- Data generation methods -----#
-    def return_tf_dataset(self):
-        metadata = XmippMetaData(file_name=str(self.filename))
-        images = metadata.getMetaDataImage(self.file_idx)[..., None]
-        if self.mode == "tomo":
-            subtomo_labels = self.sinusoid_table[metadata[self.file_idx, "subtomo_labels"].astype(int) - 1]
-            dataset = tf.data.Dataset.from_tensor_slices(((images, subtomo_labels), (self.file_idx, self.file_idx)))
-        else:
-            dataset = tf.data.Dataset.from_tensor_slices((images, self.file_idx))
-        if self.shuffle:
-            dataset = dataset.shuffle(len(self.file_idx))
-        return dataset.batch(self.batch_size).prefetch(2)
+    def rand_degree(self):
+        return random.uniform(0.0, np.pi)
+
+    def normalize_image(self, image):
+        """
+        Normalizes the input image to the range [-1, 1].
+
+        Args:
+            image (np.ndarray): Input image array.
+
+        Returns:
+            normalized_image (np.ndarray): Image normalized to the range [-1, 1].
+        """
+        # Get the positive and negative masks
+        pos_mask = image > 0
+        neg_mask = image < 0
+
+        # Get the maximum of positive values and minimum of negative values
+        max_pos = tf.reduce_max(tf.boolean_mask(image, pos_mask))
+        min_neg = tf.reduce_min(tf.boolean_mask(image, neg_mask))
+
+        # Normalize positive values by their maximum and negative values by their minimum
+        pos_normalized = tf.where(pos_mask, image / max_pos, image)
+        neg_normalized = tf.where(neg_mask, image / min_neg, image)
+
+        # Combine the positive and negative normalized values
+        normalized_image = tf.where(pos_mask, pos_normalized, neg_normalized)
+
+        return normalized_image
+
+    def data_augmentation(self, image):
+        """
+        Applies a series of augmentations to the input cryo-EM image.
+        Args:
+            image: A TensorFlow image tensor.
+        Returns:
+            Augmented image tensor.
+        """
+        # Random rotation within a small range
+        # image = tf.image.rot90(image, k=tf.random.uniform(shape=[], minval=0, maxval=4, dtype=tf.int32))
+        image = tfa.image.rotate(image, self.rand_degree())
+        # image = tf.image.random_flip_left_right(image)
+        # image = tf.image.random_flip_up_down(image)
+
+        # Apply random brightness and contrast adjustments
+        # image = tf.image.random_brightness(image, max_delta=0.1)
+        # image = tf.image.random_contrast(image, lower=0.8, upper=1.2)
+
+        # Add Gaussian noise
+        # noise = tf.random.normal(shape=tf.shape(image), mean=0.0, stddev=0.05)
+        # image = image + noise
+
+        # Image normalization
+        # image = tf.image.per_image_standardization(image[None, ...])[0]
+        # image = self.normalize_image(image)
+
+        # Remove negative values
+        # image = tf.clip_by_value(image, 0.0, tf.reduce_max(image))
+
+        return image  # Ensure pixel values are valid
+
+    def return_tf_dataset(self, preShuffle=False):
+        with tf.device("/CPU:0"):
+            metadata = XmippMetaData(file_name=str(self.filename))
+            file_idx = self.file_idx
+            if preShuffle:
+                np.random.shuffle(file_idx)
+            images = metadata.getMetaDataImage(file_idx)[..., None]
+            if self.mode == "tomo":
+                subtomo_labels = self.sinusoid_table[metadata[file_idx, "subtomo_labels"].astype(int) - 1]
+                dataset = tf.data.Dataset.from_tensor_slices(((images, subtomo_labels), (file_idx, file_idx)))
+            else:
+                dataset = tf.data.Dataset.from_tensor_slices((images, file_idx))
+            if self.shuffle:
+                dataset = dataset.shuffle(len(file_idx))
+            # dataset = dataset.map(lambda image, label: (self.data_augmentation(image), label))
+            return dataset.batch(self.batch_size).prefetch(2)
 
     # ----- -------- -----#
 
@@ -469,6 +536,11 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
 
     def mse(self, y_true, y_pred):
         cost = tf.keras.metrics.mse(y_true, y_pred)
+        axis = tf.range(1, tf.rank(cost))
+        return tf.reduce_mean(cost, axis=axis)
+
+    def mne(self, y_true, y_pred, n=2.):
+        cost = tf.pow(y_true - y_pred, n)
         axis = tf.range(1, tf.rank(cost))
         return tf.reduce_mean(cost, axis=axis)
 
