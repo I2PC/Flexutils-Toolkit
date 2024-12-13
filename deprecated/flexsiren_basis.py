@@ -103,6 +103,14 @@ def compute_determinant_3x3(matrices):
     return a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
 
 
+def generate_split_sizes(M, num_splits):
+    base_size = M // num_splits  # Base size for each split
+    remainder = M % num_splits   # Extra elements to distribute
+    # Generate split sizes
+    split_sizes = [base_size + 1 if i < remainder else base_size for i in range(num_splits)]
+    return split_sizes
+
+
 class Encoder(tf.keras.Model):
     def __init__(self, latent_dim, input_dim, architecture="convnn", mode="spa", refPose=True, jit_compile=True):
         super(Encoder, self).__init__()
@@ -186,7 +194,7 @@ class Encoder(tf.keras.Model):
                 latent = layers.Dense(1024, activation="relu")(latent)
 
         if mode == "spa":
-            self.encoder = tf.keras.Model(encoder_inputs, [latent, shifts, rows], name="encoder")
+            self.encoder = tf.keras.Model(encoder_inputs, [latent, rows, shifts], name="encoder")
         elif mode == "tomo":
             self.encoder = tf.keras.Model([encoder_inputs, subtomo_pe], [x, latent], name="encoder")
 
@@ -196,9 +204,9 @@ class Encoder(tf.keras.Model):
 
 
 class BasisDecoder(tf.keras.Model):
-    def __init__(self, generator, latDim=64, jit_compile=True, precision=tf.float32, compute_delta=True):
+    def __init__(self, generator, latDim=64, jit_compile=True, precision=tf.float32, compute_delta=True, num_neurons=32):
         super(BasisDecoder, self).__init__()
-        self.generator = generator
+        # self.generator = generator
         self.compute_delta = compute_delta
         self.latDim = latDim
         first_siren = Sine(30.0)  # TODO: Try 30 again
@@ -215,22 +223,22 @@ class BasisDecoder(tf.keras.Model):
         coords_het = tf.keras.Input(shape=(generator.scaled_coords.shape[-1], ))
         # coords_het = tf.keras.Input(shape=(None, latDim + generator.scaled_coords.shape[-1],))
 
-        layers_comb = layers.Dense(32, activation=first_siren,
-                                   kernel_initializer=SIRENFirstLayerInitializer(scale=1.0))(coords_het)  # 64 or 256 units
+        layers_comb = layers.Dense(num_neurons, activation=first_siren,
+                                   kernel_initializer=SIRENFirstLayerInitializer(scale=1.0))(coords_het)  # 256 to 1024 units
         # layers_comb = layers.Dense(32, activation="relu")(coords_het)  # 64 or 256 units
         # layers_comb = MetaDenseWrapper(latDim + generator.scaled_coords.shape[-1], 8, 8, w0=30.0,
         #                                meta_kernel_initializer=SIRENFirstLayerInitializer(scale=6.0),
         #                                num_hyper_layers=0)(coords_het)
         for _ in range(3):  # 12 seems OK
-            aux_comb = layers.Dense(32, activation=siren,
-                                    kernel_initializer=SIRENInitializer(c=1.0))(layers_comb)  # 64 or 256 units
+            aux_comb = layers.Dense(num_neurons, activation=siren,
+                                    kernel_initializer=SIRENInitializer(c=1.0))(layers_comb)  # 256 to 1024 units
             # aux_comb = layers.Dense(32, activation="relu")(layers_comb)  # 64 or 256 units
             # aux_comb = MetaDenseWrapper(8, 8, 8, w0=1.0,
             #                             meta_kernel_initializer=SIRENInitializer(),
             #                             num_hyper_layers=0)(layers_comb)
             layers_comb = layers.Add()([layers_comb, aux_comb])
 
-        layers_comb_field = layers.Dense(latDim, kernel_initializer=self.generator.weight_initializer)(layers_comb)
+        layers_comb_field = layers.Dense(latDim, kernel_initializer=RandomUniform(minval=-0.001, maxval=0.001))(layers_comb)
         # layers_comb_field = layers.Dense(latDim)(layers_comb)
         layers_comb_field = layers.Activation('linear', dtype=precision)(layers_comb_field)
 
@@ -239,6 +247,35 @@ class BasisDecoder(tf.keras.Model):
     def call(self, inputs):
         basis = self.field_decoder(inputs)
         return basis
+
+
+class DeltaDecoder(tf.keras.Model):
+    def __init__(self, generator, latDim=64, jit_compile=True, precision=tf.float32, compute_delta=True, num_neurons=8):
+        super(DeltaDecoder, self).__init__()
+        # self.generator = generator
+        self.compute_delta = compute_delta
+        self.latDim = latDim
+
+        # XLA compilation of methods
+        if jit_compile:
+            self.call = tf.function(jit_compile=jit_compile)(self.call)
+
+        latent = tf.keras.Input(shape=(latDim, ))
+
+        delta_het = layers.Dense(num_neurons, activation=Sine(30.0),
+                                 kernel_initializer=SIRENFirstLayerInitializer(scale=1.0))(latent)
+        for _ in range(3):
+            aux = layers.Dense(num_neurons, activation=Sine(1.0),
+                               kernel_initializer=SIRENInitializer())(latent)
+            delta_het = layers.Add()([delta_het, aux])
+        delta_het = layers.Dense(generator.total_voxels, kernel_initializer=RandomUniform(-0.001, 0.001))(delta_het)
+        delta_het = layers.Activation('linear', dtype=precision)(delta_het)
+
+        self.delta_decoder = tf.keras.Model(latent, delta_het, name="delta_decoder")
+
+    def call(self, inputs):
+        delta = self.delta_decoder(inputs)
+        return delta
 
 
 class PhysDecoder:
@@ -407,8 +444,8 @@ class PhysDecoder:
 
 class AutoEncoder(tf.keras.Model):
     def __init__(self, generator, architecture="convnn", CTF="apply", mode=None, l_bond=0.01, l_angle=0.01,
-                 l_clashes=None, jit_compile=True, latDim=8, precision=tf.float32,
-                 compute_delta=True, l_dfm=1.0, poseReg=0.0, ctfReg=0.0, **kwargs):
+                 l_clashes=None, jit_compile=True, latDim=8, precision=tf.float32, precision_scaled=tf.float32,
+                 compute_delta=True, l_dfm=0.0, poseReg=0.0, ctfReg=0.0, **kwargs):
         super(AutoEncoder, self).__init__(**kwargs)
         generator.mode = "spa"
         self.generator = generator
@@ -425,7 +462,9 @@ class AutoEncoder(tf.keras.Model):
         self.latDim = latDim
         # self.architecture = architecture
         self.precision = precision
+        self.precision_scaled = precision_scaled
         self.compute_delta = compute_delta
+        self.split_sizes = generate_split_sizes(self.generator.coords.shape[0], 10)
         self.encoder_exp = Encoder(latDim, generator.xsize, architecture=architecture, mode=self.mode,
                                    jit_compile=jit_compile, refPose=generator.refinePose)
         if poseReg > 0.0:
@@ -435,16 +474,16 @@ class AutoEncoder(tf.keras.Model):
             self.encoder_ctf = Encoder(latDim, generator.xsize, architecture=architecture, mode=self.mode,
                                        jit_compile=jit_compile, refPose=generator.refinePose)
         self.basis_decoder = BasisDecoder(generator, latDim=latDim, jit_compile=jit_compile, precision=precision,
-                                          compute_delta=compute_delta)
+                                          compute_delta=compute_delta, num_neurons=32)
         if compute_delta:
-            self.basis_volume_decoder = BasisDecoder(generator, latDim=latDim, jit_compile=jit_compile,
-                                                     precision=precision, compute_delta=compute_delta)
-            # self.basis_volume_decoder = BasisDecoder(generator, latDim=3 * latDim, jit_compile=jit_compile, precision=precision,
-            #                                          compute_delta=compute_delta)
+            # self.delta_volume_deocoder = DeltaDecoder(generator, latDim=latDim, jit_compile=jit_compile,
+            #                                          precision=precision, compute_delta=compute_delta, num_neurons=8)
+            self.basis_volume_decoder = BasisDecoder(generator, latDim=3 * latDim, jit_compile=jit_compile, precision=precision,
+                                                     compute_delta=compute_delta)
         if l_dfm > 0.0:
             self.inverse_basis_decoder = BasisDecoder(generator, latDim=latDim, jit_compile=jit_compile,
-                                                            precision=precision,
-                                                            compute_delta=compute_delta)
+                                                      precision=precision,
+                                                      compute_delta=compute_delta, num_neurons=32)
         self.phys_decoder = PhysDecoder(generator, CTF=self.CTF, jit_compile=jit_compile, precision=precision)
         self.z_space_x = layers.Dense(latDim, name="z_space_x", kernel_initializer=RandomUniform(-0.001, 0.001))
         self.z_space_y = layers.Dense(latDim, name="z_space_y", kernel_initializer=RandomUniform(-0.001, 0.001))
@@ -547,6 +586,7 @@ class AutoEncoder(tf.keras.Model):
                 inputs[0] = images
 
         coords = self.generator.scaled_coords  # TESTING: Autograd for field derivatives
+        # coords_splitted = tf.split(coords, self.split_sizes)
 
         with tf.GradientTape(persistent=True) as tape:
             # tape.watch(coords)  # TESTING: Autograd for field derivatives
@@ -560,6 +600,8 @@ class AutoEncoder(tf.keras.Model):
                 het_z = self.activation(self.z_space_z(x))
                 het = tf.stack([het_x, het_y, het_z], axis=-1)
 
+                # basis = [self.basis_decoder(partial_coords) for partial_coords in coords_splitted]
+                # basis = tf.concat(basis, axis=0)
                 basis = self.basis_decoder(coords)
                 basis = tf.tile(basis[None, ...], (B, 1, 1))
                 field = tf.matmul(basis, het)
@@ -567,8 +609,8 @@ class AutoEncoder(tf.keras.Model):
                 if self.compute_delta:
                     volume_basis = self.basis_volume_decoder(coords)
                     volume_basis = tf.tile(volume_basis[None, ...], (B, 1, 1))
-                    delta_volume = tf.squeeze(tf.matmul(volume_basis, tf.reduce_mean(het, axis=-1, keepdims=True)))
-                    # delta_volume = tf.squeeze(tf.matmul(volume_basis, tf.reshape(het, (B, 3 * self.latDim, 1))))
+                    # delta_volume = tf.squeeze(tf.matmul(volume_basis, tf.reduce_mean(het, axis=-1, keepdims=True)))
+                    delta_volume = tf.squeeze(tf.matmul(volume_basis, tf.reshape(het, (B, 3 * self.latDim, 1))))
                 else:
                     delta_volume = 0.0
 
@@ -588,7 +630,7 @@ class AutoEncoder(tf.keras.Model):
 
             # Field losses
 
-            loss = tf.cast(self.compute_field_loss(het, precision=tf.float32), self.precision)
+            loss = tf.cast(self.compute_field_loss(het, precision=self.precision_scaled), self.precision)
 
             ##########################
 
@@ -609,7 +651,7 @@ class AutoEncoder(tf.keras.Model):
                 inv_basis_rnd = tf.reshape(inv_basis_rnd, (B, 1000, self.latDim))
                 inv_field_rnd = tf.matmul(inv_basis_rnd, het)
 
-                loss_dfm = tf.cast(tf.reduce_mean(tf.abs(tf.cast(field_rnd, tf.float32) + tf.cast(inv_field_rnd, tf.float32))), self.precision)
+                loss_dfm = tf.cast(tf.reduce_mean(tf.abs(tf.cast(field_rnd, self.precision_scaled) + tf.cast(inv_field_rnd, self.precision_scaled))), self.precision)
             else:
                 loss_dfm = 0.0
 
@@ -663,48 +705,57 @@ class AutoEncoder(tf.keras.Model):
                                     user_neighbors_index=result.neighbors_index,
                                     user_neighbors_importance=self.fn(result.neighbors_distance,
                                                                       result.neighbors_row_splits))
-                clashes = tf.cast(tf.reduce_max(tf.reshape(tf.cast(clashes, tf.float32), (B, -1)), axis=-1), self.precision)
+                clashes = tf.cast(tf.reduce_max(tf.reshape(tf.cast(clashes, self.precision_scaled), (B, -1)), axis=-1), self.precision)
             else:
                 clashes = tf.constant(0.0, self.precision)
 
-            img_loss = tf.cast(self.cost_function(tf.cast(images, tf.float32),
-                                                  tf.cast(decoded_ctf, tf.float32)), self.precision)
+            img_loss = tf.cast(tf.reduce_mean(self.cost_function(tf.cast(images, self.precision_scaled),
+                                                                 tf.cast(decoded_ctf, self.precision_scaled))), self.precision)
 
             # Bond and angle losses
             if self.generator.ref_is_struct:
-                bond_loss = tf.cast(tf.sqrt(tf.reduce_max(tf.keras.losses.MSE(tf.cast(self.generator.bond0, tf.float32),
-                                                                              tf.cast(bondk, tf.float32)))), self.precision)
-                angle_loss = tf.cast(tf.sqrt(tf.reduce_max(tf.keras.losses.MSE(tf.cast(self.generator.angle0, tf.float32),
-                                                                               tf.cast(anglek, tf.float32)))), self.precision)
+                bond_loss = tf.cast(tf.sqrt(tf.reduce_max(tf.keras.losses.MSE(tf.cast(self.generator.bond0, self.precision_scaled),
+                                                                              tf.cast(bondk, self.precision_scaled)))), self.precision)
+                angle_loss = tf.cast(tf.sqrt(tf.reduce_max(tf.keras.losses.MSE(tf.cast(self.generator.angle0, self.precision_scaled),
+                                                                               tf.cast(anglek, self.precision_scaled)))), self.precision)
             else:
                 bond_loss, angle_loss = tf.constant(0.0, self.precision), tf.constant(0.0, self.precision)
 
             # Loss disantagled (pose)
             if self.disantangle_pose and self.mode == "spa":
-                loss_disantagled_pose = tf.cast(tf.keras.losses.MSE(tf.cast(het, tf.float32), tf.cast(het_clean, tf.float32))
-                                                + tf.keras.losses.MSE(tf.cast(het, tf.float32), tf.cast(het_clean_perm, tf.float32)), self.precision)
+                loss_disantagled_pose = tf.cast(tf.keras.losses.MSE(tf.cast(het, self.precision_scaled), tf.cast(het_clean, self.precision_scaled))
+                                                + tf.keras.losses.MSE(tf.cast(het, self.precision_scaled), tf.cast(het_clean_perm, self.precision_scaled)), self.precision)
             else:
                 loss_disantagled_pose = 0.0
 
             # Loss disantagled (CTF)
             if self.disantangle_ctf and self.mode == "spa" and self.CTF is not None:
                 loss_disantagled_ctf = tf.cast(
-                    tf.keras.losses.MSE(tf.cast(het, tf.float32), tf.cast(het_ctf, tf.float32))
-                    + tf.keras.losses.MSE(tf.cast(het, tf.float32), tf.cast(het_ctf_perm, tf.float32)),
+                    tf.keras.losses.MSE(tf.cast(het, self.precision_scaled), tf.cast(het_ctf, self.precision_scaled))
+                    + tf.keras.losses.MSE(tf.cast(het, self.precision_scaled), tf.cast(het_ctf_perm, self.precision_scaled)),
                     self.precision)
             else:
                 loss_disantagled_ctf = 0.0
 
             total_loss = (img_loss + self.l_bond * bond_loss
+                          # + 0.00001 * loss + self.l_dfm * loss_dfm
                           + self.l_angle * angle_loss + self.l_clashes * clashes
-                          + 1.0 * loss + self.l_dfm * loss_dfm + self.poseReg * loss_disantagled_pose +
+                          + self.poseReg * loss_disantagled_pose +
                           self.ctfReg * loss_disantagled_ctf)  # 0.001 works on HetSIREN
+            decoder_losses = 1.0 * loss + self.l_dfm * loss_dfm
 
-        grads = tape.gradient(total_loss, self.trainable_weights)
+        if self.l_dfm > 0.0:
+            decoder_weights = (self.basis_decoder.trainable_weights
+                               + self.inverse_field_delta_decoder.trainable_weights)
+        else:
+            decoder_weights = self.basis_decoder.trainable_weights
+        grads, grads_d = tape.gradient([total_loss, decoder_losses], [self.trainable_weights, decoder_weights])
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
-        # scaled_gradients = tape.gradient(scaled_loss, self.trainable_variables)
-        # gradients = self.optimizer.get_unscaled_gradients(scaled_gradients)
-        # self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
+        self.optimizer.apply_gradients(zip(grads_d, decoder_weights))
+
+        # grads = tape.gradient(total_loss, self.trainable_weights)
+        # self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
+
         self.total_loss_tracker.update_state(total_loss)
         self.img_loss_tracker.update_state(img_loss)
         self.angle_loss_tracker.update_state(angle_loss)
@@ -776,8 +827,8 @@ class AutoEncoder(tf.keras.Model):
             if self.compute_delta:
                 volume_basis = self.basis_volume_decoder(coords)
                 volume_basis = tf.tile(volume_basis[None, ...], (B, 1, 1))
-                delta_volume = tf.squeeze(tf.matmul(volume_basis, tf.reduce_mean(het, axis=-1, keepdims=True)))
-                # delta_volume = tf.squeeze(tf.matmul(volume_basis, tf.reshape(het, (B, 3 * self.latDim, 1))))
+                # delta_volume = tf.squeeze(tf.matmul(volume_basis, tf.reduce_mean(het, axis=-1, keepdims=True)))
+                delta_volume = tf.squeeze(tf.matmul(volume_basis, tf.reshape(het, (B, 3 * self.latDim, 1))))
             else:
                 delta_volume = 0.0
 
@@ -797,7 +848,7 @@ class AutoEncoder(tf.keras.Model):
 
         # Field losses
 
-        loss = tf.cast(self.compute_field_loss(het, precision=tf.float32), self.precision)
+        loss = tf.cast(self.compute_field_loss(het, precision=self.precision_scaled), self.precision)
 
         ##########################
 
@@ -818,7 +869,7 @@ class AutoEncoder(tf.keras.Model):
             inv_field_rnd = tf.matmul(inv_basis_rnd, het)
 
             loss_dfm = tf.cast(
-                tf.reduce_mean(tf.abs(tf.cast(field_rnd, tf.float32) + tf.cast(inv_field_rnd, tf.float32))),
+                tf.reduce_mean(tf.abs(tf.cast(field_rnd, self.precision_scaled) + tf.cast(inv_field_rnd, self.precision_scaled))),
                 self.precision)
         else:
             loss_dfm = 0.0
@@ -847,7 +898,7 @@ class AutoEncoder(tf.keras.Model):
                 het_ctf = tf.stack([het_x, het_y, het_z], axis=-1)
                 ctf_perm = tf.random.shuffle(ctf)
                 decoded_ctf_perm = tf.cast(
-                    self.generator.ctfFilterImage(tf.cast(decoded, tf.float32), tf.cast(ctf_perm, tf.float32)),
+                    self.generator.ctfFilterImage(tf.cast(decoded, self.precision_scaled), tf.cast(ctf_perm, self.precision_scaled)),
                     self.precision)
                 x, _, _ = self.encoder_ctf(decoded_ctf_perm)
                 het_x = self.activation(self.z_space_x(x))
@@ -875,30 +926,30 @@ class AutoEncoder(tf.keras.Model):
                                 user_neighbors_index=result.neighbors_index,
                                 user_neighbors_importance=self.fn(result.neighbors_distance,
                                                                   result.neighbors_row_splits))
-            clashes = tf.cast(tf.reduce_max(tf.reshape(tf.cast(clashes, tf.float32), (B, -1)), axis=-1),
+            clashes = tf.cast(tf.reduce_max(tf.reshape(tf.cast(clashes, self.precision_scaled), (B, -1)), axis=-1),
                               self.precision)
         else:
             clashes = tf.constant(0.0, self.precision)
 
-        img_loss = tf.cast(self.cost_function(tf.cast(images, tf.float32),
-                                              tf.cast(decoded_ctf, tf.float32)), self.precision)
+        img_loss = tf.cast(self.cost_function(tf.cast(images, self.precision_scaled),
+                                              tf.cast(decoded_ctf, self.precision_scaled)), self.precision)
 
         # Bond and angle losses
         if self.generator.ref_is_struct:
-            bond_loss = tf.cast(tf.sqrt(tf.reduce_max(tf.keras.losses.MSE(tf.cast(self.generator.bond0, tf.float32),
-                                                                          tf.cast(bondk, tf.float32)))),
+            bond_loss = tf.cast(tf.sqrt(tf.reduce_max(tf.keras.losses.MSE(tf.cast(self.generator.bond0, self.precision_scaled),
+                                                                          tf.cast(bondk, self.precision_scaled)))),
                                 self.precision)
             angle_loss = tf.cast(
-                tf.sqrt(tf.reduce_max(tf.keras.losses.MSE(tf.cast(self.generator.angle0, tf.float32),
-                                                          tf.cast(anglek, tf.float32)))), self.precision)
+                tf.sqrt(tf.reduce_max(tf.keras.losses.MSE(tf.cast(self.generator.angle0, self.precision_scaled),
+                                                          tf.cast(anglek, self.precision_scaled)))), self.precision)
         else:
             bond_loss, angle_loss = tf.constant(0.0, self.precision), tf.constant(0.0, self.precision)
 
         # Loss disantagled (pose)
         if self.disantangle_pose and self.mode == "spa":
             loss_disantagled_pose = tf.cast(
-                tf.keras.losses.MSE(tf.cast(het, tf.float32), tf.cast(het_clean, tf.float32))
-                + tf.keras.losses.MSE(tf.cast(het, tf.float32), tf.cast(het_clean_perm, tf.float32)),
+                tf.keras.losses.MSE(tf.cast(het, self.precision_scaled), tf.cast(het_clean, self.precision_scaled))
+                + tf.keras.losses.MSE(tf.cast(het, self.precision_scaled), tf.cast(het_clean_perm, self.precision_scaled)),
                 self.precision)
         else:
             loss_disantagled_pose = 0.0
@@ -906,8 +957,8 @@ class AutoEncoder(tf.keras.Model):
         # Loss disantagled (CTF)
         if self.disantangle_ctf and self.mode == "spa" and self.CTF is not None:
             loss_disantagled_ctf = tf.cast(
-                tf.keras.losses.MSE(tf.cast(het, tf.float32), tf.cast(het_ctf, tf.float32))
-                + tf.keras.losses.MSE(tf.cast(het, tf.float32), tf.cast(het_ctf_perm, tf.float32)),
+                tf.keras.losses.MSE(tf.cast(het, self.precision_scaled), tf.cast(het_ctf, self.precision_scaled))
+                + tf.keras.losses.MSE(tf.cast(het, self.precision_scaled), tf.cast(het_ctf_perm, self.precision_scaled)),
                 self.precision)
         else:
             loss_disantagled_ctf = 0.0
@@ -982,8 +1033,8 @@ class AutoEncoder(tf.keras.Model):
         if self.compute_delta:
             volume_basis = self.basis_volume_decoder(self.generator.scaled_coords)
             volume_basis = tf.tile(volume_basis[None, ...], (B, 1, 1))
-            delta_volume = tf.squeeze(tf.matmul(volume_basis, tf.reduce_mean(z, axis=-1, keepdims=True)))
-            # delta_volume = tf.squeeze(tf.matmul(volume_basis, tf.reshape(z, (B, 3 * self.latDim, 1))))
+            # delta_volume = tf.squeeze(tf.matmul(volume_basis, tf.reduce_mean(z, axis=-1, keepdims=True)))
+            delta_volume = tf.squeeze(tf.matmul(volume_basis, tf.reshape(z, (B, 3 * self.latDim, 1))))
         else:
             delta_volume = 0.0
 
@@ -1007,6 +1058,20 @@ class AutoEncoder(tf.keras.Model):
 
         return convected_vols
 
+    def predictBasis(self, xsize):
+        volume = np.zeros([xsize, xsize, xsize])
+        half_xsize = 0.5 * xsize
+
+        # Compute coordinates
+        indices = np.asarray(np.where(volume == 0)).T
+        coords = np.stack([indices[:, 2], indices[:, 1], indices[:, 0]], axis=1) - half_xsize
+        scaled_coords = coords / half_xsize
+
+        # Compute basis
+        basis = self.basis_decoder(scaled_coords).numpy()
+
+        return basis
+
     # def gradient(self, inputs, targets, tape):
     #     return tape.gradient(targets, inputs)
 
@@ -1017,7 +1082,7 @@ class AutoEncoder(tf.keras.Model):
     #         decoded = self.field_decoder(inputs)[..., axis]
     #     return tape.gradient(decoded, inputs)[0, :, :3]
 
-    def gradient(self, inputs, coords, axis, precision=tf.float32):
+    def gradient(self, inputs, coords, axis):
         # Axis 0 --> X | Axis 1 --> Y | Axis 2 --> X
         B, C = tf.shape(inputs)[0], tf.shape(coords)[0]
         coords = tf.tile(coords[None, ...], (B, 1, 1))
@@ -1030,7 +1095,7 @@ class AutoEncoder(tf.keras.Model):
             # convected_coords = (coords + field)[..., axis]
         return tape_1.gradient(field, coords)
 
-    def gradient_gradient(self, inputs, coords, axis, precision=tf.float32):
+    def gradient_gradient(self, inputs, coords, axis):
         # Axis 0 --> X | Axis 1 --> Y | Axis 2 --> X
         B, C = tf.shape(inputs)[0], tf.shape(coords)[0]
         coords = tf.tile(coords[None, ...], (B, 1, 1))
@@ -1051,19 +1116,19 @@ class AutoEncoder(tf.keras.Model):
         gradient_2 = tf.stack([gradient_2_x, gradient_2_y, gradient_2_z], axis=2)
         return gradient, gradient_2
 
-    def compute_jacobian_autograd(self, inputs, coords, second_derivative=False, precision=tf.float32):
+    def compute_jacobian_autograd(self, inputs, coords, second_derivative=False):
         """Compute the Jacobian matrix of the output wrt the input."""
         if second_derivative:
-            jacobian_matrix_x, jacobian_matrix_2_x = self.gradient_gradient(inputs, coords, 0, precision=precision)
-            jacobian_matrix_y, jacobian_matrix_2_y = self.gradient_gradient(inputs, coords, 1, precision=precision)
-            jacobian_matrix_z, jacobian_matrix_2_z = self.gradient_gradient(inputs, coords, 2, precision=precision)
+            jacobian_matrix_x, jacobian_matrix_2_x = self.gradient_gradient(inputs, coords, 0,)
+            jacobian_matrix_y, jacobian_matrix_2_y = self.gradient_gradient(inputs, coords, 1)
+            jacobian_matrix_z, jacobian_matrix_2_z = self.gradient_gradient(inputs, coords, 2)
             jacobian_matrix = tf.stack([jacobian_matrix_x, jacobian_matrix_y, jacobian_matrix_z], axis=2)
             jacobian_matrix_2 = tf.stack([jacobian_matrix_2_x, jacobian_matrix_2_y, jacobian_matrix_2_z], axis=2)
             return jacobian_matrix, jacobian_matrix_2
         else:
-            jacobian_matrix_x = self.gradient(inputs, coords, 0, precision=precision)[:, :, None, :]
-            jacobian_matrix_y = self.gradient(inputs, coords, 1, precision=precision)[:, :, None, :]
-            jacobian_matrix_z = self.gradient(inputs, coords, 2, precision=precision)[:, :, None, :]
+            jacobian_matrix_x = self.gradient(inputs, coords, 0)[:, :, None, :]
+            jacobian_matrix_y = self.gradient(inputs, coords, 1)[:, :, None, :]
+            jacobian_matrix_z = self.gradient(inputs, coords, 2)[:, :, None, :]
             jacobian_matrix = tf.concat([jacobian_matrix_x, jacobian_matrix_y, jacobian_matrix_z], axis=2)
             return jacobian_matrix, None
 
@@ -1124,27 +1189,33 @@ class AutoEncoder(tf.keras.Model):
     def compute_jacobian_regularization(self, jacobians, precision=tf.float32):
         # Compute the Jacobian matrix for each point
         # jacobians = tf.transpose(jacobians, perm=[0, 1, 3, 2])  # Shape (B, M, 3, 3)
+        # B, M = tf.shape(jacobians)[0], tf.shape(jacobians)[1]
+        # jacobians = tf.tile(tf.eye(3, dtype=precision)[None, None, ...], (B, M, 1, 1)) + jacobians
+        #
+        # # Compute the singular values of the Jacobian matrix for each point
+        # jacobians = tf.cast(jacobians, tf.float32)
+        # singular_values = tf.linalg.svd(jacobians, compute_uv=False)
+        # singular_values = tf.cast(singular_values, precision)
+        #
+        # # Regularization term: penalize singular values deviating from 1
+        # singular_value_reg = tf.reduce_mean(tf.square(singular_values - 1))
+
         B, M = tf.shape(jacobians)[0], tf.shape(jacobians)[1]
         jacobians = tf.cast(jacobians, precision)
 
         jacobians = tf.tile(tf.eye(3, dtype=precision)[None, None, ...], (B, M, 1, 1)) + jacobians
+        loss = compute_determinant_2x2(jacobians) - 1.
+        loss = tf.reduce_mean(tf.linalg.norm(loss, 1))
 
-        # Compute the singular values of the Jacobian matrix for each point
-        jacobians = tf.cast(jacobians, tf.float32)
-        singular_values = tf.linalg.svd(jacobians, compute_uv=False)
-        singular_values = tf.cast(singular_values, precision)
+        return loss
 
-        # Regularization term: penalize singular values deviating from 1
-        singular_value_reg = tf.reduce_mean(tf.square(singular_values - 1))
-
-        return singular_value_reg
-
-    def compute_bending_energy_regularization(self, jacobians_2, precision=tf.float32):
-        jacobians_2 = tf.cast(jacobians_2, precision)
-
-        dx_xyz = jacobians_2[:, :, 0, :, :]
-        dy_xyz = jacobians_2[:, :, 1, :, :]
-        dz_xyz = jacobians_2[:, :, 2, :, :]
+    def compute_bending_energy_regularization(self, jacobians_2):
+        # dx_xyz = jacobians_2[:, :, 0, :, :]
+        # dy_xyz = jacobians_2[:, :, 1, :, :]
+        # dz_xyz = jacobians_2[:, :, 2, :, :]
+        dx_xyz = jacobians_2[:, :, :, 0, :]
+        dy_xyz = jacobians_2[:, :, :, 1, :]
+        dz_xyz = jacobians_2[:, :, :, 2, :]
 
         dx_xyz = tf.square(dx_xyz)
         dy_xyz = tf.square(dy_xyz)
@@ -1185,36 +1256,37 @@ class AutoEncoder(tf.keras.Model):
         cofactors_row_3 = []
 
         # Compute elements of cofactor matrices one by one (Ugliest solution ever?)
-        cofactors_row_1.append(compute_determinant_2x2(grad_y[:, :, 1:, 1:]))
-        cofactors_row_1.append(compute_determinant_2x2(grad_y[:, :, 1:, 0::2]))
-        cofactors_row_1.append(compute_determinant_2x2(grad_y[:, :, 1:, :2]))
-        cofactors_row_2.append(compute_determinant_2x2(grad_y[:, :, 0::2, 1:]))
-        cofactors_row_2.append(compute_determinant_2x2(grad_y[:, :, 0::2, 0::2]))
-        cofactors_row_2.append(compute_determinant_2x2(grad_y[:, :, 0::2, :2]))
-        cofactors_row_3.append(compute_determinant_2x2(grad_y[:, :, :2, 1:]))
-        cofactors_row_3.append(compute_determinant_2x2(grad_y[:, :, :2, 0::2]))
-        cofactors_row_3.append(compute_determinant_2x2(grad_y[:, :, :2, :2]))
-        cofactors_row_1 = tf.stack(cofactors_row_1, axis=-1)
-        cofactors_row_2 = tf.stack(cofactors_row_2, axis=-1)
-        cofactors_row_3 = tf.stack(cofactors_row_3, axis=-1)
-        cofactors = tf.concat([cofactors_row_1[:, :, None, :],
-                               cofactors_row_2[:, :, None, :],
-                               cofactors_row_3[:, :, None, :]], axis=2)
+        cofactors_row_1.append(compute_determinant_2x2(grad_y[:, :, 1:, 1:])[..., None, None])
+        cofactors_row_1.append(compute_determinant_2x2(grad_y[:, :, 1:, 0::2])[..., None, None])
+        cofactors_row_1.append(compute_determinant_2x2(grad_y[:, :, 1:, :2])[..., None, None])
+        cofactors_row_2.append(compute_determinant_2x2(grad_y[:, :, 0::2, 1:])[..., None, None])
+        cofactors_row_2.append(compute_determinant_2x2(grad_y[:, :, 0::2, 0::2])[..., None, None])
+        cofactors_row_2.append(compute_determinant_2x2(grad_y[:, :, 0::2, :2])[..., None, None])
+        cofactors_row_3.append(compute_determinant_2x2(grad_y[:, :, :2, 1:])[..., None, None])
+        cofactors_row_3.append(compute_determinant_2x2(grad_y[:, :, :2, 0::2])[..., None, None])
+        cofactors_row_3.append(compute_determinant_2x2(grad_y[:, :, :2, :2])[..., None, None])
+        cofactors_row_1 = tf.concat(cofactors_row_1, axis=3)
+        cofactors_row_2 = tf.concat(cofactors_row_2, axis=3)
+        cofactors_row_3 = tf.concat(cofactors_row_3, axis=3)
+        cofactors = tf.concat([cofactors_row_1, cofactors_row_2, cofactors_row_3], axis=2)
+        # cofactors = tf.transpose(tf.linalg.inv(grad_y), (0, 1, 3, 2)) * compute_determinant_2x2(grad_y)[..., None, None]
 
         # Compute area loss
         area_loss = tf.pow(cofactors, 2.)
         area_loss = tf.reduce_sum(area_loss, axis=2)
         area_loss = area_loss - 1.
-        area_loss = tf.reduce_max(tf.concat((area_loss, tf.zeros_like(area_loss)), axis=-1), axis=-1)
+        area_loss = tf.math.maximum(area_loss, tf.zeros_like(area_loss))
         area_loss = tf.pow(area_loss, 2.)
-        area_loss = tf.reduce_mean(tf.reduce_sum(area_loss, axis=-1))  # sum over dimension 1 and then 0
+        # area_loss = tf.reduce_mean(tf.reduce_sum(area_loss, axis=(2, 3)))  # sum over dimension 1 and then 0
+        area_loss = tf.reduce_mean(area_loss)
         area_loss = alpha_a * area_loss
 
-        # # Compute volume loss
-        volume_loss = compute_determinant_3x3(grad_y)
-        # volume_loss = tf.matmul(tf.pow(volume_loss - 1., 4.)[..., None], tf.pow(volume_loss, -2.)[:, None, :])
-        fn = lambda x: tf.matmul(tf.pow(x - 1., 4.)[None, :], tf.pow(x, -2.)[None, :], transpose_b=True)
-        volume_loss = tf.map_fn(fn, volume_loss, fn_output_signature=precision)
+        # Compute volume loss
+        # volume_loss = compute_determinant_3x3(grad_y)
+        volume_loss = compute_determinant_2x2(grad_y)
+        volume_loss = tf.matmul(tf.pow(volume_loss - 1., 4.)[..., None], tf.pow(volume_loss, -2.)[:, None, :])
+        # fn = lambda x: tf.matmul(tf.pow(x - 1., 4.)[None, :], tf.pow(x, -2.)[None, :], transpose_b=True)
+        # volume_loss = tf.map_fn(fn, volume_loss, fn_output_signature=precision)
         volume_loss = tf.reduce_mean(volume_loss)
         volume_loss = alpha_v * volume_loss
 
@@ -1256,25 +1328,21 @@ class AutoEncoder(tf.keras.Model):
         coords = tf.gather(self.generator.scaled_coords, indices, axis=0)
 
         # Compute Jacobians
-        jacobians, jacobians_2 = self.compute_jacobian_autograd(inputs, coords, second_derivative=second_derivative,
-                                                                precision=precision)
+        jacobians, jacobians_2 = self.compute_jacobian_autograd(inputs, coords, second_derivative=second_derivative)
         jacobians = tf.cast(jacobians, tf.float32)
         jacobians_2 = tf.cast(jacobians_2, tf.float32)
 
         # Jacobian regularization
         jacobian_reg = self.compute_jacobian_regularization(jacobians, precision=precision)
-        # smoothness_reg = self.compute_smoothness_regularization(jacobians)
-        # div_reg = self.compute_div_regularization(derivatives)
-        # rot_reg = self.compute_rot_regularization(derivatives)
-        hyper_elastic_reg = self.compute_hyper_elastic_loss(jacobians, precision=precision)
+        # hyper_elastic_reg = self.compute_hyper_elastic_loss(jacobians, precision=precision)
 
         # Jacobian-Jacobian regularization
         if second_derivative:
-            bending_energy_reg = self.compute_bending_energy_regularization(jacobians_2, precision=precision)
+            bending_energy_reg = self.compute_bending_energy_regularization(jacobians_2)
         else:
             bending_energy_reg = 0.0
 
-        return (jacobian_reg + 1.0 * bending_energy_reg + 1.0 * hyper_elastic_reg) / self.generator.half_xsize
+        return jacobian_reg + bending_energy_reg
 
     def compute_field_norm(self, d_x, d_y, d_z):
         return tf.reduce_sum(tf.sqrt(d_x * d_x + d_y * d_y + d_z * d_z)) / (self.generator.xsize *
@@ -1291,6 +1359,9 @@ class AutoEncoder(tf.keras.Model):
         if self.mode == "spa":
             B, C = tf.shape(input_features)[0], tf.shape(self.generator.scaled_coords)[0]
 
+            coords = self.generator.scaled_coords  # TESTING: Autograd for field derivatives
+            coords_splitted = tf.split(coords, self.split_sizes)
+
             indexes = tf.zeros(B, dtype=tf.int32)
             x, euler, shifts = self.encoder_exp(input_features)
             het_x = self.activation(self.z_space_x(x))
@@ -1305,8 +1376,8 @@ class AutoEncoder(tf.keras.Model):
             if self.compute_delta:
                 volume_basis = self.basis_volume_decoder(self.generator.scaled_coords)
                 volume_basis = tf.tile(volume_basis[None, ...], (B, 1, 1))
-                delta_volume = tf.squeeze(tf.matmul(volume_basis, tf.reduce_mean(het, axis=-1, keepdims=True)))
-                # delta_volume = tf.squeeze(tf.matmul(volume_basis, tf.reshape(het, (B, 3 * self.latDim, 1))))
+                # delta_volume = tf.squeeze(tf.matmul(volume_basis, tf.reduce_mean(het, axis=-1, keepdims=True)))
+                delta_volume = tf.squeeze(tf.matmul(volume_basis, tf.reshape(het, (B, 3 * self.latDim, 1))))
             else:
                 delta_volume = 0.0
 
