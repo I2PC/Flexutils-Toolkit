@@ -57,8 +57,9 @@ def train(outPath, md_file, latDim, batch_size, shuffle, step, splitTrain, epoch
     assert precision in ["float32", "mixed_float16"]
     mixed_precision.set_global_policy(precision)
     precision = tf.float32 if precision == "float32" else tf.float16
+    precision_scaled = tf.float32 if os.environ["TF_USE_LEGACY_KERAS"] == "1" else precision
     from tensorflow_toolkit.generators.generator_flexsiren import Generator
-    from tensorflow_toolkit.networks.flexsiren_basis import AutoEncoder
+    from tensorflow_toolkit.networks.flexsiren import AutoEncoder
 
     try:
         # Create data generator
@@ -91,12 +92,14 @@ def train(outPath, md_file, latDim, batch_size, shuffle, step, splitTrain, epoch
             if regClashes is not None:
                 autoencoder = AutoEncoder(generator, latDim=latDim, architecture=architecture, CTF=ctfType, l_bond=regBond,
                                           l_angle=regAngle, l_clashes=regClashes, jit_compile=jit_compile,
-                                          poseReg=poseReg, ctfReg=ctfReg, precision=precision)
+                                          poseReg=poseReg, ctfReg=ctfReg, precision=precision,
+                                          precision_scaled=precision_scaled)
                 jit_compile = False
             else:
                 autoencoder = AutoEncoder(generator, latDim=latDim, architecture=architecture, CTF=ctfType, l_bond=regBond,
                                           l_angle=regAngle, l_clashes=regClashes, jit_compile=False,
-                                          poseReg=poseReg, ctfReg=ctfReg, precision=precision)
+                                          poseReg=poseReg, ctfReg=ctfReg, precision=precision,
+                                          precision_scaled=precision_scaled)
 
             # Fine tune a previous model
             if weigths_file:

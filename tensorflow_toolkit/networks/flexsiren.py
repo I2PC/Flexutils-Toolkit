@@ -177,6 +177,11 @@ class Encoder(tf.keras.Model):
         for _ in range(2):
             shifts = layers.Dense(256, activation="relu", trainable=refPose)(shifts)
 
+        if mode == "tomo":
+            latent = layers.Dense(1024, activation="relu")(subtomo_pe)
+            for _ in range(2):  # TODO: Is it better to use 12 hidden layers as in Zernike3Deep?
+                latent = layers.Dense(1024, activation="relu")(latent)
+
         if mode == "spa":
             self.encoder = tf.keras.Model(encoder_inputs, [latent, rows, shifts], name="encoder")
         elif mode == "tomo":
@@ -409,6 +414,7 @@ class AutoEncoder(tf.keras.Model):
         # self.architecture = architecture
         self.precision = precision
         self.precision_scaled = precision_scaled
+        self.latDim = latDim
         self.encoder_exp = Encoder(latDim, generator.xsize, architecture=architecture, mode=self.mode,
                                    jit_compile=jit_compile, refPose=generator.refinePose)
         if poseReg > 0.0:
@@ -819,7 +825,20 @@ class AutoEncoder(tf.keras.Model):
         encoded[1] *= self.refPose
         encoded[2] *= self.refPose
 
-        return encoded
+        # Zernike3D coefficients
+        B, C = tf.shape(inputs)[0], tf.shape(self.generator.scaled_coords)[0]
+        het = encoded[0]
+        Z_solver = tf.tile(tf.constant(self.generator.Z_solver, dtype=tf.float32)[None, ...], (B, 1, 1))
+
+        het_tiled = tf.tile(het[:, None, :], (1, C, 1))
+        coords_tiled = tf.tile(self.generator.scaled_coords[None, :, :], (B, 1, 1))
+        coords_het = tf.concat([coords_tiled, het_tiled], axis=-1)
+
+        field, _ = self.field_delta_decoder(coords_het)
+        c_lnm = tf.matmul(Z_solver, field)
+        c_lnm = tf.concat([c_lnm[..., 0], c_lnm[..., 1], c_lnm[..., 2]], axis=-1)
+
+        return encoded, c_lnm
 
     def convect_maps(self, z):
         B, C = tf.shape(z)[0], tf.shape(self.generator.scaled_coords)[0]
@@ -854,16 +873,6 @@ class AutoEncoder(tf.keras.Model):
                 convected_vols[idx] = convected_vol
 
         return convected_vols
-
-    # def gradient(self, inputs, targets, tape):
-    #     return tape.gradient(targets, inputs)
-
-    # def gradient(self, inputs, axis):
-    #     # Axis 0 --> X | Axis 1 --> Y | Axis 2 --> X
-    #     with tf.GradientTape() as tape:
-    #         tape.watch(inputs)
-    #         decoded = self.field_decoder(inputs)[..., axis]
-    #     return tape.gradient(decoded, inputs)[0, :, :3]
 
     def gradient(self, inputs, axis, precision=tf.float32):
         # Axis 0 --> X | Axis 1 --> Y | Axis 2 --> X

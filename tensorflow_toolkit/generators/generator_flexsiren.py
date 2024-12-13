@@ -42,7 +42,8 @@ except ImportError:
     print("Open3D has not been installed. The program will continue without this package")
 
 from tensorflow_toolkit.generators.generator_template import DataGeneratorBase
-from tensorflow_toolkit.utils import basisDegreeVectors, computeBasis, euler_matrix_batch, fft_pad, ifft_pad
+from tensorflow_toolkit.utils import basisDegreeVectors, computeBasis, euler_matrix_batch, fft_pad, ifft_pad, \
+    computeInverse
 
 
 @tf.function
@@ -108,6 +109,12 @@ class Generator(DataGeneratorBase):
         else:
             self.angle0 = 0.0
             self.bond0 = 0.0
+
+        # Zernike3D basis (to convert free form to Zernike3D)
+        zernike_size = basisDegreeVectors(7, 7)
+        Z = computeBasis(self.coords, L1=7, L2=7, r=0.5 * self.xsize,
+                              groups=groups, centers=centers)
+        self.Z_solver = computeInverse(Z.T @ Z) @ Z.T
 
         # Train coords
         # self.select_train_coords()

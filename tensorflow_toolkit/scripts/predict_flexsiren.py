@@ -53,7 +53,7 @@ def predict(md_file, weigths_file, latDim, refinePose, architecture, ctfType, pa
     # We need to import network and generators here instead of at the beginning of the script to allow Tensorflow
     # get the right GPUs set in CUDA_VISIBLE_DEVICES
     from tensorflow_toolkit.generators.generator_flexsiren import Generator
-    from tensorflow_toolkit.networks.flexsiren_basis import AutoEncoder
+    from tensorflow_toolkit.networks.flexsiren import AutoEncoder
 
     # Create data generator
     generator = Generator(md_file=md_file, shuffle=False, batch_size=32,
@@ -80,7 +80,7 @@ def predict(md_file, weigths_file, latDim, refinePose, architecture, ctfType, pa
 
     # Predict step
     print("------------------ Predicting Zernike3D coefficients... ------------------")
-    encoded = autoencoder.predict(generator.return_tf_dataset())
+    encoded, c_lnm = autoencoder.predict(generator.return_tf_dataset())
 
     # Get encoded data in right format
     z_space = encoded[0]
@@ -101,20 +101,9 @@ def predict(md_file, weigths_file, latDim, refinePose, architecture, ctfType, pa
         embedding.tensor_name = os.path.join("z_space", ".ATTRIBUTES", "VARIABLE_VALUE")
         projector.visualize_embeddings(log_dir, config)
 
-    # for data in generator:
-    #     encoded = autoencoder.encoder(data[0])
-    #
-    #     zernike_vec = np.hstack([encoded[0].numpy(), encoded[1].numpy(), encoded[2].numpy()])
-    #     zernike_space.append(zernike_vec)
-    #
-    #     if refinePose:
-    #         delta_euler.append(encoded[3].numpy())
-    #         delta_shifts.append(encoded[4].numpy())
-    #
-    # zernike_space = np.vstack(zernike_space)
-
     # Save space to metadata file
     metadata[:, 'zCoefficients'] = np.asarray([",".join(item) for item in z_space.astype(str)])
+    metadata[:, 'bCoefficients'] = np.asarray([",".join(item) for item in c_lnm.astype(str)])
 
     if refinePose:
         delta_euler = np.vstack(delta_euler)
