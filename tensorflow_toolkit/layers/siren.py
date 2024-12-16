@@ -106,7 +106,6 @@ class MetaDenseWrapper(tf.keras.layers.Layer):
                                hyper_activation=hyper_activation, use_bias=use_bias,
                                meta_kernel_initializer=meta_kernel_initializer, **kwargs)
 
-    @tf.function
     def call(self, inputs):
         param_list = self.layer(inputs)
         return self.layer.inner_call(inputs, param_list)
@@ -119,7 +118,7 @@ class _MetaDense(layers.Dense):
     Unpacks these params and reshapes them for use in batched call of multiple
     kernels and biases over individual samples in the batch.
     """
-    @tf.function
+
     def __call__(self, inputs, params=None):
         # input = [batch, input_dim]
         # kernel = [batch, input_dim, output_dim]
@@ -186,7 +185,6 @@ class MetaDense(tf.keras.layers.Layer):
         # Don't allow to build weights
         self.inner_siren.built = True
 
-    @tf.function
     def call(self, context, **kwargs):
         parameters = self.hyper_net(context)  # [B, total_parameter_count]
 
@@ -205,7 +203,6 @@ class MetaDense(tf.keras.layers.Layer):
         else:
             return kernel
 
-    @tf.function
     def inner_call(self, inputs, params, **kwargs):
         """
         A convenience method to perform a forward pass over the meta layer.

@@ -34,8 +34,8 @@ from xmipp_metadata.metadata import XmippMetaData
 
 import tensorflow as tf
 
-from tensorflow_toolkit.generators.generator_deep_nma import Generator
-from tensorflow_toolkit.networks.deep_nma import AutoEncoder
+from deprecated.generator_deep_nma import Generator
+from deprecated.deep_nma import AutoEncoder
 # from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
 from tensorflow_toolkit.utils import epochs_from_iterations
 

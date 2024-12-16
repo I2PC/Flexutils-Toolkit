@@ -31,8 +31,11 @@ import numpy as np
 
 import tensorflow as tf
 
-from tensorflow_toolkit.generators.generator_deep_pose import Generator
-from tensorflow_toolkit.networks.deep_pose import AutoEncoder
+from deprecated.generator_deep_pose import Generator
+from deprecated.deep_pose import AutoEncoder
+from tensorflow_toolkit.utils import xmippEulerFromMatrix
+
+
 # from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
 
 
@@ -78,12 +81,18 @@ def predict(md_file, weigths_file, architecture, ctfType, pad=2, sr=1.0, applyCT
     # shifts = pred_shifts
 
     # Save space to metadata file
-    alignment = np.vstack(alignment)
+    # alignment = np.vstack(alignment)
+    euler_angles = np.zeros((alignment.shape[0], 3))
+    idx = 0
+    for matrix in alignment:
+        euler_angles[idx] = xmippEulerFromMatrix(matrix)
+        idx += 1
+
     shifts = np.vstack(shifts)
 
-    generator.metadata[:, 'delta_angle_rot'] = alignment[:, 0]
-    generator.metadata[:, 'delta_angle_tilt'] = alignment[:, 1]
-    generator.metadata[:, 'delta_angle_psi'] = alignment[:, 2]
+    generator.metadata[:, 'delta_angle_rot'] = euler_angles[:, 0]
+    generator.metadata[:, 'delta_angle_tilt'] = euler_angles[:, 1]
+    generator.metadata[:, 'delta_angle_psi'] = euler_angles[:, 2]
     generator.metadata[:, 'delta_shift_x'] = shifts[:, 0]
     generator.metadata[:, 'delta_shift_y'] = shifts[:, 1]
 

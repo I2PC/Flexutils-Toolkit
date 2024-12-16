@@ -31,13 +31,16 @@ import tensorflow as tf
 from tensorflow.keras import backend as K
 
 from tensorflow_toolkit.generators.generator_template import DataGeneratorBase
-from tensorflow_toolkit.utils import euler_matrix_batch, gramSchmidt, \
+from tensorflow_toolkit.utils import euler_matrix_batch_dp, gramSchmidt, \
                                      fft_pad
 
 
 class Generator(DataGeneratorBase):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        if self.ref_is_struct:
+            self.coords = self.atom_coords
+            self.values = tf.ones(tf.shape(self.coords)[0])
 
         # Initialize pose information
         self.rot_batch = np.zeros(self.batch_size)
@@ -71,10 +74,13 @@ class Generator(DataGeneratorBase):
 
     def applyAlignmentEuler(self, q, axis):
         # Get rotation matrix
-        A = euler_matrix_batch(self.rot_batch + q[:, 0],
-                               self.tilt_batch + q[:, 1],
-                               self.psi_batch + q[:, 2])
-        A = tf.stack(A, axis=1)
+        # O = euler_matrix_batch_dp(self.rot_batch,
+        #                        self.tilt_batch,
+        #                        self.psi_batch)
+        # O = tf.cast(O, tf.float32)
+        # A = euler_matrix_batch_dp(q[:, 0], q[:, 1], q[:, 2])
+        A = gramSchmidt(q)
+        # A = tf.stack(A, axis=1)
 
         # Get coords to move
         coords = tf.constant(self.coords, dtype=tf.float32)
@@ -89,7 +95,9 @@ class Generator(DataGeneratorBase):
         return tf.add(tf.add(c_r_1, c_r_2), c_r_3)
 
     def applyShifts(self, c, axis):
-        shifts_batch = tf.gather(self.shifts[axis], self.indexes, axis=0) + c[1][:, axis]
+        # shifts_batch = tf.gather(self.shifts[axis], self.indexes, axis=0) + c[1][:, axis]
+        shifts_batch = tf.gather(self.shifts[axis], self.indexes, axis=0)
+        # shifts_batch = c[1][:, axis]
         return tf.add(tf.subtract(c[0], shifts_batch[:, None]), self.xmipp_origin[axis])
 
     def scatterImgByPass(self, c):

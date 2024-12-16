@@ -1,0 +1,588 @@
+# **************************************************************************
+# *
+# * Authors:  David Herreros Calero (dherreros@cnb.csic.es)
+# *
+# * Unidad de  Bioinformatica of Centro Nacional de Biotecnologia , CSIC
+# *
+# * This program is free software; you can redistribute it and/or modify
+# * it under the terms of the GNU General Public License as published by
+# * the Free Software Foundation; either version 2 of the License, or
+# * (at your option) any later version.
+# *
+# * This program is distributed in the hope that it will be useful,
+# * but WITHOUT ANY WARRANTY; without even the implied warranty of
+# * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# * GNU General Public License for more details.
+# *
+# * You should have received a copy of the GNU General Public License
+# * along with this program; if not, write to the Free Software
+# * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
+# * 02111-1307  USA
+# *
+# *  All comments concerning this program package may be sent to the
+# *  e-mail address 'scipion@cnb.csic.es'
+# *
+# **************************************************************************
+
+
+import tensorflow as tf
+import numpy as np
+
+
+@tf.function
+def computeZernikes3D(l1, n, l2, m, pos, r_max):
+    
+    # General variables
+    pi = tf.constant(np.pi, tf.float32)
+    pos_r = pos / r_max
+    xr, yr, zr = pos_r[..., 0], pos_r[..., 1], pos_r[..., 2]
+    xr2, yr2, zr2 = xr * xr, yr * yr, zr * zr
+    r = tf.norm(pos, axis=2) / r_max
+    r2 = r * r
+    R = tf.zeros((tf.shape(xr)[0], tf.shape(xr)[1]), tf.float32)
+    Y = tf.zeros((tf.shape(xr)[0], tf.shape(xr)[1]), tf.float32)
+
+    # Variables needed for l2 >= 5
+    tht = tf.atan2(yr, xr)
+    phi = tf.atan2(zr, tf.sqrt(xr2 + yr2))
+    sinth = tf.sin(tf.abs(tf.cast(m, tf.float32))*phi)
+    costh = tf.cos(tht)
+    cosph = tf.cos(tf.abs(tf.cast(m, tf.float32))*phi)
+    sinth2 = sinth*sinth
+    costh2 = costh*costh
+
+    # Zernike Polynomials
+    if l1 == 0:
+        R = tf.sqrt(3.) * tf.ones_like(xr, tf.float32)
+    elif l1 == 1:
+        R = tf.sqrt(5.) * r
+    elif l1 == 2:
+        if n == 0:
+            R = -0.5 * tf.sqrt(7.) * (2.5 * (1 - 2 * r2) + 0.5)
+        elif n == 2:
+            R = tf.sqrt(7.) * r2
+    elif l1 == 3:
+        if n == 1:
+            R = -1.5 * r * (3.5 * (1. - 2. * r2) + 1.5)
+        elif n == 3:
+            R = 3. * r2 * r
+    elif l1 == 4:
+        if n == 0:
+            R = tf.sqrt(11.) * ((63. * r2 * r2 / 8.) - (35. * r2 / 4.) + (15. / 8.))
+        elif n == 2:
+            R = -0.5 * tf.sqrt(11.) * r2 * (4.5 * (1 - 2 * r2) + 2.5)
+        elif n == 4:
+            R = tf.sqrt(11.) * r2 * r2
+    elif l1 == 5:
+        if n == 1:
+            R = tf.sqrt(13.) * r * ((99. * r2 * r2 / 8.) - (63. * r2 / 4.) + (35. / 8.))
+        elif n == 3:
+            R = -0.5 * tf.sqrt(13.) * r2 * r * (5.5 * (1. - 2. * r2) + 3.5)
+        elif n == 5:
+            R = tf.sqrt(13.) * r2 * r2 * r
+    elif l1 == 6:
+        if n == 0:
+            R = 103.8 * r2 * r2 * r2 - 167.7 * r2 * r2 + 76.25 * r2 - 8.472
+        elif n == 2:
+            R = 69.23 * r2 * r2 * r2 - 95.86 * r2 * r2 + 30.5 * r2
+        elif n == 4:
+            R = 25.17 * r2 * r2 * r2 - 21.3 * r2 * r2
+        elif n == 6:
+            R = 3.873 * r2 * r2 * r2
+    elif l1 == 7:
+        if n == 1:
+            R = 184.3 * r2 * r2 * r2 * r - 331.7 * r2 * r2 * r + 178.6 * r2 * r - 27.06 * r
+        elif n == 3:
+            R = 100.5 * r2 * r2 * r2 * r - 147.4 * r2 * r2 * r + 51.02 * r2 * r
+        elif n == 5:
+            R = 30.92 * r2 * r2 * r2 * r - 26.8 * r2 * r2 * r
+        elif n == 7:
+            R = 4.123 * r2 * r2 * r2 * r
+    elif l1 == 8:
+        if n == 0:
+            R = 413.9*r2*r2*r2*r2 - 876.5*r2*r2*r2 + 613.6*r2*r2 - 157.3*r2 + 10.73
+        if n == 2:
+            R = 301.0*r2*r2*r2*r2 - 584.4*r2*r2*r2 + 350.6*r2*r2 - 62.93*r2
+        if n == 4:
+            R = 138.9*r2*r2*r2*r2 - 212.5*r2*r2*r2 + 77.92*r2*r2
+        if n == 6:
+            R = 37.05*r2*r2*r2*r2 - 32.69*r2*r2*r2
+        if n == 8:
+            R = 4.359*r2*r2*r2*r2
+    elif l1 == 9:
+        if n == 1:
+            R = 751.6*r2*r2*r2*r2*r - 1741.0*r2*r2*r2*r + 1382.0*r2*r2*r - 430.0*r2*r + 41.35*r
+        if n == 3:
+            R = 462.6*r2*r2*r2*r2*r - 949.5*r2*r2*r2*r + 614.4*r2*r2*r - 122.9*r2*r
+        if n == 5:
+            R = 185.0*r2*r2*r2*r2*r - 292.1*r2*r2*r2*r + 111.7*r2*r2*r
+        if n == 7:
+            R = 43.53*r2*r2*r2*r2*r - 38.95*r2*r2*r2*r
+        if n == 9:
+            R = 4.583*r2*r2*r2*r2*r
+    elif l1 == 10:
+        if n == 0:
+            R = 1652.0*r2*r2*r2*r2*r2 - 4326.0*r2*r2*r2*r2 + 4099.0*r2*r2*r2 - 1688.0*r2*r2 + 281.3*r2 - 12.98
+        if n == 2:
+            R = 1271.0*r2*r2*r2*r2*r2 - 3147.0*r2*r2*r2*r2 + 2732.0*r2*r2*r2 - 964.4*r2*r2 + 112.5*r2
+        if n == 4:
+            R = 677.7*r2*r2*r2*r2*r2 - 1452.0*r2*r2*r2*r2 + 993.6*r2*r2*r2 - 214.3*r2*r2
+        if n == 6:
+            R = 239.2*r2*r2*r2*r2*r2 - 387.3*r2*r2*r2*r2 + 152.9*r2*r2*r2
+        if n == 8:
+            R = 50.36*r2*r2*r2*r2*r2 - 45.56*r2*r2*r2*r2
+        if n == 10:
+            R = 4.796*r2*r2*r2*r2*r2
+    elif l1 == 11:
+        if n == 1:
+            R = r*-5.865234375E+1+(r*r*r)*8.7978515625E+2-(r*r*r*r*r)*4.2732421875E+3+(r*r*r*r*r*r*r)*9.0212890625E+3-(r*r*r*r*r*r*r*r*r)*8.61123046875E+3+tf.math.pow(r,1.1E+1)*3.04705078125E+3
+        if n == 3:
+            R = (r*r*r)*2.513671875E+2-(r*r*r*r*r)*1.89921875E+3+(r*r*r*r*r*r*r)*4.920703125E+3-(r*r*r*r*r*r*r*r*r)*5.29921875E+3+tf.math.pow(r,1.1E+1)*2.0313671875E+3
+        if n == 5:
+            R = (r*r*r*r*r)*-3.453125E+2+(r*r*r*r*r*r*r)*1.5140625E+3-(r*r*r*r*r*r*r*r*r)*2.1196875E+3+tf.math.pow(r,1.1E+1)*9.559375E+2
+        if n == 7:
+            R = (r*r*r*r*r*r*r)*2.01875E+2-(r*r*r*r*r*r*r*r*r)*4.9875E+2+tf.math.pow(r,1.1E+1)*3.01875E+2
+        if n == 9:
+            R = (r*r*r*r*r*r*r*r*r)*-5.25E+1+tf.math.pow(r,1.1E+1)*5.75E+1
+        if n == 11:
+            R = tf.math.pow(r,1.1E+1)*5.0
+    elif l1 == 12:
+        if n == 0:
+            R = (r*r)*-4.57149777110666E+2+(r*r*r*r)*3.885773105442524E+3-(r*r*r*r*r*r)*1.40627979054153E+4+(r*r*r*r*r*r*r*r)*2.460989633446932E+4-tf.math.pow(r,1.0E+1)*2.05828223888278E+4+tf.math.pow(r,1.2E+1)*6.597058457955718E+3+1.523832590368693E+1
+        if n == 2:
+            R = (r*r)*-1.828599108443595E+2+(r*r*r*r)*2.220441774539649E+3-(r*r*r*r*r*r)*9.375198603600264E+3+(r*r*r*r*r*r*r*r)*1.789810642504692E+4-tf.math.pow(r,1.0E+1)*1.583294029909372E+4+tf.math.pow(r,1.2E+1)*5.277646766364574E+3
+        if n == 4:
+            R = (r*r*r*r)*4.934315054528415E+2-(r*r*r*r*r*r)*3.409163128584623E+3+(r*r*r*r*r*r*r*r)*8.260664503872395E+3-tf.math.pow(r,1.0E+1)*8.444234826177359E+3+tf.math.pow(r,1.2E+1)*3.104498097866774E+3
+        if n == 6:
+            R = (r*r*r*r*r*r)*-5.244866351671517E+2+(r*r*r*r*r*r*r*r)*2.202843867704272E+3-tf.math.pow(r,1.0E+1)*2.98031817394495E+3+tf.math.pow(r,1.2E+1)*1.307157093837857E+3
+        if n == 8:
+            R = (r*r*r*r*r*r*r*r)*2.591581020820886E+2-tf.math.pow(r,1.0E+1)*6.274354050420225E+2+tf.math.pow(r,1.2E+1)*3.734734553815797E+2
+        if n == 10:
+            R = tf.math.pow(r,1.0E+1)*-5.975575286115054E+1+tf.math.pow(r,1.2E+1)*6.49519052838441E+1
+        if n == 12:
+            R = tf.math.pow(r,1.2E+1)*5.19615242270811
+    elif l1 == 13:
+        if n == 1:
+            R = r*7.896313435467891E+1-(r*r*r)*1.610847940832376E+3+(r*r*r*r*r)*1.093075388422608E+4-(r*r*r*r*r*r*r)*3.400678986203671E+4+(r*r*r*r*r*r*r*r*r)*5.332882955634594E+4-tf.math.pow(r,1.1E+1)*4.102217658185959E+4+tf.math.pow(r,1.3E+1)*1.230665297454596E+4
+        if n == 3:
+            R = (r*r*r)*-4.602422688100487E+2+(r*r*r*r*r)*4.858112837433815E+3-(r*r*r*r*r*r*r)*1.854915810656548E+4+(r*r*r*r*r*r*r*r*r)*3.281774126553535E+4-tf.math.pow(r,1.1E+1)*2.734811772125959E+4+tf.math.pow(r,1.3E+1)*8.687049158513546E+3
+        if n == 5:
+            R = (r*r*r*r*r)*8.832932431697845E+2-(r*r*r*r*r*r*r)*5.707433263555169E+3+(r*r*r*r*r*r*r*r*r)*1.312709650617838E+4-tf.math.pow(r,1.1E+1)*1.286970245704055E+4+tf.math.pow(r,1.3E+1)*4.572131136059761E+3
+        if n == 7:
+            R = (r*r*r*r*r*r*r)*-7.60991101808846E+2+(r*r*r*r*r*r*r*r*r)*3.088728589691222E+3-tf.math.pow(r,1.1E+1)*4.064116565383971E+3+tf.math.pow(r,1.3E+1)*1.741764242306352E+3
+        if n == 9:
+            R = (r*r*r*r*r*r*r*r*r)*3.251293252306059E+2-tf.math.pow(r,1.1E+1)*7.741174410264939E+2+tf.math.pow(r,1.3E+1)*4.54373280601576E+2
+        if n == 11:
+            R = tf.math.pow(r,1.1E+1)*-6.731456008902751E+1+tf.math.pow(r,1.3E+1)*7.269972489634529E+1
+        if n == 13:
+            R = tf.math.pow(r,1.3E+1)*5.385164807128604
+    elif l1 == 14:
+        if n == 0:
+            R = (r*r)*6.939451623205096E+2-(r*r*r*r)*7.910974850460887E+3+(r*r*r*r*r*r)*3.955487425231934E+4-(r*r*r*r*r*r*r*r)*1.010846786448956E+5+tf.math.pow(r,1.0E+1)*1.378427436065674E+5-tf.math.pow(r,1.2E+1)*9.542959172773361E+4+tf.math.pow(r,1.4E+1)*2.63567443819046E+4-1.749441585683962E+1
+        if n == 2:
+            R = (r*r)*2.775780649287626E+2-(r*r*r*r)*4.520557057410479E+3+(r*r*r*r*r*r)*2.636991616821289E+4-(r*r*r*r*r*r*r*r)*7.351612992358208E+4+tf.math.pow(r,1.0E+1)*1.060328796973228E+5-tf.math.pow(r,1.2E+1)*7.634367338204384E+4+tf.math.pow(r,1.4E+1)*2.170555419689417E+4
+        if n == 4:
+            R = (r*r*r*r)*-1.004568234980106E+3+(r*r*r*r*r*r)*9.589060424804688E+3-(r*r*r*r*r*r*r*r)*3.393052150321007E+4+tf.math.pow(r,1.0E+1)*5.655086917197704E+4-tf.math.pow(r,1.2E+1)*4.490804316592216E+4+tf.math.pow(r,1.4E+1)*1.370877107170224E+4
+        if n == 6:
+            R = (r*r*r*r*r*r)*1.475240065354854E+3-(r*r*r*r*r*r*r*r)*9.04813906750083E+3+tf.math.pow(r,1.0E+1)*1.99591302959919E+4-tf.math.pow(r,1.2E+1)*1.8908649754107E+4+tf.math.pow(r,1.4E+1)*6.527986224621534E+3
+        if n == 8:
+            R = (r*r*r*r*r*r*r*r)*-1.064486949119717E+3+tf.math.pow(r,1.0E+1)*4.201922167569399E+3-tf.math.pow(r,1.2E+1)*5.402471358314157E+3+tf.math.pow(r,1.4E+1)*2.270603904217482E+3
+        if n == 10:
+            R = tf.math.pow(r,1.0E+1)*4.001830635787919E+2-tf.math.pow(r,1.2E+1)*9.395602362267673E+2+tf.math.pow(r,1.4E+1)*5.44944937011227E+2
+        if n == 12:
+            R = tf.math.pow(r,1.2E+1)*-7.516481889830902E+1+tf.math.pow(r,1.4E+1)*8.073258326109499E+1
+        if n == 14:
+            R = tf.math.pow(r,1.4E+1)*5.567764362829621
+    elif l1 == 15:
+        if n == 1:
+            R = r*-1.022829477079213E+2+(r*r*r)*2.720726409032941E+3-(r*r*r*r*r)*2.448653768128157E+4+(r*r*r*r*r*r*r)*1.042945123462677E+5-(r*r*r*r*r*r*r*r*r)*2.370329826049805E+5+tf.math.pow(r,1.1E+1)*2.953795629386902E+5-tf.math.pow(r,1.3E+1)*1.903557183384895E+5+tf.math.pow(r,1.5E+1)*4.958846444106102E+4
+        if n == 3:
+            R = (r*r*r)*7.773504025805742E+2-(r*r*r*r*r)*1.088290563613176E+4+(r*r*r*r*r*r*r)*5.688791582524776E+4-(r*r*r*r*r*r*r*r*r)*1.458664508337975E+5+tf.math.pow(r,1.1E+1)*1.969197086257935E+5-tf.math.pow(r,1.3E+1)*1.343687423563004E+5+tf.math.pow(r,1.5E+1)*3.653886853551865E+4
+        if n == 5:
+            R = (r*r*r*r*r)*-1.978710115659982E+3+(r*r*r*r*r*r*r)*1.750397410005331E+4-(r*r*r*r*r*r*r*r*r)*5.834658033359051E+4+tf.math.pow(r,1.1E+1)*9.266809817695618E+4-tf.math.pow(r,1.3E+1)*7.072039071393013E+4+tf.math.pow(r,1.5E+1)*2.08793534488678E+4
+        if n == 7:
+            R = (r*r*r*r*r*r*r)*2.333863213345408E+3-(r*r*r*r*r*r*r*r*r)*1.372860713732243E+4+tf.math.pow(r,1.1E+1)*2.926360995060205E+4-tf.math.pow(r,1.3E+1)*2.694110122436285E+4+tf.math.pow(r,1.5E+1)*9.077979760378599E+3
+        if n == 9:
+            R = (r*r*r*r*r*r*r*r*r)*-1.445116540770978E+3+tf.math.pow(r,1.1E+1)*5.57402094297111E+3-tf.math.pow(r,1.3E+1)*7.028113362878561E+3+tf.math.pow(r,1.5E+1)*2.90495352332294E+3
+        if n == 11:
+            R = tf.math.pow(r,1.1E+1)*4.846974733015522E+2-tf.math.pow(r,1.3E+1)*1.124498138058931E+3+tf.math.pow(r,1.5E+1)*6.455452274046838E+2
+        if n == 13:
+            R = tf.math.pow(r,1.3E+1)*-8.329615837475285E+1+tf.math.pow(r,1.5E+1)*8.904072102135979E+1
+        if n == 15:
+            R = tf.math.pow(r,1.5E+1)*5.744562646534177
+
+    # Spherical Harmonics
+    if l2 == 0:
+        Y = (1.0 / 2.0) * tf.sqrt(1.0 / pi) * tf.ones_like(xr, tf.float32)
+    elif l2 == 1:
+        if m == -1:
+            Y = tf.sqrt(3.0 / (4.0 * pi)) * yr
+        elif m == 0:
+            Y = tf.sqrt(3.0 / (4.0 * pi)) * zr
+        elif m == 1:
+            Y = tf.sqrt(3.0 / (4.0 * pi)) * xr
+    elif l2 == 2:
+        if m == -2:
+            Y = tf.sqrt(15.0 / (4.0 * pi)) * xr * yr
+        elif m == -1:
+            Y = tf.sqrt(15.0 / (4.0 * pi)) * zr * yr
+        elif m == 0:
+            Y = tf.sqrt(5.0 / (16.0 * pi)) * (-xr2 - yr2 + 2.0 * zr2)
+        elif m == 1:
+            Y = tf.sqrt(15.0 / (4.0 * pi)) * xr * zr
+        elif m == 2:
+            Y = tf.sqrt(15.0 / (16.0 * pi)) * (xr2 - yr2)
+    elif l2 == 3:
+        if m == -3:
+            Y = tf.sqrt(35.0 / (16.0 * 2.0 * pi)) * yr * (3.0 * xr2 - yr2)
+        elif m == -2:
+            Y = tf.sqrt(105.0 / (4.0 * pi)) * zr * yr * xr
+        elif m == -1:
+            Y = tf.sqrt(21.0 / (16.0 * 2.0 * pi)) * yr * (4.0 * zr2 - xr2 - yr2)
+        elif m == 0:
+            Y = tf.sqrt(7.0 / (16.0 * pi)) * zr * (2.0 * zr2 - 3.0 * xr2 - 3.0 * yr2)
+        elif m == 1:
+            Y = tf.sqrt(21.0 / (16.0 * 2.0 * pi)) * xr * (4.0 * zr2 - xr2 - yr2)
+        elif m == 2:
+            Y = tf.sqrt(105.0 / (16.0 * pi)) * zr * (xr2 - yr2)
+        elif m == 3:
+            Y = tf.sqrt(35.0 / (16.0 * 2.0 * pi)) * xr * (xr2 - 3.0 * yr2)
+    elif l2 == 4:
+        if m == -4:
+            Y = tf.sqrt((35.0 * 9.0) / (16.0 * pi)) * yr * xr * (xr2 - yr2)
+        elif m == -3:
+            Y = tf.sqrt((9.0 * 35.0) / (16.0 * 2.0 * pi)) * yr * zr * (3.0 * xr2 - yr2)
+        elif m == -2:
+            Y = tf.sqrt((9.0 * 5.0) / (16.0 * pi)) * yr * xr * (7.0 * zr2 - (xr2 + yr2 + zr2))
+        elif m == -1:
+            Y = tf.sqrt((9.0 * 5.0) / (16.0 * 2.0 * pi)) * yr * zr * (7.0 * zr2 - 3.0 * (xr2 + yr2 + zr2))
+        elif m == 0:
+            Y = tf.sqrt(9.0 / (16.0 * 16.0 * pi)) * (35.0 * zr2 * zr2 - 30.0 * zr2 + 3.0)
+        elif m == 1:
+            Y = tf.sqrt((9.0 * 5.0) / (16.0 * 2.0 * pi)) * xr * zr * (7.0 * zr2 - 3.0 * (xr2 + yr2 + zr2))
+        elif m == 2:
+            Y = tf.sqrt((9.0 * 5.0) / (8.0 * 8.0 * pi)) * (xr2 - yr2) * (7.0 * zr2 - (xr2 + yr2 + zr2))
+        elif m == 3:
+            Y = tf.sqrt((9.0 * 35.0) / (16.0 * 2.0 * pi)) * xr * zr * (xr2 - 3.0 * yr2)
+        elif m == 4:
+            Y = tf.sqrt((9.0 * 35.0) / (16.0 * 16.0 * pi)) * (xr2 * (xr2 - 3.0 * yr2) - yr2 * (3.0 * xr2 - yr2))
+    elif l2 == 5:
+        if m == -5:
+            Y = (3.0 / 16.0) * tf.sqrt(77.0 / (2.0 * pi)) * sinth2 * sinth2 * sinth * tf.sin(5.0 * phi)
+        elif m == -4:
+            Y = (3.0 / 8.0) * tf.sqrt(385.0 / (2.0 * pi)) * sinth2 * sinth2 * tf.sin(4.0 * phi)
+        elif m == -3:
+            Y = (1.0 / 16.0) * tf.sqrt(385.0 / (2.0 * pi)) * sinth2 * sinth * (9.0 * costh2 - 1.0) * tf.sin(3.0 * phi)
+        elif m == -2:
+            Y = (1.0 / 4.0) * tf.sqrt(1155.0 / (4.0 * pi)) * sinth2 * (3.0 * costh2 * costh - costh) * tf.sin(2.0 * phi)
+        elif m == -1:
+            Y = (1.0 / 8.0) * tf.sqrt(165.0 / (4.0 * pi)) * sinth * (21.0 * costh2 * costh2 - 14.0 * costh2 + 1) * tf.sin(phi)
+        elif m == 0:
+            Y = (1.0 / 16.0) * tf.sqrt(11.0 / pi) * (63.0 * costh2 * costh2 * costh - 70.0 * costh2 * costh + 15.0 * costh)
+        elif m == 1:
+            Y = (1.0 / 8.0) * tf.sqrt(165.0 / (4.0 * pi)) * sinth * (21.0 * costh2 * costh2 - 14.0 * costh2 + 1) * tf.cos(phi)
+        elif m == 2:
+            Y = (1.0 / 4.0) * tf.sqrt(1155.0 / (4.0 * pi)) * sinth2 * (3.0 * costh2 * costh - costh) * tf.cos(2.0 * phi)
+        elif m == 3:
+            Y = (1.0 / 16.0) * tf.sqrt(385.0 / (2.0 * pi)) * sinth2 * sinth * (9.0 * costh2 - 1.0) * tf.cos(3.0 * phi)
+        elif m == 4:
+            Y = (3.0 / 8.0) * tf.sqrt(385.0 / (2.0 * pi)) * sinth2 * sinth2 * tf.cos(4.0 * phi)
+        elif m == 5:
+            Y = (3.0 / 16.0) * tf.sqrt(77.0 / (2.0 * pi)) * sinth2 * sinth2 * sinth * tf.cos(5.0 * phi)
+    elif l2 == 6:
+        if m == -6:
+            Y = -0.6832*sinth*tf.math.pow(costh2 - 1.0, 3)
+        elif m == -5:
+            Y = 2.367*costh*sinth*tf.math.pow(1.0 - 1.0*costh2, 2.5)
+        elif m == -4:
+            Y = 0.001068*sinth*(5198.0*costh2 - 472.5)*tf.math.pow(costh2 - 1.0, 2)
+        elif m == -3:
+            Y = -0.005849*sinth*tf.math.pow(1.0 - 1.0*costh2, 1.5)*(- 1732.0*costh2*costh + 472.5*costh)
+        elif m == -2:
+            Y = -0.03509*sinth*(costh2 - 1.0)*(433.1*costh2*costh2 - 236.2*costh2 + 13.12)
+        elif m == -1:
+            Y = 0.222*sinth*tf.math.pow(1.0 - 1.0*costh2, 0.5)*(86.62*costh2*costh2*costh - 78.75*costh2*costh + 13.12*costh)
+        elif m == 0:
+            Y = 14.68*costh2*costh2*costh2 - 20.02*costh2*costh2 + 6.675*costh2 - 0.3178
+        elif m == 1:
+            Y = 0.222*cosph*tf.math.pow(1.0 - 1.0*costh2, 0.5)*(86.62*costh2*costh2*costh - 78.75*costh2*costh + 13.12*costh)
+        elif m == 2:
+            Y = -0.03509*cosph*(costh2 - 1.0)*(433.1*costh2*costh2 - 236.2*costh2 + 13.12)
+        elif m == 3:
+            Y = -0.005849*cosph*tf.math.pow(1.0 - 1.0*costh2, 1.5)*(-1732.0*costh2*costh + 472.5*costh)
+        elif m == 4:
+            Y = 0.001068*cosph*(5198.0*costh2 - 472.5)*tf.math.pow(costh2 - 1.0, 2)
+        elif m == 5:
+            Y = 2.367*costh*cosph*tf.math.pow(1.0 - 1.0*costh2, 2.5)
+        elif m == 6:
+            Y = -0.6832*cosph*tf.math.pow(costh2 - 1.0, 3)
+    elif l2 == 7:
+        if m == -7:
+            Y = 0.7072*sinth*tf.math.pow(1.0 - 1.0*costh2, 3.5)
+        elif m == -6:
+            Y = -2.646*costh*sinth*tf.math.pow(costh2 - 1.0, 3)
+        elif m == -5:
+            Y = 9.984e-5*sinth*tf.math.pow(1.0 - 1.0*costh2, 2.5)*(67570.0*costh2 - 5198.0)
+        elif m == -4:
+            Y = -0.000599*sinth*tf.math.pow(costh2 - 1.0, 2)*(-22520.0*costh2*costh + 5198.0*costh)
+        elif m == -3:
+            Y = 0.003974*sinth*tf.math.pow(1.0 - 1.0*costh2, 1.5)*(5631.0*costh2*costh2 - 2599.0*costh2 + 118.1)
+        elif m == -2:
+            Y = -0.0281*sinth*(costh2 - 1.0)*(1126.0*costh2*costh2*costh - 866.2*costh2*costh + 118.1*costh)
+        elif m == -1:
+            Y = 0.2065*sinth*tf.math.pow(1.0 - 1.0*costh2, 0.5)*(187.7*costh2*costh2*costh2 - 216.6*costh2*costh2 + 59.06*costh2 - 2.188)
+        elif m == 0:
+            Y = 29.29*costh2*costh2*costh2*costh - 47.32*costh2*costh2*costh + 21.51*costh2*costh - 2.39*costh
+        elif m == 1:
+            Y = 0.2065*cosph*tf.math.pow(1.0 - 1.0*costh2, 0.5)*(187.7*costh2*costh2*costh2 - 216.6*costh2*costh2 + 59.06*costh2 - 2.188)
+        elif m == 2:
+            Y = -0.0281*cosph*(costh2 - 1.0)*(1126.0*costh2*costh2*costh - 866.2*costh2*costh + 118.1*costh)
+        elif m == 3:
+            Y = 0.003974*cosph*tf.math.pow(1.0 - 1.0*costh2, 1.5)*(5631.0*costh2*costh2 - 2599.0*costh2 + 118.1)
+        elif m == 4:
+            Y = -0.000599*cosph*tf.math.pow(costh2 - 1.0, 2)*(- 22520.0*costh2*costh + 5198.0*costh)
+        elif m == 5:
+            Y = 9.984e-5*cosph*tf.math.pow(1.0 - 1.0*costh2, 2.5)*(67570.0*costh2 - 5198.0)
+        elif m == 6:
+            Y = -2.646*cosph*costh*tf.math.pow(costh2 - 1.0, 3)
+        elif m == 7:
+            Y = 0.7072*cosph*tf.math.pow(1.0 - 1.0*costh2, 3.5)
+    elif l2 == 8:
+        if m == -8:
+            Y = sinth*tf.math.pow(costh2-1.0,4.0)*7.289266601746931E-1
+        elif m == -7:
+            Y = costh*sinth*tf.math.pow((costh2)*-1.0+1.0,7.0/2.0)*2.915706640698772
+        elif m == -6:
+            Y = sinth*((costh2)*1.0135125E+6-6.75675E+4)*tf.math.pow(costh2-1.0,3.0)*-7.878532816224526E-6
+        elif m == -5:
+            Y = sinth*tf.math.pow((costh2)*-1.0+1.0,5.0/2.0)*(costh*6.75675E+4-(costh2*costh)*3.378375E+5)*-5.105872826582925E-5
+        elif m == -4:
+            Y = sinth*tf.math.pow(costh2-1.0,2.0)*((costh2)*-3.378375E+4+(costh2*costh2)*8.4459375E+4+1.299375E+3)*3.681897256448963E-4
+        elif m == -3:
+            Y = sinth*tf.math.pow((costh2)*-1.0+1.0,3.0/2.0)*(costh*1.299375E+3-(costh*costh2)*1.126125E+4+(costh*costh2*costh2)*1.6891875E+4)*2.851985351334463E-3
+        elif m == -2:
+            Y = sinth*(costh2-1.0)*((costh2)*6.496875E+2-(costh2*costh2)*2.8153125E+3+(costh2*costh2*costh2)*2.8153125E+3-1.96875E+1)*-2.316963852365461E-2
+        elif m == -1:
+            Y = sinth*tf.sqrt((costh2)*-1.0+1.0)*(costh*1.96875E+1-(costh*costh2)*2.165625E+2+(costh*costh2*costh2)*5.630625E+2-(costh*costh2*costh2*costh2)*4.021875E+2)*-1.938511038201796E-1
+        elif m == 0:
+            Y = (costh2)*-1.144933081936324E+1+(costh2*costh2)*6.297131950652692E+1-(costh2*costh2*costh2)*1.091502871445846E+2+(costh2*costh2*costh2*costh2)*5.847336811327841E+1+3.180369672045344E-1
+        elif m == 1:
+            Y = cosph*tf.sqrt((costh2)*-1.0+1.0)*(costh*1.96875E+1-(costh*costh2)*2.165625E+2+(costh*costh2*costh2)*5.630625E+2-(costh*costh2*costh2*costh2)*4.021875E+2)*-1.938511038201796E-1
+        elif m == 2:
+            Y = cosph*(costh2-1.0)*((costh2)*6.496875E+2-(costh2*costh2)*2.8153125E+3+(costh2*costh2*costh2)*2.8153125E+3-1.96875E+1)*-2.316963852365461E-2
+        elif m == 3:
+            Y = cosph*tf.math.pow((costh2)*-1.0+1.0,3.0/2.0)*(costh*1.299375E+3-(costh*costh2)*1.126125E+4+(costh*costh2*costh2)*1.6891875E+4)*2.851985351334463E-3
+        elif m == 4:
+            Y = cosph*tf.math.pow(costh2-1.0,2.0)*((costh2)*-3.378375E+4+(costh2*costh2)*8.4459375E+4+1.299375E+3)*3.681897256448963E-4
+        elif m == 5:
+            Y = cosph*tf.math.pow((costh2)*-1.0+1.0,5.0/2.0)*(costh*6.75675E+4-(costh*costh2)*3.378375E+5)*-5.105872826582925E-5
+        elif m == 6:
+            Y = cosph*((costh2)*1.0135125E+6-6.75675E+4)*tf.math.pow(costh2-1.0,3.0)*-7.878532816224526E-6
+        elif m == 7:
+            Y = cosph*costh*tf.math.pow((costh2)*-1.0+1.0,7.0/2.0)*2.915706640698772
+        elif m == 8:
+            Y = cosph*tf.math.pow(costh2-1.0,4.0)*7.289266601746931E-1
+    elif l2 == 9:
+        if m == -9:
+            Y = sinth*tf.math.pow((costh2)*-1.0+1.0,9.0/2.0)*7.489009518540115E-1
+        elif m == -8:
+            Y = costh*sinth*tf.math.pow(costh2-1.0,4.0)*3.17731764895143
+        elif m == -7:
+            Y = sinth*tf.math.pow((costh2)*-1.0+1.0,7.0/2.0)*((costh2)*1.72297125E+7-1.0135125E+6)*5.376406125665728E-7
+        elif m == -6:
+            Y = sinth*(costh*1.0135125E+6-(costh*costh2)*5.7432375E+6)*tf.math.pow(costh2-1.0,3.0)*3.724883428715686E-6
+        elif m == -5:
+            Y = sinth*tf.math.pow((costh2)*-1.0+1.0,5.0/2.0)*((costh2)*-5.0675625E+5+(costh2*costh2)*1.435809375E+6+1.6891875E+4)*2.885282297193648E-5
+        elif m == -4:
+            Y = sinth*tf.math.pow(costh2-1.0,2.0)*(costh*1.6891875E+4-(costh*costh2)*1.6891875E+5+(costh*costh2*costh2)*2.87161875E+5)*2.414000363328839E-4
+        elif m == -3:
+            Y = sinth*tf.math.pow((costh2)*-1.0+1.0,3.0/2.0)*((costh2)*8.4459375E+3-(costh2*costh2)*4.22296875E+4+(costh2*costh2*costh2)*4.78603125E+4-2.165625E+2)*2.131987394015766E-3
+        elif m == -2:
+            Y = sinth*(costh2-1.0)*(costh*2.165625E+2-(costh*costh2)*2.8153125E+3+(costh*costh2*costh2)*8.4459375E+3-(costh*costh2*costh2*costh2)*6.8371875E+3)*1.953998722751749E-2
+        elif m == -1:
+            Y = sinth*tf.sqrt((costh2)*-1.0+1.0)*((costh2)*-1.0828125E+2+(costh2*costh2)*7.03828125E+2-(costh2*costh2*costh2)*1.40765625E+3+(costh2*costh2*costh2*costh2)*8.546484375E+2+2.4609375)*1.833013280775049E-1
+        elif m == 0:
+            Y = costh*3.026024588281871-(costh*costh2)*4.438169396144804E+1+(costh*costh2*costh2)*1.730886064497754E+2-(costh*costh2*costh2*costh2)*2.472694377852604E+2+(costh*costh2*costh2*costh2*costh2)*1.167661233986728E+2
+        elif m == 1:
+            Y = cosph*tf.sqrt((costh2)*-1.0+1.0)*((costh2)*-1.0828125E+2+(costh2*costh2)*7.03828125E+2-(costh2*costh2*costh2)*1.40765625E+3+(costh2*costh2*costh2*costh2)*8.546484375E+2+2.4609375)*1.833013280775049E-1
+        elif m == 2:
+            Y = cosph*(costh2-1.0)*(costh*2.165625E+2-(costh*costh2)*2.8153125E+3+(costh*costh2*costh2)*8.4459375E+3-(costh*costh2*costh2*costh2)*6.8371875E+3)*1.953998722751749E-2
+        elif m == 3:
+            Y = cosph*tf.math.pow((costh2)*-1.0+1.0,3.0/2.0)*((costh2)*8.4459375E+3-(costh2*costh2)*4.22296875E+4+(costh2*costh2*costh2)*4.78603125E+4-2.165625E+2)*2.131987394015766E-3
+        elif m == 4:
+            Y = cosph*tf.math.pow(costh2-1.0,2.0)*(costh*1.6891875E+4-(costh*costh2)*1.6891875E+5+(costh*costh2*costh2)*2.87161875E+5)*2.414000363328839E-4
+        elif m == 5:
+            Y = cosph*tf.math.pow((costh2)*-1.0+1.0,5.0/2.0)*((costh2)*-5.0675625E+5+(costh2*costh2)*1.435809375E+6+1.6891875E+4)*2.885282297193648E-5
+        elif m == 6:
+            Y = cosph*(costh*1.0135125E+6-(costh*costh2)*5.7432375E+6)*tf.math.pow(costh2-1.0,3.0)*3.724883428715686E-6
+        elif m == 7:
+            Y = cosph*tf.math.pow((costh2)*-1.0+1.0,7.0/2.0)*((costh2)*1.72297125E+7-1.0135125E+6)*5.376406125665728E-7
+        elif m == 8:
+            Y = cosph*costh*tf.math.pow(costh2-1.0,4.0)*3.17731764895143
+        elif m == 9:
+            Y = cosph*tf.math.pow((costh2)*-1.0+1.0,9.0/2.0)*7.489009518540115E-1
+    elif l2 == 10:
+        if m == -10:
+            Y = sinth*tf.math.pow(costh*costh-1.0,5.0)*-7.673951182223391E-1
+        elif m == -9:
+            Y = costh*sinth*tf.math.pow((costh*costh)*-1.0+1.0,9.0/2.0)*3.431895299894677
+        elif m == -8:
+            Y = sinth*((costh*costh)*3.273645375E+8-1.72297125E+7)*tf.math.pow(costh*costh-1.0,4.0)*3.231202683857352E-8
+        elif m == -7:
+            Y = sinth*tf.math.pow((costh*costh)*-1.0+1.0,7.0/2.0)*(costh*1.72297125E+7-(costh*costh*costh)*1.091215125E+8)*-2.374439349284684E-7
+        elif m == -6:
+            Y = sinth*tf.math.pow(costh*costh-1.0,3.0)*((costh*costh)*-8.61485625E+6+(costh*costh*costh*costh)*2.7280378125E+7+2.53378125E+5)*-1.958012847746993E-6
+        elif m == -5:
+            Y = sinth*tf.math.pow((costh*costh)*-1.0+1.0,5.0/2.0)*(costh*2.53378125E+5-(costh*costh*costh)*2.87161875E+6+(costh*costh*costh*costh*costh)*5.456075625E+6)*1.751299931351813E-5
+        elif m == -4:
+            Y = sinth*tf.math.pow(costh*costh-1.0,2.0)*((costh*costh)*1.266890625E+5-(costh*costh*costh*costh)*7.179046875E+5+(costh*costh*costh*costh*costh*costh)*9.093459375E+5-2.8153125E+3)*1.661428994750302E-4
+        elif m == -3:
+            Y = sinth*tf.math.pow((costh*costh)*-1.0+1.0,3.0/2.0)*(costh*2.8153125E+3-(costh*costh*costh)*4.22296875E+4+(costh*costh*costh*costh*costh)*1.435809375E+5-(costh*costh*costh*costh*costh*costh*costh)*1.299065625E+5)*-1.644730792108362E-3
+        elif m == -2:
+            Y = sinth*(costh*costh-1.0)*((costh*costh)*-1.40765625E+3+(costh*costh*costh*costh)*1.0557421875E+4-(costh*costh*costh*costh*costh*costh)*2.393015625E+4+(costh*costh*costh*costh*costh*costh*costh*costh)*1.62383203125E+4+2.70703125E+1)*-1.67730288071084E-2
+        elif m == -1:
+            Y = sinth*tf.sqrt((costh*costh)*-1.0+1.0)*(costh*2.70703125E+1-(costh*costh*costh)*4.6921875E+2+(costh*costh*costh*costh*costh)*2.111484375E+3-(costh*costh*costh*costh*costh*costh*costh)*3.41859375E+3+(costh*costh*costh*costh*costh*costh*costh*costh*costh)*1.8042578125E+3)*1.743104285446861E-1
+        elif m == 0:
+            Y = (costh*costh)*1.749717715557199E+1-(costh*costh*costh*costh)*1.516422020150349E+2+(costh*costh*costh*costh*costh*costh)*4.549266060441732E+2-(costh*costh*costh*costh*costh*costh*costh*costh)*5.524108787681907E+2+tf.math.pow(costh,1.0E+1)*2.332401488134637E+2-3.181304937370442E-1
+        elif m == 1:
+            Y = cosph*tf.sqrt((costh*costh)*-1.0+1.0)*(costh*2.70703125E+1-(costh*costh*costh)*4.6921875E+2+(costh*costh*costh*costh*costh)*2.111484375E+3-(costh*costh*costh*costh*costh*costh*costh)*3.41859375E+3+(costh*costh*costh*costh*costh*costh*costh*costh*costh)*1.8042578125E+3)*1.743104285446861E-1
+        elif m == 2:
+            Y = cosph*(costh*costh-1.0)*((costh*costh)*-1.40765625E+3+(costh*costh*costh*costh)*1.0557421875E+4-(costh*costh*costh*costh*costh*costh)*2.393015625E+4+(costh*costh*costh*costh*costh*costh*costh*costh)*1.62383203125E+4+2.70703125E+1)*-1.67730288071084E-2
+        elif m == 3:
+            Y = cosph*tf.math.pow((costh*costh)*-1.0+1.0,3.0/2.0)*(costh*2.8153125E+3-(costh*costh*costh)*4.22296875E+4+(costh*costh*costh*costh*costh)*1.435809375E+5-(costh*costh*costh*costh*costh*costh*costh)*1.299065625E+5)*-1.644730792108362E-3
+        elif m == 4:
+            Y = cosph*tf.math.pow(costh*costh-1.0,2.0)*((costh*costh)*1.266890625E+5-(costh*costh*costh*costh)*7.179046875E+5+(costh*costh*costh*costh*costh*costh)*9.093459375E+5-2.8153125E+3)*1.661428994750302E-4
+        elif m == 5:
+            Y = cosph*tf.math.pow((costh*costh)*-1.0+1.0,5.0/2.0)*(costh*2.53378125E+5-(costh*costh*costh)*2.87161875E+6+(costh*costh*costh*costh*costh)*5.456075625E+6)*1.751299931351813E-5
+        elif m == 6:
+            Y = cosph*tf.math.pow(costh*costh-1.0,3.0)*((costh*costh)*-8.61485625E+6+(costh*costh*costh*costh)*2.7280378125E+7+2.53378125E+5)*-1.958012847746993E-6
+        elif m == 7:
+            Y = cosph*tf.math.pow((costh*costh)*-1.0+1.0,7.0/2.0)*(costh*1.72297125E+7-(costh*costh*costh)*1.091215125E+8)*-2.374439349284684E-7
+        elif m == 8:
+            Y = cosph*((costh*costh)*3.273645375E+8-1.72297125E+7)*tf.math.pow(costh*costh-1.0,4.0)*3.231202683857352E-8
+        elif m == 9:
+            Y = cosph*costh*tf.math.pow((costh*costh)*-1.0+1.0,9.0/2.0)*3.431895299894677
+        elif m == 10:
+            Y = cosph*tf.math.pow(costh*costh-1.0,5.0)*-7.673951182223391E-1
+    elif l2 == 11:
+        if m == -11:
+            Y = sinth*tf.math.pow((costh*costh)*-1.0+1.0,1.1E+1/2.0)*7.846421057874977E-1
+        elif m == -10:
+            Y = costh*sinth*tf.math.pow(costh*costh-1.0,5.0)*-3.68029769880377
+        elif m == -9:
+            Y = sinth*tf.math.pow((costh*costh)*-1.0+1.0,9.0/2.0)*((costh*costh)*6.8746552875E+9-3.273645375E+8)*1.734709165873547E-9
+        elif m == -8:
+            Y = sinth*tf.math.pow(costh*costh-1.0,4.0)*(costh*3.273645375E+8-(costh*costh*costh)*2.2915517625E+9)*-1.343699941990114E-8
+        elif m == -7:
+            Y = sinth*tf.math.pow((costh*costh)*-1.0+1.0,7.0/2.0)*((costh*costh)*-1.6368226875E+8+(costh*costh*costh*costh)*5.72887940625E+8+4.307428125E+6)*1.171410451514688E-7
+        elif m == -6:
+            Y = sinth*tf.math.pow(costh*costh-1.0,3.0)*(costh*4.307428125E+6-(costh*costh*costh)*5.456075625E+7+(costh*costh*costh*costh*costh)*1.14577588125E+8)*-1.111297530512201E-6
+        elif m == -5:
+            Y = sinth*tf.math.pow((costh*costh)*-1.0+1.0,5.0/2.0)*((costh*costh)*2.1537140625E+6-(costh*costh*costh*costh)*1.36401890625E+7+(costh*costh*costh*costh*costh*costh)*1.90962646875E+7-4.22296875E+4)*1.122355489741045E-5
+        elif m == -4:
+            Y = sinth*tf.math.pow(costh*costh-1.0,2.0)*(costh*4.22296875E+4-(costh*costh*costh)*7.179046875E+5+(costh*costh*costh*costh*costh)*2.7280378125E+6-(costh*costh*costh*costh*costh*costh*costh)*2.7280378125E+6)*-1.187789403385153E-4
+        elif m == -3:
+            Y = sinth*tf.math.pow((costh*costh)*-1.0+1.0,3.0/2.0)*((costh*costh)*-2.111484375E+4+(costh*costh*costh*costh)*1.79476171875E+5-(costh*costh*costh*costh*costh*costh)*4.5467296875E+5+(costh*costh*costh*costh*costh*costh*costh*costh)*3.410047265625E+5+3.519140625E+2)*1.301158099600741E-3
+        elif m == -2:
+            Y = sinth*(costh*costh-1.0)*(costh*3.519140625E+2-(costh*costh*costh)*7.03828125E+3+(costh*costh*costh*costh*costh)*3.5895234375E+4-(costh*costh*costh*costh*costh*costh*costh)*6.495328125E+4+(costh*costh*costh*costh*costh*costh*costh*costh*costh)*3.78894140625E+4)*-1.46054634441839E-2
+        elif m == -1:
+            Y = sinth*tf.sqrt((costh*costh)*-1.0+1.0)*((costh*costh)*1.7595703125E+2-(costh*costh*costh*costh)*1.7595703125E+3+(costh*costh*costh*costh*costh*costh)*5.9825390625E+3-(costh*costh*costh*costh*costh*costh*costh*costh)*8.11916015625E+3+tf.math.pow(costh,1.0E+1)*3.78894140625E+3-2.70703125)*1.665279049125274E-1
+        elif m == 0:
+            Y = costh*-3.662285987506039+(costh*costh*costh)*7.934952972922474E+1-(costh*costh*costh*costh*costh)*4.760971783753484E+2+(costh*costh*costh*costh*costh*costh*costh)*1.156236004628241E+3-(costh*costh*costh*costh*costh*costh*costh*costh*costh)*1.220471338216215E+3+tf.math.pow(costh,1.1E+1)*4.65998147319071E+2
+        elif m == 1:
+            Y = cosph*tf.sqrt((costh*costh)*-1.0+1.0)*((costh*costh)*1.7595703125E+2-(costh*costh*costh*costh)*1.7595703125E+3+(costh*costh*costh*costh*costh*costh)*5.9825390625E+3-(costh*costh*costh*costh*costh*costh*costh*costh)*8.11916015625E+3+tf.math.pow(costh,1.0E+1)*3.78894140625E+3-2.70703125)*1.665279049125274E-1
+        elif m == 2:
+            Y = cosph*(costh*costh-1.0)*(costh*3.519140625E+2-(costh*costh*costh)*7.03828125E+3+(costh*costh*costh*costh*costh)*3.5895234375E+4-(costh*costh*costh*costh*costh*costh*costh)*6.495328125E+4+(costh*costh*costh*costh*costh*costh*costh*costh*costh)*3.78894140625E+4)*-1.46054634441839E-2
+        elif m == 3:
+            Y = cosph*tf.math.pow((costh*costh)*-1.0+1.0,3.0/2.0)*((costh*costh)*-2.111484375E+4+(costh*costh*costh*costh)*1.79476171875E+5-(costh*costh*costh*costh*costh*costh)*4.5467296875E+5+(costh*costh*costh*costh*costh*costh*costh*costh)*3.410047265625E+5+3.519140625E+2)*1.301158099600741E-3
+        elif m == 4:
+            Y = cosph*tf.math.pow(costh*costh-1.0,2.0)*(costh*4.22296875E+4-(costh*costh*costh)*7.179046875E+5+(costh*costh*costh*costh*costh)*2.7280378125E+6-(costh*costh*costh*costh*costh*costh*costh)*2.7280378125E+6)*-1.187789403385153E-4
+        elif m == 5:
+            Y = cosph*tf.math.pow((costh*costh)*-1.0+1.0,5.0/2.0)*((costh*costh)*2.1537140625E+6-(costh*costh*costh*costh)*1.36401890625E+7+(costh*costh*costh*costh*costh*costh)*1.90962646875E+7-4.22296875E+4)*1.122355489741045E-5
+        elif m == 6:
+            Y = cosph*tf.math.pow(costh*costh-1.0,3.0)*(costh*4.307428125E+6-(costh*costh*costh)*5.456075625E+7+(costh*costh*costh*costh*costh)*1.14577588125E+8)*-1.111297530512201E-6
+        elif m == 7:
+            Y = cosph*tf.math.pow((costh*costh)*-1.0+1.0,7.0/2.0)*((costh*costh)*-1.6368226875E+8+(costh*costh*costh*costh)*5.72887940625E+8+4.307428125E+6)*1.171410451514688E-7
+        elif m == 8:
+            Y = cosph*tf.math.pow(costh*costh-1.0,4.0)*(costh*3.273645375E+8-(costh*costh*costh)*2.2915517625E+9)*-1.343699941990114E-8
+        elif m == 9:
+            Y = cosph*tf.math.pow((costh*costh)*-1.0+1.0,9.0/2.0)*((costh*costh)*6.8746552875E+9-3.273645375E+8)*1.734709165873547E-9
+        elif m == 10:
+            Y = cosph*costh*tf.math.pow(costh*costh-1.0,5.0)*-3.68029769880377
+        elif m == 11:
+            Y = cosph*tf.math.pow((costh*costh)*-1.0+1.0,1.1E+1/2.0)*7.846421057874977E-1
+    elif l2 == 12:
+        if m == -12:
+            Y = sinth*tf.math.pow(costh*costh-1.0,6.0)*8.00821995784645E-1
+        elif m == -11:
+            Y = costh*sinth*tf.math.pow((costh*costh)*-1.0+1.0,1.1E+1/2.0)*3.923210528933851
+        elif m == -10:
+            Y = sinth*((costh*costh)*1.581170716125E+11-6.8746552875E+9)*tf.math.pow(costh*costh-1.0,5.0)*-8.414179483959553E-11
+        elif m == -9:
+            Y = sinth*tf.math.pow((costh*costh)*-1.0+1.0,9.0/2.0)*(costh*6.8746552875E+9-(costh*costh*costh)*5.27056905375E+10)*-6.83571172712202E-10
+        elif m == -8:
+            Y = sinth*tf.math.pow(costh*costh-1.0,4.0)*((costh*costh)*-3.43732764375E+9+(costh*costh*costh*costh)*1.3176422634375E+10+8.1841134375E+7)*6.265033283689913E-9
+        elif m == -7:
+            Y = sinth*tf.math.pow((costh*costh)*-1.0+1.0,7.0/2.0)*(costh*8.1841134375E+7-(costh*costh*costh)*1.14577588125E+9+(costh*costh*costh*costh*costh)*2.635284526875E+9)*6.26503328367365E-8
+        elif m == -6:
+            Y = sinth*tf.math.pow(costh*costh-1.0,3.0)*((costh*costh)*4.09205671875E+7-(costh*costh*costh*costh)*2.864439703125E+8+(costh*costh*costh*costh*costh*costh)*4.392140878125E+8-7.179046875E+5)*-6.689225062143228E-7
+        elif m == -5:
+            Y = sinth*tf.math.pow((costh*costh)*-1.0+1.0,5.0/2.0)*(costh*7.179046875E+5-(costh*costh*costh)*1.36401890625E+7+(costh*costh*costh*costh*costh)*5.72887940625E+7-(costh*costh*costh*costh*costh*costh*costh)*6.27448696875E+7)*-7.50863650966771E-6
+        elif m == -4:
+            Y = sinth*tf.math.pow(costh*costh-1.0,2.0)*((costh*costh)*-3.5895234375E+5+(costh*costh*costh*costh)*3.410047265625E+6-(costh*costh*costh*costh*costh*costh)*9.54813234375E+6+(costh*costh*costh*costh*costh*costh*costh*costh)*7.8431087109375E+6+5.2787109375E+3)*8.756499656747962E-5
+        elif m == -3:
+            Y = sinth*tf.math.pow((costh*costh)*-1.0+1.0,3.0/2.0)*(costh*5.2787109375E+3-(costh*costh*costh)*1.1965078125E+5+(costh*costh*costh*costh*costh)*6.82009453125E+5-(costh*costh*costh*costh*costh*costh*costh)*1.36401890625E+6+(costh*costh*costh*costh*costh*costh*costh*costh*costh)*8.714565234375E+5)*1.050779958809755E-3
+        elif m == -2:
+            Y = sinth*(costh*costh-1.0)*((costh*costh)*2.63935546875E+3-(costh*costh*costh*costh)*2.99126953125E+4+(costh*costh*costh*costh*costh*costh)*1.136682421875E+5-(costh*costh*costh*costh*costh*costh*costh*costh)*1.7050236328125E+5+tf.math.pow(costh,1.0E+1)*8.714565234375E+4-3.519140625E+1)*-1.286937365514973E-2
+        elif m == -1:
+            Y = sinth*tf.sqrt((costh*costh)*-1.0+1.0)*(costh*3.519140625E+1-(costh*costh*costh)*8.7978515625E+2+(costh*costh*costh*costh*costh)*5.9825390625E+3-(costh*costh*costh*costh*costh*costh*costh)*1.62383203125E+4+(costh*costh*costh*costh*costh*costh*costh*costh*costh)*1.894470703125E+4-tf.math.pow(costh,1.1E+1)*7.92233203125E+3)*-1.597047270888652E-1
+        elif m == 0:
+            Y = (costh*costh)*-2.481828104582382E+1+(costh*costh*costh*costh)*3.102285130722448E+2-(costh*costh*costh*costh*costh*costh)*1.40636925926432E+3+(costh*costh*costh*costh*costh*costh*costh*costh)*2.862965992070735E+3-tf.math.pow(costh,1.0E+1)*2.672101592600346E+3+tf.math.pow(costh,1.2E+1)*9.311869186330587E+2+3.181830903313312E-1
+        elif m == 1:
+            Y = cosph*tf.sqrt((costh*costh)*-1.0+1.0)*(costh*3.519140625E+1-(costh*costh*costh)*8.7978515625E+2+(costh*costh*costh*costh*costh)*5.9825390625E+3-(costh*costh*costh*costh*costh*costh*costh)*1.62383203125E+4+(costh*costh*costh*costh*costh*costh*costh*costh*costh)*1.894470703125E+4-tf.math.pow(costh,1.1E+1)*7.92233203125E+3)*-1.597047270888652E-1
+        elif m == 2:
+            Y = cosph*(costh*costh-1.0)*((costh*costh)*2.63935546875E+3-(costh*costh*costh*costh)*2.99126953125E+4+(costh*costh*costh*costh*costh*costh)*1.136682421875E+5-(costh*costh*costh*costh*costh*costh*costh*costh)*1.7050236328125E+5+tf.math.pow(costh,1.0E+1)*8.714565234375E+4-3.519140625E+1)*-1.286937365514973E-2
+        elif m == 3:
+            Y = cosph*tf.math.pow((costh*costh)*-1.0+1.0,3.0/2.0)*(costh*5.2787109375E+3-(costh*costh*costh)*1.1965078125E+5+(costh*costh*costh*costh*costh)*6.82009453125E+5-(costh*costh*costh*costh*costh*costh*costh)*1.36401890625E+6+(costh*costh*costh*costh*costh*costh*costh*costh*costh)*8.714565234375E+5)*1.050779958809755E-3
+        elif m == 4:
+            Y = cosph*tf.math.pow(costh*costh-1.0,2.0)*((costh*costh)*-3.5895234375E+5+(costh*costh*costh*costh)*3.410047265625E+6-(costh*costh*costh*costh*costh*costh)*9.54813234375E+6+(costh*costh*costh*costh*costh*costh*costh*costh)*7.8431087109375E+6+5.2787109375E+3)*8.756499656747962E-5
+        elif m == 5:
+            Y = cosph*tf.math.pow((costh*costh)*-1.0+1.0,5.0/2.0)*(costh*7.179046875E+5-(costh*costh*costh)*1.36401890625E+7+(costh*costh*costh*costh*costh)*5.72887940625E+7-(costh*costh*costh*costh*costh*costh*costh)*6.27448696875E+7)*-7.50863650966771E-6
+        elif m == 6:
+            Y = cosph*tf.math.pow(costh*costh-1.0,3.0)*((costh*costh)*4.09205671875E+7-(costh*costh*costh*costh)*2.864439703125E+8+(costh*costh*costh*costh*costh*costh)*4.392140878125E+8-7.179046875E+5)*-6.689225062143228E-7
+        elif m == 7:
+            Y = cosph*tf.math.pow((costh*costh)*-1.0+1.0,7.0/2.0)*(costh*8.1841134375E+7-(costh*costh*costh)*1.14577588125E+9+(costh*costh*costh*costh*costh)*2.635284526875E+9)*6.26503328367365E-8
+        elif m == 8:
+            Y = cosph*tf.math.pow(costh*costh-1.0,4.0)*((costh*costh)*-3.43732764375E+9+(costh*costh*costh*costh)*1.3176422634375E+10+8.1841134375E+7)*6.265033283689913E-9
+        elif m == 9:
+            Y = cosph*tf.math.pow((costh*costh)*-1.0+1.0,9.0/2.0)*(costh*6.8746552875E+9-(costh*costh*costh)*5.27056905375E+10)*-6.83571172712202E-10
+        elif m == 10:
+            Y = cosph*((costh*costh)*1.581170716125E+11-6.8746552875E+9)*tf.math.pow(costh*costh-1.0,5.0)*-8.414179483959553E-11
+        elif m == 11:
+            Y = cosph*costh*tf.math.pow((costh*costh)*-1.0+1.0,1.1E+1/2.0)*3.923210528933851
+        elif m == 12:
+            Y = cosph*tf.math.pow(costh*costh-1.0,6.0)*8.00821995784645E-1
+
+    # Make zero those positions where d_pos_r > 1
+    Z = R * Y
+    d_pos_r = tf.linalg.norm(pos_r, axis=2)
+    Z = tf.where(d_pos_r > 1, 0.0, Z)
+    return Z
+
+@tf.function
+def computeField(pos, r, degrees, basis, c_lnm):
+    fn = lambda x: computeZernikes3D(x[0], x[1], x[2], x[3], pos, r)
+    basis = tf.map_fn(fn, degrees, fn_output_signature=tf.float32)
+    field = tf.matmul(tf.transpose(basis, (1, 2, 0)), c_lnm)
+    return field
+
+    # basis = tf.tile(basis[None, ...], (tf.shape(pos)[0], 1, 1))
+    # field = tf.matmul(basis, c_lnm)
+    # return field
+
+    # field = tf.zeros_like(pos, tf.float32)
+    # for idx in tf.range(tf.shape(degrees)[0]):
+    #     degree = tf.gather(degrees, idx, axis=0)
+    #     basis = computeZernikes3D(degree[0], degree[1], degree[2], degree[3], pos, r)
+    #     field += tf.matmul(basis[..., None], c_lnm[:, idx, :][:, None, :])
+    # return field

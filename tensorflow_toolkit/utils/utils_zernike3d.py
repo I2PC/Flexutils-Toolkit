@@ -601,3 +601,16 @@ def basisDegreeVectors(L1, L2):
                 degrees.append([l, h, h, m - aux])
 
     return np.asarray(degrees)
+
+def computeInverse(matrix):
+    tol = np.amax(matrix) * np.amax(np.array(matrix.shape)) * 1e-20  # Probably -6 (for maps) -8 (for PDBs)
+    u, s, vh = np.linalg.svd(matrix)
+
+    for idx in range(len(s)):
+        s_i = s[idx]
+        if np.abs(s_i) > tol:
+            s[idx] = 1.0 / s_i
+        else:
+            s[idx] = 0.0
+
+    return np.dot(vh.T * s, u.T)

@@ -90,8 +90,8 @@ class Installation:
         # Command: Get installation of new conda env with Cuda, Cudnn, and Tensorflow dependencies
         if not env_installed:
             if cuda_version == "12.2":
-                tensorflow = "2.15"
-                req_file = os.path.join("requirements", "tensorflow_2_15_requirements.txt")
+                tensorflow = "2.17"
+                req_file = os.path.join("requirements", "tensorflow_2_17_requirements.txt")
                 command = ("conda env remove -n flexutils-tensorflow && conda create -y -n flexutils-tensorflow "
                            "-c nvidia/label/cuda-12.2.0 -c conda-forge -c anaconda python=3.9 pyyaml=6.0.1 cuda=12.2.0 "
                            "cmake=3.29.3 make=4.3 mesalib=24.1.0 libglu=9.0.0 xorg-libx11=1.8.9 xorg-libxrandr=1.5.2 "
@@ -170,7 +170,7 @@ class Installation:
 
         # Set Tensorflow env variables when env is activated
         self.print_flush("Set environment variables in conda env...")
-        if tensorflow == "2.15" or tensorflow == "None":
+        if tensorflow >= "2.15" or tensorflow == "None":
             commands = []
         elif tensorflow == "2.12":
             commands = ['eval "$(%s shell.bash hook) "' % condabin_path,

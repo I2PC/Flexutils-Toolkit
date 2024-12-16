@@ -32,7 +32,7 @@ from sklearn.cluster import KMeans
 
 import tensorflow as tf
 
-from tensorflow_toolkit.networks.deep_elastic import VAExplode, cluster_explosion
+from deprecated.deep_elastic import VAExplode, cluster_explosion
 
 # # os.environ["CUDA_VISIBLE_DEVICES"]="0,2,3,4"
 # physical_devices = tf.config.list_physical_devices('GPU')

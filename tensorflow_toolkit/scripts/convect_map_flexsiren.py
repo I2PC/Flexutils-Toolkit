@@ -29,28 +29,19 @@
 import os
 import numpy as np
 import h5py
-import mrcfile
-from importlib.metadata import version
 from pathlib import Path
-from sklearn.cluster import KMeans
+from importlib.metadata import version
 from xmipp_metadata.image_handler import ImageHandler
 
 if version("tensorflow") >= "2.16.0":
     os.environ["TF_USE_LEGACY_KERAS"] = "1"
 import tensorflow as tf
 
-from tensorflow_toolkit.generators.generator_het_siren import Generator
-from tensorflow_toolkit.networks.het_siren import AutoEncoder
+from tensorflow_toolkit.generators.generator_flexsiren import Generator
+from tensorflow_toolkit.networks.flexsiren import AutoEncoder
 
-
-# # os.environ["CUDA_VISIBLE_DEVICES"]="0,2,3,4"
-# physical_devices = tf.config.list_physical_devices('GPU')
-# for gpu_instance in physical_devices:
-#     tf.config.experimental.set_memory_growth(gpu_instance, True)
-
-
-def predict(weigths_file, het_file, out_path, allCoords=False, filter=True, architecture="convnn",
-            poseReg=0.0, ctfReg=0.0, refPose=True, use_hyper_network=True, **kwargs):
+def predict(weigths_file, het_file, out_path, architecture="mlpnn",
+            poseReg=0.0, ctfReg=0.0, refinePose=True, **kwargs):
     x_het = np.loadtxt(het_file)
     if len(x_het.shape) == 1:
         x_het = x_het.reshape((1, -1))
@@ -62,22 +53,21 @@ def predict(weigths_file, het_file, out_path, allCoords=False, filter=True, arch
 
     # Create data generator
     generator = Generator(md_file=md_file, step=kwargs.pop("step"), shuffle=False,
-                          xsize=xsize)
+                          xsize=xsize, refinePose=refinePose)
 
     # Load model
-    autoencoder = AutoEncoder(generator, het_dim=x_het.shape[1], architecture=architecture,
-                              poseReg=poseReg, ctfReg=ctfReg, refPose=refPose, use_hyper_network=use_hyper_network,
-                              **kwargs)
+    autoencoder = AutoEncoder(generator, latDim=x_het.shape[1], architecture=architecture,
+                              poseReg=poseReg, ctfReg=ctfReg, **kwargs)
     if generator.mode == "spa":
-        data = np.zeros((1, generator.xsize, generator.xsize, 1))
+        autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
     elif generator.mode == "tomo":
-        data = [np.zeros((1, generator.xsize, generator.xsize, 1)), np.zeros((1, generator.sinusoid_table.shape[1]))]
-    _ = autoencoder(data)
+        autoencoder.build(input_shape=[(None, generator.xsize, generator.xsize, 1),
+                                       [None, generator.sinusoid_table.shape[1]]])
     autoencoder.load_weights(weigths_file)
 
-    # Decode maps
-    decoded_maps = autoencoder.eval_volume_het(x_het, allCoords=allCoords, filter=filter, add_to_original=True)
-    for idx, decoded_map in enumerate(decoded_maps):
+    # Convect maps
+    convected_maps = autoencoder.convect_maps(x_het)
+    for idx, decoded_map in enumerate(convected_maps):
         decoded_path = Path(out_path, 'decoded_map_class_%02d.mrc' % (idx + 1))
         ImageHandler().write(decoded_map, decoded_path, overwrite=True)
 
@@ -94,8 +84,7 @@ def main():
     parser.add_argument('--architecture', type=str, required=True)
     parser.add_argument('--pose_reg', type=float, required=False, default=0.0)
     parser.add_argument('--ctf_reg', type=float, required=False, default=0.0)
-    parser.add_argument('--refine_pose', action='store_true')
-    parser.add_argument('--use_hyper_network', action='store_true')
+    parser.add_argument('--refine_pos', type=float, required=False, default=0.0)
     parser.add_argument('--gpu', type=str)
 
     args = parser.parse_args()
@@ -110,8 +99,7 @@ def main():
 
     inputs = {"weigths_file": args.weigths_file, "het_file": args.het_file,
               "out_path": args.out_path, "step": args.step, "architecture": args.architecture,
-              "poseReg": args.pose_reg, "ctfReg": args.ctf_reg, "refPose": args.refine_pose,
-              "use_hyper_network": args.use_hyper_network}
+              "poseReg": args.pose_reg, "ctfReg": args.ctf_reg, "refinePose": args.refine_pose}
 
     # Initialize volume slicer
     predict(**inputs)
