@@ -26,24 +26,9 @@ This package provides a neural network environment integrating the deep learning
 
 # Installation
 
-The Flexutils-Toolkit relies on Conda and Pip for its correct installation.
+The Flexutils-Toolkit relies on Conda and Pip to install it correctly.
 
-Before installing, Conda must be set in the PATH variable so it can be discovered during the installation. Once this requirement is met, the package can be either installed with ``pip install -e git+https://github.com/I2PC/Flexutils-Toolkit.git@master#egg=tensorflow_toolkit`` or with ``pip install -e path/to/cloned/flexutils-toolkit`` after cloning this repository.
-
-We recommend adding the flag `-v` to pip installation command to have a better tracking of the installation.
-
-Additionally, the optional component `Open3D` can be installed to add extra functionalities during the network training phase. In order to install this package, the following requirements must be satisfied:
-
-- CUDA must be installed in your system and properly added to the ``PATH`` and ``LD_LIBRARY_PATH`` variables
-- You should check the following dependencies are installed in your system:
-
-```bash
-
-    sudo apt install xorg-dev libxcb-shm0 libglu1-mesa-dev python3-dev clang libc++-dev libc++abi-dev libsdl2-dev ninja-build libxi-dev libtbb-dev libosmesa6-dev libudev-dev autoconf libtool
-
-```
-
-If the previous requirements are not met, `Open3D` installation will be just skipped.
+Before installation, Conda must be set in the PATH variable so it can be detected during installation. Once this requirement is met, the package be installed by running the file ``install.sh`` after cloning this repository.
 
 # Know issues
 
