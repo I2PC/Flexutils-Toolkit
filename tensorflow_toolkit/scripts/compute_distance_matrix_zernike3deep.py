@@ -160,7 +160,7 @@ def main():
               "outPath": args.out_path, "L1": args.L1,
               "L2": args.L2, "batch_size": args.batch_size, "epochs": args.epochs,
               "cost": args.cost, "architecture": args.architecture,
-              "lr": args.lr, "jit_compile": args.jit_compile, "numProjections": args.numProjections,
+              "lr": args.lr, "jit_compile": args.jit_compile, "numProjections": args.num_projections,
               "regNorm": args.regNorm, "gpu": args.gpu, "thr": args.thr}
 
     # Initialize volume slicer
