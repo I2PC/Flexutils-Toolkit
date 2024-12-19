@@ -40,9 +40,9 @@ from tensorflow_toolkit.utils import epochs_from_iterations, computeBasis
 
 
 def compute_distance_matrix(outPath, references_file, targets_file, L1, L2, batch_size, epochs, cost,
-                            architecture="convnn", lr=1e-5, jit_compile=True, regNorm=1e-4, gpu=0, thr=8):
+                            architecture="convnn", lr=1e-5, jit_compile=True, regNorm=1e-4, numProjections=20, gpu=0, thr=8):
 
-    # Load references and targers (MMap to save memory)
+    # Load references and targets (MMap to save memory)
     references = np.load(references_file, mmap_mode="r")
     targets = np.load(targets_file, mmap_mode="r")
 
@@ -57,9 +57,10 @@ def compute_distance_matrix(outPath, references_file, targets_file, L1, L2, batc
     volIds = np.repeat(np.arange(targets.shape[0]), 20)
     if not os.path.isfile(md_file):
         for volume in tqdm(targets, desc="Projecting volumes: "):
-            volume = np.reshape(volume, (target_bx, target_bx, target_bx))
+            if volume.ndim == 1:
+                volume = np.reshape(volume, (target_bx, target_bx, target_bx))
             volume = ih.scaleSplines(data=volume, finalDimension=64)
-            proj, angles = ih.generateProjections(20, volume=volume,
+            proj, angles = ih.generateProjections(numProjections, volume=volume,
                                                   n_jobs=thr, useFourier=True)
             proj_all.append(proj)
             angles_all.append(angles)
@@ -78,7 +79,8 @@ def compute_distance_matrix(outPath, references_file, targets_file, L1, L2, batc
     for volume in references:
         # Prepare data
         md.write(filename=md_file, overwrite=True)
-        volume = np.reshape(volume, (reference_bx, reference_bx, reference_bx))
+        if volume.ndim == 1:
+              volume = np.reshape(volume, (reference_bx, reference_bx, reference_bx))
         volume = ih.scaleSplines(data=volume, finalDimension=64)
         ImageHandler().write(volume, os.path.join(outPath, "volume.mrc"), overwrite=True)
         mask = ih.generateMask(inputFn=os.path.join(outPath, "volume.mrc"),
@@ -148,6 +150,7 @@ def main():
     parser.add_argument('--architecture', type=str, default="mlpnn")
     parser.add_argument('--jit_compile', action='store_true')
     parser.add_argument('--regNorm', type=float, default=0.001)
+    parser.add_argument('--num_projections', type=int, default=20)
     parser.add_argument('--gpu', type=str)
     parser.add_argument('--thr', type=int)
 
@@ -157,7 +160,7 @@ def main():
               "outPath": args.out_path, "L1": args.L1,
               "L2": args.L2, "batch_size": args.batch_size, "epochs": args.epochs,
               "cost": args.cost, "architecture": args.architecture,
-              "lr": args.lr, "jit_compile": args.jit_compile,
+              "lr": args.lr, "jit_compile": args.jit_compile, "numProjections": args.num_projections,
               "regNorm": args.regNorm, "gpu": args.gpu, "thr": args.thr}
 
     # Initialize volume slicer
