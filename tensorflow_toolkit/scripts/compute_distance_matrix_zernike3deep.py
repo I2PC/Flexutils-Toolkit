@@ -54,7 +54,7 @@ def compute_distance_matrix(outPath, references_file, targets_file, L1, L2, batc
     ih = ImageHandler()
     md_file = os.path.join(outPath, "proj_metadata.xmd")
     proj_all, angles_all = [], []
-    volIds = np.repeat(np.arange(targets.shape[0]), 20)
+    volIds = np.repeat(np.arange(targets.shape[0]), numProjections)
     if not os.path.isfile(md_file):
         for volume in tqdm(targets, desc="Projecting volumes: "):
             if volume.ndim == 1:
@@ -122,7 +122,7 @@ def compute_distance_matrix(outPath, references_file, targets_file, L1, L2, batc
         Z = computeBasis(L1=int(L1), L2=int(L2), pos=coords - r, r=r)
         A = np.asarray([np.fromstring(item, sep=',') for item in
                         XmippMetaData(file_name=md_file)[:, 'zernikeCoefficients']])
-        A = A[::20]
+        A = A[::numProjections]
         size = int(A.shape[1] / 3)
         A = np.stack([A[:, :size], A[:, size:2 * size], A[:, 2 * size:]], axis=1)
         d_f = Z[None, ...] @ np.transpose(A, (0, 2, 1))
