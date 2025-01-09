@@ -27,6 +27,7 @@
 
 
 import os
+import numpy as np
 import shutil
 import glob
 import re
@@ -34,8 +35,8 @@ from xmipp_metadata.metadata import XmippMetaData
 
 import tensorflow as tf
 
-from tensorflow_toolkit.generators.generator_deep_pose import Generator
-from tensorflow_toolkit.networks.deep_pose import AutoEncoder
+from deprecated.generator_deep_pose import Generator
+from deprecated.deep_pose import AutoEncoder
 # from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
 from tensorflow_toolkit.utils import epochs_from_iterations
 
@@ -44,6 +45,37 @@ from tensorflow_toolkit.utils import epochs_from_iterations
 # physical_devices = tf.config.list_physical_devices('GPU')
 # for gpu_instance in physical_devices:
 #     tf.config.experimental.set_memory_growth(gpu_instance, True)
+
+
+def apply_perturbation(model, strength=0.01):
+    for layer in model.layers:
+        if hasattr(layer, 'weights'):
+            weights = layer.get_weights()
+            perturbed_weights = [w + np.random.normal(0, strength, w.shape) for w in weights]
+            layer.set_weights(perturbed_weights)
+
+class ResetOptimizerCallback(tf.keras.callbacks.Callback):
+    def __init__(self, reset_epochs, new_learning_rate):
+        super(ResetOptimizerCallback, self).__init__()
+        self.reset_epochs = reset_epochs
+        self.new_learning_rate = new_learning_rate
+
+    def on_epoch_begin(self, epoch, logs=None):
+        if epoch in self.reset_epochs:
+            idx = self.reset_epochs.index(epoch)
+            # Re-instantiate the optimizer with a new learning rate
+            tf.keras.backend.set_value(self.model.optimizer.lr, 0.0001)
+            # self.model.optimizer = tf.keras.optimizers.Adam(learning_rate=self.new_learning_rate[idx])
+
+class AddNoiseToWeightsCallback(tf.keras.callbacks.Callback):
+    def __init__(self, stddev):
+        super().__init__()
+        self.stddev = stddev
+
+    def on_batch_end(self, batch, logs=None):
+        for weight in self.model.trainable_weights:
+            noise = tf.random.normal(weight.shape, stddev=self.stddev)
+            weight.assign_add(noise)
 
 
 def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
@@ -75,7 +107,11 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
         # strategy = tf.distribute.MirroredStrategy()
         # with strategy.scope():
         #     autoencoder = AutoEncoder(generator, architecture=architecture)
-        autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, multires=multires,
+        # autoencoder = []
+        # for _ in range(1):
+        #     autoencoder.append(AutoEncoder(generator, architecture=architecture, CTF=ctfType, multires=multires,
+        #                        maxAngleDiff=10., maxShiftDiff=1.0))
+        autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, multires=False,
                                   maxAngleDiff=10., maxShiftDiff=1.0)
 
         # Fine tune a previous model
@@ -88,7 +124,7 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
         #     optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4)
         # else:
         #     optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4)
-        optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+        # optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
 
         # Callbacks list
         callbacks = []
@@ -130,14 +166,53 @@ def train(outPath, md_file, batch_size, shuffle, step, splitTrain, epochs, cost,
         if tensorboard:
             callbacks.append(tensorboard_callback)
 
+        optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
         autoencoder.compile(optimizer=optimizer, jit_compile=jit_compile)
 
         if generator_val is not None:
             autoencoder.fit(generator, validation_data=generator_val, epochs=epochs, validation_freq=2,
-                            callbacks=callbacks, initial_epoch=initial_epoch)
+                                 callbacks=callbacks, initial_epoch=initial_epoch)
         else:
+            # optim_epochs = list(range(0, epochs, 50))
+            # optim_lr = [0.0001, 0.0001, 0.0001, 0.0001, 0.0001]
+            # optim_callback = ResetOptimizerCallback(optim_epochs, optim_lr)
+            # callbacks.append(optim_callback)
             autoencoder.fit(generator, epochs=epochs,
                             callbacks=callbacks, initial_epoch=initial_epoch)
+
+        # autoencoder[0].decoder.generator.angle_rot = np.zeros(len(generator.metadata))
+        # autoencoder[0].decoder.generator.angle_tilt = np.zeros(len(generator.metadata))
+        # autoencoder[0].decoder.generator.angle_psi = np.zeros(len(generator.metadata))
+        #
+        # for idx in range(5):
+        #     # apply_perturbation(autoencoder[idx], strength=0.1)
+        #     optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+        #     autoencoder[idx].compile(optimizer=optimizer, jit_compile=jit_compile)
+        #
+        #     if generator_val is not None:
+        #         autoencoder[idx].fit(generator, validation_data=generator_val, epochs=epochs, validation_freq=2,
+        #                              callbacks=callbacks, initial_epoch=initial_epoch)
+        #     else:
+        #         autoencoder[idx].fit(generator, epochs=epochs,
+        #                              callbacks=callbacks, initial_epoch=initial_epoch)
+        #
+        #     alignment, shifts = autoencoder[idx].predict(generator)
+        #     euler_angles = np.zeros((alignment.shape[0], 3))
+        #     idy = 0
+        #     for matrix in alignment:
+        #         euler_angles[idy] = xmippEulerFromMatrix(matrix)
+        #         idy += 1
+        #
+        #     generator = Generator(md_file=md_file, shuffle=shuffle, batch_size=batch_size,
+        #                           step=step, splitTrain=splitTrain, cost=cost, radius_mask=radius_mask,
+        #                           smooth_mask=smooth_mask, pad_factor=pad,
+        #                           sr=sr, applyCTF=applyCTF)
+        #     generator.angle_rot = tf.constant(euler_angles[:, 0], dtype=tf.float32)
+        #     generator.angle_tilt = tf.constant(euler_angles[:, 1], dtype=tf.float32)
+        #     generator.angle_psi = tf.constant(euler_angles[:, 2], dtype=tf.float32)
+        #     autoencoder.append(AutoEncoder(generator, architecture=architecture, CTF=ctfType, multires=multires,
+        #                        maxAngleDiff=10., maxShiftDiff=1.0))
+
     except tf.errors.ResourceExhaustedError as error:
         msg = "GPU memory has been exhausted. Usually this can be solved by " \
               "downsampling further your particles or by decreasing the batch size. " \

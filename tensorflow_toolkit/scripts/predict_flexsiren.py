@@ -37,6 +37,7 @@ from tensorboard.plugins import projector
 
 from xmipp_metadata.metadata import XmippMetaData
 
+
 # from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
 
 
@@ -46,16 +47,16 @@ from xmipp_metadata.metadata import XmippMetaData
 #     tf.config.experimental.set_memory_growth(gpu_instance, True)
 
 
-def predict(md_file, weigths_file, L1, L2, refinePose, architecture, ctfType, pad=2,
+def predict(md_file, weigths_file, latDim, refinePose, architecture, ctfType, pad=2,
             sr=1.0, applyCTF=1, poseReg=0.0, ctfReg=0.0):
 
     # We need to import network and generators here instead of at the beginning of the script to allow Tensorflow
     # get the right GPUs set in CUDA_VISIBLE_DEVICES
-    from tensorflow_toolkit.generators.generator_zernike3deep import Generator
-    from tensorflow_toolkit.networks.zernike3deep import AutoEncoder
+    from tensorflow_toolkit.generators.generator_flexsiren import Generator
+    from tensorflow_toolkit.networks.flexsiren import AutoEncoder
 
     # Create data generator
-    generator = Generator(L1, L2, md_file=md_file, shuffle=False, batch_size=32,
+    generator = Generator(md_file=md_file, shuffle=False, batch_size=32,
                           step=1, splitTrain=1.0, refinePose=refinePose, pad_factor=pad,
                           sr=sr, applyCTF=applyCTF)
 
@@ -64,7 +65,8 @@ def predict(md_file, weigths_file, L1, L2, refinePose, architecture, ctfType, pa
     # dataset = create_dataset(generator_dataset, generator, shuffle=False, batch_size=32)
 
     # Load model
-    autoencoder = AutoEncoder(generator, architecture=architecture, CTF=ctfType, poseReg=poseReg, ctfReg=ctfReg)
+    autoencoder = AutoEncoder(generator, latDim=latDim, architecture=architecture, CTF=ctfType,
+                              poseReg=poseReg, ctfReg=ctfReg)
     _ = autoencoder(next(iter(generator.return_tf_dataset()))[0])
     autoencoder.load_weights(weigths_file)
 
@@ -78,41 +80,30 @@ def predict(md_file, weigths_file, L1, L2, refinePose, architecture, ctfType, pa
 
     # Predict step
     print("------------------ Predicting Zernike3D coefficients... ------------------")
-    encoded = autoencoder.predict(generator.return_tf_dataset())
+    encoded, c_lnm = autoencoder.predict(generator.return_tf_dataset())
 
     # Get encoded data in right format
-    zernike_space = np.hstack([encoded[0], encoded[1], encoded[2]])
+    z_space = encoded[0]
 
     if refinePose:
-        delta_euler = encoded[3]
-        delta_shifts = encoded[4]
+        delta_euler = encoded[1]
+        delta_shifts = encoded[2]
 
     # Tensorboard projector
     log_dir = os.path.join(os.path.dirname(md_file), "network", "logs")
     if os.path.isdir(log_dir):
-        zernike_space_norm = zernike_space / np.amax(np.linalg.norm(zernike_space, axis=1))
-        weights = tf.Variable(zernike_space_norm, name="zernike_space")
+        zernike_space_norm = z_space / np.amax(np.linalg.norm(z_space, axis=1))
+        weights = tf.Variable(zernike_space_norm, name="z_space")
         checkpoint = tf.train.Checkpoint(zernike_space=weights)
-        checkpoint.save(os.path.join(log_dir, "zernike_space.ckpt"))
+        checkpoint.save(os.path.join(log_dir, "z_space.ckpt"))
         config = projector.ProjectorConfig()
         embedding = config.embeddings.add()
-        embedding.tensor_name = os.path.join("zernike_space", ".ATTRIBUTES", "VARIABLE_VALUE")
+        embedding.tensor_name = os.path.join("z_space", ".ATTRIBUTES", "VARIABLE_VALUE")
         projector.visualize_embeddings(log_dir, config)
 
-    # for data in generator:
-    #     encoded = autoencoder.encoder(data[0])
-    #
-    #     zernike_vec = np.hstack([encoded[0].numpy(), encoded[1].numpy(), encoded[2].numpy()])
-    #     zernike_space.append(zernike_vec)
-    #
-    #     if refinePose:
-    #         delta_euler.append(encoded[3].numpy())
-    #         delta_shifts.append(encoded[4].numpy())
-    #
-    # zernike_space = np.vstack(zernike_space)
-
     # Save space to metadata file
-    metadata[:, 'zernikeCoefficients'] = np.asarray([",".join(item) for item in zernike_space.astype(str)])
+    metadata[:, 'zCoefficients'] = np.asarray([",".join(item) for item in z_space.astype(str)])
+    metadata[:, 'bCoefficients'] = np.asarray([",".join(item) for item in c_lnm.astype(str)])
 
     if refinePose:
         delta_euler = np.vstack(delta_euler)
@@ -134,16 +125,15 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--md_file', type=str, required=True)
     parser.add_argument('--weigths_file', type=str, required=True)
-    parser.add_argument('--L1', type=int, required=True)
-    parser.add_argument('--L2', type=int, required=True)
+    parser.add_argument('--lat_dim', type=int, required=True)
     parser.add_argument('--refine_pose', action='store_true')
     parser.add_argument('--architecture', type=str, required=True)
-    parser.add_argument('--pose_reg', type=float, required=False, default=0.0)
-    parser.add_argument('--ctf_reg', type=float, required=False, default=0.0)
     parser.add_argument('--ctf_type', type=str, required=True)
     parser.add_argument('--pad', type=int, required=False, default=2)
     parser.add_argument('--gpu', type=str)
     parser.add_argument('--sr', type=float, required=True)
+    parser.add_argument('--pose_reg', type=float, required=False, default=0.0)
+    parser.add_argument('--ctf_reg', type=float, required=False, default=0.0)
     parser.add_argument('--apply_ctf', type=int, required=True)
 
     args = parser.parse_args()
@@ -155,7 +145,7 @@ def main():
         tf.config.experimental.set_memory_growth(gpu_instance, True)
 
     inputs = {"md_file": args.md_file, "weigths_file": args.weigths_file,
-              "L1": args.L1, "L2": args.L2, "refinePose": args.refine_pose,
+              "latDim": args.lat_dim, "refinePose": args.refine_pose,
               "architecture": args.architecture, "ctfType": args.ctf_type,
               "pad": args.pad, "sr": args.sr, "applyCTF": args.apply_ctf,
               "poseReg": args.pose_reg, "ctfReg": args.ctf_reg}

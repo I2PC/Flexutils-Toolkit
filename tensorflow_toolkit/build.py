@@ -84,38 +84,41 @@ class Installation:
             shell=True, check=False, stdout=subprocess.PIPE).stdout
         check_cuda = check_cuda_conda or check_cuda_pip
         check_cuda = check_cuda.decode("utf-8").replace('\n', '').replace("*", "")
+        command = ""
         if check_cuda != cuda_version:
+            if env_installed:
+                command += "conda env remove -n flexutils-tensorflow && "
             env_installed = False
 
         # Command: Get installation of new conda env with Cuda, Cudnn, and Tensorflow dependencies
         if not env_installed:
             if cuda_version == "12.2":
-                tensorflow = "2.15"
-                req_file = os.path.join("requirements", "tensorflow_2_15_requirements.txt")
-                command = ("conda env remove -n flexutils-tensorflow && conda create -y -n flexutils-tensorflow "
-                           "-c nvidia/label/cuda-12.2.0 -c conda-forge -c anaconda python=3.9 pyyaml=6.0.1 cuda=12.2.0 "
-                           "cmake=3.29.3 make=4.3 mesalib=24.1.0 libglu=9.0.0 xorg-libx11=1.8.9 xorg-libxrandr=1.5.2 "
-                           "xorg-libxinerama=1.1.5 xorg-libxcursor=1.2.0 libxcb=1.15 libcxx=17.0.6 libcxxabi=17.0.6 "
-                           "sdl2=2.30.2 ninja=1.12.1 xorg-libxi=1.7.10 tbb-devel=2021.12.0 libudev=255 autoconf=2.71 "
-                           "libtool=2.4.7 cxx-compiler=1.7.0 gcc=12.3.0 c-compiler=1.7.0 clang=18.1.5 "
-                           "mesa-libgl-devel-cos6-x86_64=11.0.7  mesa-libgl-cos6-x86_64=11.0.7 "
-                           "mesa-dri-drivers-cos6-x86_64=11.0.7")
+                tensorflow = "2.17"
+                req_file = os.path.join("requirements", "tensorflow_2_17_requirements.txt")
+                command += ("conda create -y -n flexutils-tensorflow "
+                            "-c nvidia/label/cuda-12.2.0 -c conda-forge -c anaconda python=3.9 pyyaml=6.0.1 cuda=12.2.0 "
+                            "cmake=3.29.3 make=4.3 mesalib=24.1.0 libglu=9.0.0 xorg-libx11=1.8.9 xorg-libxrandr=1.5.2 "
+                            "xorg-libxinerama=1.1.5 xorg-libxcursor=1.2.0 libxcb=1.15 libcxx=17.0.6 libcxxabi=17.0.6 "
+                            "sdl2=2.30.2 ninja=1.12.1 xorg-libxi=1.7.10 tbb-devel=2021.12.0 libudev=255 autoconf=2.71 "
+                            "libtool=2.4.7 cxx-compiler=1.7.0 gcc=12.3.0 c-compiler=1.7.0 clang=18.1.5 "
+                            "mesa-libgl-devel-cos6-x86_64=11.0.7  mesa-libgl-cos6-x86_64=11.0.7 "
+                            "mesa-dri-drivers-cos6-x86_64=11.0.7")
 
             elif cuda_version == "11.8":
                 tensorflow = "2.12"
                 req_file = os.path.join("requirements", "tensorflow_2_12_requirements.txt")
-                command = "conda env remove -n flexutils-tensorflow && conda create -y -n flexutils-tensorflow " \
-                          "-c conda-forge python=3.9 cudatoolkit=11.8 cudatoolkit-dev pyyaml"
+                command += "conda create -y -n flexutils-tensorflow " \
+                           "-c conda-forge python=3.9 cudatoolkit=11.8 cudatoolkit-dev pyyaml"
             elif cuda_version == "11.2":
                 tensorflow = "2.11"
                 req_file = os.path.join("requirements", "tensorflow_2_11_requirements.txt")
-                command = "conda env remove -n flexutils-tensorflow && conda create -y -n flexutils-tensorflow " \
-                          "-c conda-forge python=3.8 cudatoolkit=11.2 cudnn=8.1.0 cudatoolkit-dev pyyaml"
+                command += "conda create -y -n flexutils-tensorflow " \
+                           "-c conda-forge python=3.8 cudatoolkit=11.2 cudnn=8.1.0 cudatoolkit-dev pyyaml"
             else:
                 tensorflow = "2.3"
                 req_file = os.path.join("requirements", "tensorflow_2_3_requirements.txt")
-                command = "conda env remove -n flexutils-tensorflow && conda create -y -n flexutils-tensorflow " \
-                          "-c conda-forge python=3.8 cudatoolkit=10.1 cudnn=7 cudatoolkit-dev pyyaml"
+                command += "conda create -y -n flexutils-tensorflow " \
+                           "-c conda-forge python=3.8 cudatoolkit=10.1 cudnn=7 cudatoolkit-dev pyyaml"
         else:
             tensorflow = "None"
             req_file = None
@@ -170,7 +173,7 @@ class Installation:
 
         # Set Tensorflow env variables when env is activated
         self.print_flush("Set environment variables in conda env...")
-        if tensorflow == "2.15" or tensorflow == "None":
+        if tensorflow >= "2.15" or tensorflow == "None":
             commands = []
         elif tensorflow == "2.12":
             commands = ['eval "$(%s shell.bash hook) "' % condabin_path,

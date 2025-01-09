@@ -29,6 +29,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 import mrcfile
 import os
+import random
 from pathlib import Path
 from xmipp_metadata.metadata import XmippMetaData
 
@@ -39,7 +40,7 @@ import tensorflow_addons as tfa
 from tensorflow_toolkit.utils import getXmippOrigin, fft_pad, ifft_pad, full_fft_pad, full_ifft_pad
 
 
-class DataGeneratorBase(tf.keras.utils.Sequence):
+class DataGeneratorBase:
     def __init__(self, md_file, batch_size=32, shuffle=True, step=1, splitTrain=None,
                  radius_mask=2, smooth_mask=True, cost="corr", keepMap=False, pad_factor=2,
                  sr=1., applyCTF=1, xsize=128, mode=None):
@@ -49,14 +50,16 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
         self.batch_size = batch_size
         self.indexes = np.arange(self.batch_size)
         self.pad_factor = pad_factor
+        self.filename = Path(md_file)
         # self.cap_def = 3.
 
         # Read metadata
-        mask, volume, structure = self.readMetadata(md_file)
+        metadata = XmippMetaData(file_name=str(md_file))
+        mask, volume, structure = self.readMetadata(metadata)
         self.sr = tf.constant(sr, dtype=tf.float32)
         self.applyCTF = applyCTF
-        if self.metadata.binaries:
-            self.xsize = self.metadata.getMetaDataImage(0).shape[1]
+        if metadata.binaries:
+            self.xsize = metadata.getMetaDataImage(0).shape[1]
         else:
             self.xsize = xsize
         self.xmipp_origin = getXmippOrigin(self.xsize)
@@ -116,7 +119,7 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
 
         # Generator mode
         if mode is None:
-            if self.metadata.isMetaDataLabel("subtomo_labels"):
+            if metadata.isMetaDataLabel("subtomo_labels"):
                 self.mode = "tomo"
             else:
                 self.mode = "spa"
@@ -125,33 +128,30 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
 
         # Positional encoding of subtomo labels (Tomo only)
         if self.mode == "tomo":
-            unique_labels = np.unique(self.metadata[:, "subtomo_labels"]).astype(int)
+            unique_labels = np.unique(metadata[:, "subtomo_labels"]).astype(int)
             # self.get_sinusoid_encoding_table(len(unique_labels), 10)
             self.get_sinusoid_encoding_table(np.amax(unique_labels), 100)
 
 
     #----- Initialization methods -----#
 
-    def readMetadata(self, filename):
-        filename = Path(filename)
-        self.filename = filename
-        self.metadata = XmippMetaData(file_name=str(filename))
-        mask = Path(filename.parent, 'mask.mrc')
-        volume = Path(filename.parent, 'volume.mrc')
-        structure = Path(filename.parent, 'structure.txt')
-        self.angle_rot = tf.constant(np.asarray(self.metadata[:, 'angleRot']), dtype=tf.float32)
-        self.angle_tilt = tf.constant(np.asarray(self.metadata[:, 'angleTilt']), dtype=tf.float32)
-        self.angle_psi = tf.constant(np.asarray(self.metadata[:, 'anglePsi']), dtype=tf.float32)
-        self.shift_x = tf.constant(self.metadata[:, 'shiftX'], dtype=tf.float32)
-        self.shift_y = tf.constant(np.asarray(self.metadata[:, 'shiftY']), dtype=tf.float32)
+    def readMetadata(self, metadata):
+        mask = Path(self.filename.parent, 'mask.mrc')
+        volume = Path(self.filename.parent, 'volume.mrc')
+        structure = Path(self.filename.parent, 'structure.txt')
+        self.angle_rot = tf.constant(np.asarray(metadata[:, 'angleRot']), dtype=tf.float32)
+        self.angle_tilt = tf.constant(np.asarray(metadata[:, 'angleTilt']), dtype=tf.float32)
+        self.angle_psi = tf.constant(np.asarray(metadata[:, 'anglePsi']), dtype=tf.float32)
+        self.shift_x = tf.constant(metadata[:, 'shiftX'], dtype=tf.float32)
+        self.shift_y = tf.constant(np.asarray(metadata[:, 'shiftY']), dtype=tf.float32)
         self.shift_z = tf.constant(np.zeros(self.shift_x.shape), dtype=tf.float32)
         self.shifts = [self.shift_x, self.shift_y, self.shift_z]
-        self.defocusU = tf.constant(self.metadata[:, 'ctfDefocusU'], dtype=tf.float32)
-        self.defocusV = tf.constant(self.metadata[:, 'ctfDefocusV'], dtype=tf.float32)
-        self.defocusAngle = tf.constant(self.metadata[:, 'ctfDefocusAngle'], dtype=tf.float32)
-        self.cs = tf.constant(self.metadata[:, 'ctfSphericalAberration'], dtype=tf.float32)
-        self.kv = tf.constant(self.metadata[:, 'ctfVoltage'][0], dtype=tf.float32)
-        self.file_idx = np.arange(len(self.metadata))
+        self.defocusU = tf.constant(metadata[:, 'ctfDefocusU'], dtype=tf.float32)
+        self.defocusV = tf.constant(metadata[:, 'ctfDefocusV'], dtype=tf.float32)
+        self.defocusAngle = tf.constant(metadata[:, 'ctfDefocusAngle'], dtype=tf.float32)
+        self.cs = tf.constant(metadata[:, 'ctfSphericalAberration'], dtype=tf.float32)
+        self.kv = tf.constant(metadata[:, 'ctfVoltage'][0], dtype=tf.float32)
+        self.file_idx = np.arange(len(metadata))
 
         return mask, volume, structure
 
@@ -235,36 +235,83 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
 
 
     # ----- Data generation methods -----#
+    def rand_degree(self):
+        return random.uniform(0.0, np.pi)
 
-    def on_epoch_end(self):
-        if self.shuffle == True:
-            indexes = np.arange(self.file_idx.size)
-            np.random.shuffle(indexes)
-            self.file_idx = self.file_idx[indexes]
+    def normalize_image(self, image):
+        """
+        Normalizes the input image to the range [-1, 1].
 
-    def __data_generation(self):
-        images = self.metadata.getMetaDataImage(self.indexes)[..., None]
-        if len(images.shape) == 3:
-            images = images[None, ...]
-        if self.mode == "spa":
-            return images, self.indexes
-        elif self.mode == "tomo":
-            subtomo_labels = self.metadata[self.indexes, "subtomo_labels"].astype(int) - 1
-            subtomo_pe = self.sinusoid_table[subtomo_labels]
-            if len(images.shape) == 1:
-                subtomo_pe = subtomo_pe[None, ...]
-            return [images, subtomo_pe], [self.indexes, self.indexes]
+        Args:
+            image (np.ndarray): Input image array.
 
+        Returns:
+            normalized_image (np.ndarray): Image normalized to the range [-1, 1].
+        """
+        # Get the positive and negative masks
+        pos_mask = image > 0
+        neg_mask = image < 0
 
-    def __getitem__(self, index):
-        # Generate indexes of the batch
-        self.indexes = self.file_idx[index * self.batch_size:(index + 1) * self.batch_size]
-        # Generate data
-        X, y = self.__data_generation()
-        return X, y
+        # Get the maximum of positive values and minimum of negative values
+        max_pos = tf.reduce_max(tf.boolean_mask(image, pos_mask))
+        min_neg = tf.reduce_min(tf.boolean_mask(image, neg_mask))
 
-    def __len__(self):
-        return int(np.ceil(len(self.file_idx) / self.batch_size))
+        # Normalize positive values by their maximum and negative values by their minimum
+        pos_normalized = tf.where(pos_mask, image / max_pos, image)
+        neg_normalized = tf.where(neg_mask, image / min_neg, image)
+
+        # Combine the positive and negative normalized values
+        normalized_image = tf.where(pos_mask, pos_normalized, neg_normalized)
+
+        return normalized_image
+
+    def data_augmentation(self, image):
+        """
+        Applies a series of augmentations to the input cryo-EM image.
+        Args:
+            image: A TensorFlow image tensor.
+        Returns:
+            Augmented image tensor.
+        """
+        # Random rotation within a small range
+        # image = tf.image.rot90(image, k=tf.random.uniform(shape=[], minval=0, maxval=4, dtype=tf.int32))
+        image = tfa.image.rotate(image, self.rand_degree())
+        # image = tf.image.random_flip_left_right(image)
+        # image = tf.image.random_flip_up_down(image)
+
+        # Apply random brightness and contrast adjustments
+        # image = tf.image.random_brightness(image, max_delta=0.1)
+        # image = tf.image.random_contrast(image, lower=0.8, upper=1.2)
+
+        # Add Gaussian noise
+        # noise = tf.random.normal(shape=tf.shape(image), mean=0.0, stddev=0.05)
+        # image = image + noise
+
+        # Image normalization
+        # image = tf.image.per_image_standardization(image[None, ...])[0]
+        # image = self.normalize_image(image)
+
+        # Remove negative values
+        # image = tf.clip_by_value(image, 0.0, tf.reduce_max(image))
+
+        return image  # Ensure pixel values are valid
+
+    def return_tf_dataset(self, preShuffle=False):
+        with tf.device("/CPU:0"):
+            metadata = XmippMetaData(file_name=str(self.filename))
+            file_idx = self.file_idx
+            if preShuffle:
+                np.random.shuffle(file_idx)
+            images = metadata.getMetaDataImage(file_idx)[..., None]
+            if self.mode == "tomo":
+                subtomo_labels = self.sinusoid_table[metadata[file_idx, "subtomo_labels"].astype(int) - 1]
+                dataset = tf.data.Dataset.from_tensor_slices(((images, subtomo_labels), (file_idx, file_idx)))
+            else:
+                dataset = tf.data.Dataset.from_tensor_slices((images, file_idx))
+            if self.shuffle:
+                dataset = dataset.shuffle(len(file_idx))
+            # dataset = dataset.map(lambda image, label: (self.data_augmentation(image), label))
+            return dataset.batch(self.batch_size).prefetch(2)
 
     # ----- -------- -----#
 
@@ -489,6 +536,11 @@ class DataGeneratorBase(tf.keras.utils.Sequence):
 
     def mse(self, y_true, y_pred):
         cost = tf.keras.metrics.mse(y_true, y_pred)
+        axis = tf.range(1, tf.rank(cost))
+        return tf.reduce_mean(cost, axis=axis)
+
+    def mne(self, y_true, y_pred, n=2.):
+        cost = tf.pow(y_true - y_pred, n)
         axis = tf.range(1, tf.rank(cost))
         return tf.reduce_mean(cost, axis=axis)
 

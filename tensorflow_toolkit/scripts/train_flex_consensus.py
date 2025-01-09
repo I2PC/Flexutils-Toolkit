@@ -30,10 +30,13 @@ import os
 import shutil
 import glob
 import re
+from importlib.metadata import version
 from scipy.stats import entropy
 from scipy.interpolate import NearestNDInterpolator
-
 import numpy as np
+
+if version("tensorflow") >= "2.16.0":
+    os.environ["TF_USE_LEGACY_KERAS"] = "1"
 import tensorflow as tf
 
 from tensorflow_toolkit.generators.generator_flex_consensus import Generator
@@ -101,7 +104,10 @@ def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs, lr
 
         # Create a callback that saves the model's weights
         initial_epoch = 0
-        checkpoint_path = os.path.join(outPath, "training", "cp-{epoch:04d}.hdf5")
+        if tf.__version__ < "2.16.0" or os.environ["TF_USE_LEGACY_KERAS"] == "1":
+            checkpoint_path = os.path.join(outPath, "training", "cp-{epoch:04d}.hdf5")
+        else:
+            checkpoint_path = os.path.join(outPath, "training", "cp-{epoch:04d}.weights.h5")
         if not os.path.isdir(os.path.dirname(checkpoint_path)):
             os.mkdir(os.path.dirname(checkpoint_path))
         cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
@@ -146,7 +152,10 @@ def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs, lr
         raise error
 
     # Save model
-    autoencoder.save_weights(os.path.join(outPath, "network", "flex_consensus_model.h5"))
+    if tf.__version__ < "2.16.0" or os.environ["TF_USE_LEGACY_KERAS"] == "1":
+        autoencoder.save_weights(os.path.join(outPath, "flex_consensus_model.h5"))
+    else:
+        autoencoder.save_weights(os.path.join(outPath, "flex_consensus_model.weights.h5"))
 
     # Remove checkpoints
     shutil.rmtree(checkpoint)

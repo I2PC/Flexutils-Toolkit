@@ -36,8 +36,8 @@ from xmipp_metadata.image_handler import ImageHandler
 
 import tensorflow as tf
 
-from tensorflow_toolkit.generators.generator_homo_siren import Generator
-from tensorflow_toolkit.networks.homo_siren import AutoEncoder
+from deprecated.generator_homo_siren import Generator
+from deprecated.homo_siren import AutoEncoder
 # from tensorflow_toolkit.datasets.dataset_template import sequence_to_data_pipeline, create_dataset
 from tensorflow_toolkit.utils import epochs_from_iterations
 

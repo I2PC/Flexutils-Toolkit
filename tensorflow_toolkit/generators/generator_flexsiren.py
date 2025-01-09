@@ -25,10 +25,12 @@
 # **************************************************************************
 
 
+from packaging import version
 import numpy as np
 import mrcfile
 from pathlib import Path
-from xmipp_metadata.metadata import XmippMetaData
+from sklearn.cluster import KMeans
+from sklearn.neighbors import KDTree
 
 import tensorflow as tf
 
@@ -40,7 +42,8 @@ except ImportError:
     print("Open3D has not been installed. The program will continue without this package")
 
 from tensorflow_toolkit.generators.generator_template import DataGeneratorBase
-from tensorflow_toolkit.utils import basisDegreeVectors, computeBasis, euler_matrix_batch, fft_pad, ifft_pad
+from tensorflow_toolkit.utils import basisDegreeVectors, computeBasis, euler_matrix_batch, fft_pad, ifft_pad, \
+    computeInverse
 
 
 @tf.function
@@ -51,11 +54,23 @@ def compute_energy(conv, points, queries, extent):
 
 
 class Generator(DataGeneratorBase):
-    def __init__(self, L1=3, L2=2, refinePose=True, cap_def=False, **kwargs):
+    def __init__(self, batch_coords=0, refinePose=True, cap_def=False, precision=tf.float32, **kwargs):
         super().__init__(**kwargs)
 
+        self.batch_coords = batch_coords
         self.refinePose = refinePose
         self.cap_def = cap_def
+        self.shuf_order = tf.range(self.coords.shape[0], dtype=tf.int32)
+        self.unshuf_order = tf.range(self.coords.shape[0], dtype=tf.int32)
+        self.precision = precision
+
+        # Save mask map and indices
+        mask_path = Path(self.filename.parent, 'mask.mrc')
+        with mrcfile.open(mask_path) as mrc:
+            self.mask_map = mrc.data
+            coords = np.asarray(np.where(mrc.data == 1))
+            self.indices = tf.constant(coords.T, dtype=tf.int32)
+        self.total_voxels = self.indices.shape[0]
 
         # Get coords group
         mask_file = Path(Path(kwargs.get("md_file")).parent, 'mask.mrc')
@@ -64,37 +79,20 @@ class Generator(DataGeneratorBase):
         else:
             groups, centers = self.getCoordsGroup(mask_file)
 
-        # Get Zernike3D vector size
-        self.zernike_size = basisDegreeVectors(L1, L2)
-        self.num_coeff = list(range(self.zernike_size.shape[0]))
-
         # Precompute Zernike3D basis
-        self.Z = computeBasis(self.coords, L1=L1, L2=L2, r=0.5 * self.xsize,
-                              groups=groups, centers=centers)
+        self.half_xsize = 0.5 * self.xsize
+        # self.scaled_coords = tf.cast(self.coords_to_9D(self.coords / self.half_xsize), self.precision)
+        # self.scaled_coords = tf.constant(self.positional_encode_coords(self.coords / self.half_xsize), self.precision)
+        self.scaled_coords = tf.constant(self.coords / self.half_xsize, dtype=self.precision)
 
         if self.ref_is_struct:
-            self.Z_atoms = computeBasis(self.atom_coords, L1=L1, L2=L2, r=0.5 * self.xsize,
-                                        groups=groups, centers=centers)
+            # self.scaled_atom_coords = tf.cast(self.coords_to_9D(self.atom_coords, self.half_xsize), self.precision)
+            self.scaled_atom_coords = tf.constant(self.atom_coords / self.half_xsize, dtype=self.precision)
 
-        # Initialize zernike information
-        size = self.zernike_size.shape[0]
-        metadata = XmippMetaData(kwargs.get("md_file"))
-        if metadata.isMetaDataLabel('zernikeCoefficients'):
-            z_space = np.asarray([np.fromstring(item, sep=',')
-                                  for item in metadata[:, 'zernikeCoefficients']])
-            self.z_x_space = tf.constant(z_space[:, :size], dtype=tf.float32)
-            self.z_y_space = tf.constant(z_space[:, size:2 * size], dtype=tf.float32)
-            self.z_z_space = tf.constant(z_space[:, 2 * size:], dtype=tf.float32)
-            self.weight_initializer = tf.keras.initializers.RandomUniform(minval=-0.001, maxval=0.001,
-                                                                          seed=None)
-        else:
-            self.z_x_space = tf.zeros((len(metadata), size), dtype=tf.float32)
-            self.z_y_space = tf.zeros((len(metadata), size), dtype=tf.float32)
-            self.z_z_space = tf.zeros((len(metadata), size), dtype=tf.float32)
-            self.weight_initializer = "glorot_uniform"
-        self.z_x_batch = np.zeros(self.batch_size)
-        self.z_y_batch = np.zeros(self.batch_size)
-        self.z_z_batch = np.zeros(self.batch_size)
+        # Initialize weightd
+        # self.weight_initializer = "glorot_uniform"
+        self.weight_initializer = tf.keras.initializers.RandomUniform(minval=-0.001, maxval=0.001,
+                                                                      seed=None)
 
         # Initialize pose information
         if refinePose:
@@ -112,6 +110,16 @@ class Generator(DataGeneratorBase):
             self.angle0 = 0.0
             self.bond0 = 0.0
 
+        # Zernike3D basis (to convert free form to Zernike3D)
+        zernike_size = basisDegreeVectors(7, 7)
+        Z = computeBasis(self.coords, L1=7, L2=7, r=0.5 * self.xsize,
+                              groups=groups, centers=centers)
+        self.Z_solver = computeInverse(Z.T @ Z) @ Z.T
+
+        # Train coords
+        # self.select_train_coords()
+
+
     # ----- Initialization methods -----#
     def getCoordsGroup(self, mask):
         with mrcfile.open(mask) as mrc:
@@ -127,6 +135,61 @@ class Generator(DataGeneratorBase):
             groups, centers = None, None
 
         return groups, centers
+
+    def coords_to_9D(self, coords):
+        coords_corner_1 = coords + 1.0
+        coords_corner_2 = coords - 1.0
+        spherical = self.cartesian_to_spherical(coords)
+        return tf.concat([coords_corner_1, coords_corner_2, spherical], axis=-1)
+
+    def positional_encode_coords(self, coords):
+        self.get_sinusoid_encoding_table(np.amax(self.indices) + 1, 100)
+        pe_x = self.sinusoid_table[self.indices[:, 2]]
+        pe_y = self.sinusoid_table[self.indices[:, 1]]
+        pe_z = self.sinusoid_table[self.indices[:, 0]]
+        return np.concatenate([coords, pe_x, pe_y, pe_z], axis=-1)
+
+    def cartesian_to_spherical(self, coords):
+        coords_2 = coords ** 2.0
+
+        xy = tf.sqrt(coords_2[..., 0] + coords_2[..., 1])
+
+        r = tf.sqrt(coords_2[..., 0] + coords_2[..., 1] + coords_2[..., 2])
+        phi = tf.atan2(coords_2[..., 1], coords_2[..., 0])
+        theta = tf.atan2(xy, coords_2[..., 2])
+
+        return tf.stack([r, phi, theta], axis=-1)
+
+    def circular_shuffle_indices(self):
+        if self.coords.shape[0] > self.batch_coords:
+            shuf_order = np.arange(self.coords.shape[0])
+            np.random.shuffle(shuf_order)
+
+            unshuf_order = np.zeros_like(shuf_order)
+            unshuf_order[shuf_order] = np.arange(self.coords.shape[0])
+
+            self.shuf_order = tf.constant(shuf_order, dtype=tf.int32)
+            self.unshuf_order = tf.constant(unshuf_order, dtype=tf.int32)
+        else:
+            self.shuf_order = tf.range(self.coords.shape[0], dtype=tf.int32)
+            self.unshuf_order = tf.range(self.coords.shape[0], dtype=tf.int32)
+
+    def select_train_coords(self):
+        # Apply KMeans to find marker positions
+        kmeans = KMeans(n_clusters=self.batch_coords).fit(self.scaled_coords)
+        marker_coords = kmeans.cluster_centers_
+
+        # Find the indices within coords where marker_coords are located
+        _, marker_indices = KDTree(self.scaled_coords).query(marker_coords, k=1)
+        marker_indices = np.squeeze(marker_indices)
+
+        # Create a new array of coords with marker_coords first, followed by the remaining coordinates
+        shuf_order = np.hstack((marker_indices, np.delete(np.arange(len(self.scaled_coords)).astype(int), marker_indices, axis=0)))
+        self.shuf_order = tf.constant(shuf_order.flatten(), dtype=tf.int32)
+
+        # Create an indices array to reorder new_coords back to the original order of coords
+        unshuf_order = np.argsort(np.hstack((marker_indices, np.setdiff1d(np.arange(len(self.scaled_coords)), marker_indices))))
+        self.unshuf_order = tf.constant(unshuf_order.flatten(), dtype=tf.int32)
 
     # ----- -------- -----#
 
@@ -179,19 +242,19 @@ class Generator(DataGeneratorBase):
         return d
 
     def applyDeformationFieldVol(self, d, axis):
-        coords = tf.constant(self.coords, dtype=tf.float32)
+        coords = tf.constant(self.coords, dtype=self.precision)
         coords_axis = tf.transpose(tf.gather(coords, axis, axis=1))
         return tf.add(coords_axis[:, None], d)
 
     def applyDeformationFieldAtoms(self, d, axis):
-        coords = tf.constant(self.atom_coords, dtype=tf.float32)
+        coords = tf.constant(self.atom_coords, dtype=self.precision)
         coords_axis = tf.transpose(tf.gather(coords, axis, axis=1))
         return tf.add(coords_axis[:, None], d)
 
     def applyAlignmentMatrix(self, c, axis):
-        c_r_1 = tf.multiply(c[0], tf.cast(tf.gather(self.r[axis], 0, axis=1), dtype=tf.float32))
-        c_r_2 = tf.multiply(c[1], tf.cast(tf.gather(self.r[axis], 1, axis=1), dtype=tf.float32))
-        c_r_3 = tf.multiply(c[2], tf.cast(tf.gather(self.r[axis], 2, axis=1), dtype=tf.float32))
+        c_r_1 = tf.multiply(c[0], tf.cast(tf.gather(self.r[axis], 0, axis=1), dtype=self.precision))
+        c_r_2 = tf.multiply(c[1], tf.cast(tf.gather(self.r[axis], 1, axis=1), dtype=self.precision))
+        c_r_3 = tf.multiply(c[2], tf.cast(tf.gather(self.r[axis], 2, axis=1), dtype=self.precision))
         return tf.add(tf.add(c_r_1, c_r_2), c_r_3)
 
     def applyAlignmentDeltaEuler(self, inputs, alignments, axis):
@@ -200,9 +263,9 @@ class Generator(DataGeneratorBase):
                                alignments[1] + inputs[3][:, 1],
                                alignments[2] + inputs[3][:, 2])
 
-        c_r_1 = tf.multiply(inputs[0], tf.cast(tf.gather(r[axis], 0, axis=1), dtype=tf.float32))
-        c_r_2 = tf.multiply(inputs[1], tf.cast(tf.gather(r[axis], 1, axis=1), dtype=tf.float32))
-        c_r_3 = tf.multiply(inputs[2], tf.cast(tf.gather(r[axis], 2, axis=1), dtype=tf.float32))
+        c_r_1 = tf.multiply(inputs[0], tf.cast(tf.gather(r[axis], 0, axis=1), dtype=self.precision))
+        c_r_2 = tf.multiply(inputs[1], tf.cast(tf.gather(r[axis], 1, axis=1), dtype=self.precision))
+        c_r_3 = tf.multiply(inputs[2], tf.cast(tf.gather(r[axis], 2, axis=1), dtype=self.precision))
         return tf.add(tf.add(c_r_1, c_r_2), c_r_3)
 
     def applyShifts(self, c, shifts_batch, axis):
@@ -241,19 +304,19 @@ class Generator(DataGeneratorBase):
         c_y = tf.reshape(tf.transpose(c[1]), [batch_size_scope, -1, 1])
         c_sampling = tf.concat([c_y, c_x], axis=2)
 
-        imgs = tf.zeros((batch_size_scope, self.xsize, self.xsize), dtype=tf.float32)
+        imgs = tf.zeros((batch_size_scope, self.xsize, self.xsize), dtype=self.precision)
 
-        bamp = tf.constant(self.values, dtype=tf.float32)
+        bamp = tf.constant(self.values, dtype=self.precision)[None, ...] + c[2]
 
         bposf = tf.floor(c_sampling)
         bposi = tf.cast(bposf, tf.int32)
         bposf = c_sampling - bposf
 
         # Bilinear interpolation to provide forward mapping gradients
-        bamp0 = bamp[None, :] * (1.0 - bposf[:, :, 0]) * (1.0 - bposf[:, :, 1])
-        bamp1 = bamp[None, :] * (bposf[:, :, 0]) * (1.0 - bposf[:, :, 1])
-        bamp2 = bamp[None, :] * (bposf[:, :, 0]) * (bposf[:, :, 1])
-        bamp3 = bamp[None, :] * (1.0 - bposf[:, :, 0]) * (bposf[:, :, 1])
+        bamp0 = bamp * (1.0 - bposf[:, :, 0]) * (1.0 - bposf[:, :, 1])
+        bamp1 = bamp * (bposf[:, :, 0]) * (1.0 - bposf[:, :, 1])
+        bamp2 = bamp * (bposf[:, :, 0]) * (bposf[:, :, 1])
+        bamp3 = bamp * (1.0 - bposf[:, :, 0]) * (bposf[:, :, 1])
         bampall = tf.concat([bamp0, bamp1, bamp2, bamp3], axis=1)
         bposall = tf.concat([bposi, bposi + (1, 0), bposi + (1, 1), bposi + (0, 1)], 1)
         # images = tf.stack([tf.tensor_scatter_nd_add(imgs[i], bposall[i], bampall[i]) for i in range(imgs.shape[0])])
@@ -275,7 +338,7 @@ class Generator(DataGeneratorBase):
         return images
 
     def centerMassShift(self):
-        coords_o = tf.constant(self.coords, dtype=tf.float32)
+        coords_o = tf.constant(self.coords, dtype=self.precision)
         coords_o_x = tf.transpose(tf.gather(coords_o, 0, axis=1))
         coords_o_y = tf.transpose(tf.gather(coords_o, 1, axis=1))
         coords_o_z = tf.transpose(tf.gather(coords_o, 2, axis=1))
@@ -308,6 +371,27 @@ class Generator(DataGeneratorBase):
         dst = tf.sqrt(tf.nn.relu(tf.reduce_sum((bonds_coords[:, :, 1, :] - bonds_coords[:, :, 0, :]) ** 2, axis=2)))
 
         return dst
+
+    # def calcAngle(self, coords):
+    #     coords = [tf.transpose(coords[0]), tf.transpose(coords[1]), tf.transpose(coords[2])]
+    #     coords = tf.stack(coords, axis=2)
+    #     p0 = tf.gather(coords, self.connectivity[:, 0], axis=1)
+    #     p1 = tf.gather(coords, self.connectivity[:, 1], axis=1)
+    #     p2 = tf.gather(coords, self.connectivity[:, 2], axis=1)
+    #     b0 = p0 - p1
+    #     b1 = p2 - p1
+    #     b0 = b0 / tf.sqrt(tf.reduce_sum(b0 ** 2.0, axis=2, keepdims=True))
+    #     b1 = b1 / tf.reduce_sum(b1 ** 2.0, axis=2, keepdims=True)
+    #     ang = tf.reduce_sum(b0 * b1, axis=2)
+    #     n0 = tf.linalg.norm(b0, axis=2) * tf.linalg.norm(b1, axis=2)
+    #     ang = tf.math.divide_no_nan(ang, n0)
+    #     epsilon = 1.0 - 1e-6
+    #     ang = tf.minimum(tf.maximum(ang, -epsilon), epsilon)
+    #     # ang = np.min(np.max(ang, axis=1), axis=0)
+    #     ang = tf.acos(ang)
+    #     ang *= 180 / np.pi
+    #
+    #     return ang
 
     def calcAngle(self, coords):
         bsz = tf.shape(coords)[-1]
@@ -348,12 +432,30 @@ class Generator(DataGeneratorBase):
         nsearch = ml3d.layers.FixedRadiusSearch(return_distances=True, ignore_query_point=True)
         ans = nsearch(points, queries, radius)
         return (tf.cast(ans.neighbors_index, tf.int32), tf.cast(ans.neighbors_row_splits, tf.int32),
-                tf.cast(ans.neighbors_distance, tf.float32))
+                tf.cast(ans.neighbors_distance, self.precision))
 
     def search_knn(self, points, queries, k):
         nsearch = ml3d.layers.KNNSearch(return_distances=True, ignore_query_point=True)
         ans = nsearch(points, queries, k)
-        return tf.cast(ans.neighbors_index, tf.int32), tf.cast(ans.neighbors_distance, tf.float32)
+        return tf.cast(ans.neighbors_index, tf.int32), tf.cast(ans.neighbors_distance, self.precision)
+
+    # def calcClashes(self, coords):
+    #     coords = [tf.transpose(coords[0]), tf.transpose(coords[1]), tf.transpose(coords[2])]
+    #     coords = tf.stack(coords, axis=2)
+    #     coords = tf.transpose(coords, perm=(1, 0, 2))
+    #
+    #     B = tf.shape(coords)[0]
+    #     extent = 8.  # Twice the radius (4A)
+    #
+    #     # To simulate gradient computation
+    #     spread = tf.cast(tf.linspace(0, 1000, B), tf.float32)[..., None, None]
+    #     coords = tf.reshape(coords + spread, (-1, 3))
+    #
+    #     # Compute neighbour distances
+    #     energy = self.conv(tf.ones((tf.shape(coords)[0], 1), tf.float32), coords, coords, extent)
+    #     energy = tf.reduce_mean(tf.reshape(energy, (B, -1)), axis=-1)
+    #
+    #     return energy
 
     def calcCoords(self, coords):
         B = tf.shape(coords[0])[1]
@@ -382,5 +484,41 @@ class Generator(DataGeneratorBase):
         coords = tf.reshape(coords, (-1, 3))
 
         return coords
+
+    def compute_histogram(self, tensor, nbins=20):
+        """
+        Compute histograms for each batch in the tensor.
+
+        Args:
+        - tensor: A 3D Tensor of shape (B, M, N) where B is the batch size and M, N are the dimensions of each batch.
+        - value_range: A tuple (min, max) specifying the range of values to be covered by the histogram bins.
+        - nbins: An integer specifying the number of bins in the histogram.
+
+        Returns:
+        - A 2D Tensor of shape (B, nbins) containing the histograms for each batch.
+        """
+        min_val, max_val = tf.reduce_min(tensor), tf.reduce_max(tensor)
+
+        # Normalize the input tensor to the range [0, nbins)
+        normalized_tensor = (tensor - min_val) / (max_val - min_val) * nbins
+        normalized_tensor = tf.clip_by_value(normalized_tensor, 0, nbins - 1)
+        indices = tf.cast(normalized_tensor, tf.int32)
+
+        # One-hot encode the indices
+        one_hot_encoded = tf.one_hot(indices, depth=nbins, axis=-1)
+
+        # Sum the one-hot encoded tensor along the last two axes (M, N)
+        histograms = tf.reduce_sum(one_hot_encoded, axis=[1, 2])
+
+        return histograms / (tf.reduce_sum(histograms, axis=1)[..., None] + 1e-6)
+
+    def wasserstein_distance(self, hist1, hist2):
+        """Compute the Wasserstein distance between two histograms."""
+        return tf.reduce_sum(tf.abs(tf.cumsum(hist1, axis=1) - tf.cumsum(hist2, axis=1)))
+
+    def wasserstein_distance_loss(self, y_true, y_pred, bins=20):
+        hist1 = self.compute_histogram(tf.squeeze(y_true), bins)
+        hist2 = self.compute_histogram(tf.squeeze(y_pred), bins)
+        return self.wasserstein_distance(hist1, hist2)
 
     # ----- -------- -----#

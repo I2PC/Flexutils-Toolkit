@@ -25,10 +25,8 @@
 # **************************************************************************
 
 
-from packaging import version
-import numpy as np
-
 import tensorflow as tf
+from keras.initializers import RandomUniform
 from tensorflow.keras import layers
 
 try:
@@ -40,8 +38,7 @@ except ImportError:
     allow_open3d = False
     print(YELLOW + "Open3D has not been installed. The program will continue without this package" + RESET)
 
-from tensorflow_toolkit.utils import computeCTF, euler_matrix_batch, full_fft_pad, full_ifft_pad, \
-    apply_blur_filters_to_batch, create_blur_filters
+from tensorflow_toolkit.utils import computeCTF, full_fft_pad, full_ifft_pad, create_blur_filters
 from tensorflow_toolkit.layers.residue_conv2d import ResidueConv2D
 
 
@@ -333,9 +330,9 @@ class AutoEncoder(tf.keras.Model):
             self.encoder_ctf = Encoder(generator.zernike_size.shape[0], generator.xsize, architecture=architecture,
                                        mode=self.mode, jit_compile=jit_compile)
         self.decoder = Decoder(generator, CTF=self.CTF, jit_compile=jit_compile)
-        self.z_space_x = layers.Dense(generator.zernike_size.shape[0], activation="linear", name="z_space_x")
-        self.z_space_y = layers.Dense(generator.zernike_size.shape[0], activation="linear", name="z_space_y")
-        self.z_space_z = layers.Dense(generator.zernike_size.shape[0], activation="linear", name="z_space_z")
+        self.z_space_x = layers.Dense(generator.zernike_size.shape[0], activation="linear", name="z_space_x", kernel_initializer=RandomUniform(-0.001, 0.001))
+        self.z_space_y = layers.Dense(generator.zernike_size.shape[0], activation="linear", name="z_space_y", kernel_initializer=RandomUniform(-0.001, 0.001))
+        self.z_space_z = layers.Dense(generator.zernike_size.shape[0], activation="linear", name="z_space_z", kernel_initializer=RandomUniform(-0.001, 0.001))
         self.delta_euler = layers.Dense(3, activation="linear", name="delta_euler", trainable=generator.refinePose)
         self.delta_shifts = layers.Dense(2, activation="linear", name="delta_shifts", trainable=generator.refinePose)
         self.total_loss_tracker = tf.keras.metrics.Mean(name="total_loss")
@@ -510,7 +507,7 @@ class AutoEncoder(tf.keras.Model):
                 loss_disantagled_pose = 0.0
 
             # Loss disantagled (CTF)
-            if self.disantangle_ctf and self.mode == "spa":
+            if self.disantangle_ctf and self.mode == "spa" and self.CTF is not None:
                 loss_disantagled_ctf = (tf.keras.losses.MSE(het, het_ctf)
                                         + tf.keras.losses.MSE(het, het_ctf_perm))
             else:
@@ -676,7 +673,7 @@ class AutoEncoder(tf.keras.Model):
             loss_disantagled_pose = 0.0
 
         # Loss disantagled (CTF)
-        if self.disantangle_ctf and self.mode == "spa":
+        if self.disantangle_ctf and self.mode == "spa" and self.CTF is not None:
             loss_disantagled_ctf = (tf.keras.losses.MSE(het, het_ctf)
                                     + tf.keras.losses.MSE(het, het_ctf_perm))
         else:
@@ -728,7 +725,7 @@ class AutoEncoder(tf.keras.Model):
             encoded = [self.z_space_x(x), self.z_space_y(x), self.z_space_z(x), self.delta_euler(x),
                        self.delta_shifts(x)]
         elif self.mode == "tomo":
-            x, latent = self.encoder(inputs)
+            x, latent = self.encoder_exp(inputs)
             encoded = [self.z_space_x(latent), self.z_space_y(latent), self.z_space_z(latent),
                        self.delta_euler(x),
                        self.delta_shifts(x)]
