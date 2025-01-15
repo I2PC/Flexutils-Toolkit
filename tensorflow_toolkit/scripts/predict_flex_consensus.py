@@ -30,6 +30,10 @@ import os
 import re
 from glob import glob
 from pathlib import Path
+from importlib.metadata import version
+
+if version("tensorflow") >= "2.16.0":
+    os.environ["TF_USE_LEGACY_KERAS"] = "1"
 
 import numpy as np
 import tensorflow as tf

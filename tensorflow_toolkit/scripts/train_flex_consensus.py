@@ -153,9 +153,9 @@ def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs, lr
 
     # Save model
     if tf.__version__ < "2.16.0" or os.environ["TF_USE_LEGACY_KERAS"] == "1":
-        autoencoder.save_weights(os.path.join(outPath, "flex_consensus_model.h5"))
+        autoencoder.save_weights(os.path.join(outPath, "network", "flex_consensus_model.h5"))
     else:
-        autoencoder.save_weights(os.path.join(outPath, "flex_consensus_model.weights.h5"))
+        autoencoder.save_weights(os.path.join(outPath, "network", "flex_consensus_model.weights.h5"))
 
     # Remove checkpoints
     shutil.rmtree(checkpoint)
