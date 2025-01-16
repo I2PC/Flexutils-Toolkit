@@ -76,14 +76,16 @@ class Installation:
 
         # Check if conda env is installed
         env_installed = subprocess.run(
-            r"conda env list | grep 'flexutils-tensorflow '",
+            f'eval "$({condabin_path} shell.bash hook)" && ' +  r"conda env list | grep 'flexutils-tensorflow '",
             shell=True, check=False, stdout=subprocess.PIPE).stdout
         env_installed = bool(env_installed.decode("utf-8").replace('\n', '').replace("*", ""))
         check_cuda_conda = subprocess.run(
-            r"conda list -n flexutils-tensorflow | grep 'cudatoolkit ' | grep -Eo '[0-9]+\.[0-9]+'",
+            f'eval "$({condabin_path} shell.bash hook)" && '
+            +  r"conda list -n flexutils-tensorflow | grep 'cudatoolkit ' | grep -Eo '[0-9]+\.[0-9]+'",
             shell=True, check=False, stdout=subprocess.PIPE).stdout
         check_cuda_pip = subprocess.run(
-            r"conda list -n flexutils-tensorflow | grep 'nvidia-cuda-nvcc*' | grep -Eo '[0-9]+\.[0-9]+'",
+            f'eval "$({condabin_path} shell.bash hook)" && '
+            +  r"conda list -n flexutils-tensorflow | grep 'nvidia-cuda-nvcc*' | grep -Eo '[0-9]+\.[0-9]+'",
             shell=True, check=False, stdout=subprocess.PIPE).stdout
         check_cuda = check_cuda_conda or check_cuda_pip
         check_cuda = check_cuda.decode("utf-8").replace('\n', '').replace("*", "")
