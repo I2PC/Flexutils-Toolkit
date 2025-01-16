@@ -68,6 +68,8 @@ if [[ ! -v CONDABIN ]]; then
     colored_echo "red" "Conda not found in path - Exiting"
     exit 1
   fi
+else
+  eval "$($CONDABIN shell.bash hook)"
 fi
 
 # Install pynvml package in current env (installation dependency)
