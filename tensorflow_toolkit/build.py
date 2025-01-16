@@ -130,14 +130,17 @@ class Installation:
 
     def runCondaInstallation(self, condaBin=None):
         # Check conda is in PATH
-        try:
-            subprocess.check_call("conda", shell=True, stdout=subprocess.PIPE)
-            self.print_flush("Conda found in PATH")
-        except:
-            raise Exception("Conda not found in PATH \n "
-                            "Installation will be aborted \n"
-                            "Install Conda and/or add it to the PATH variable and try to install again "
-                            "this package with 'pip install tensorflow-toolkit'")
+        if condaBin is None:
+            try:
+                subprocess.check_call("conda", shell=True, stdout=subprocess.PIPE)
+                self.print_flush("Conda found in PATH")
+            except:
+                raise Exception("Conda not found in PATH \n "
+                                "Installation will be aborted \n"
+                                "Install Conda and/or add it to the PATH variable and try to install again "
+                                "this package with 'pip install tensorflow-toolkit'")
+        else:
+            self.print_flush(f"Using provided Conda: {condaBin}")
 
         req_file, condabin_path, install_conda_command, cuda_version, tensorflow = self.condaInstallationCommands(condabin_path=condaBin)
 
