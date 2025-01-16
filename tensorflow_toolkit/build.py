@@ -86,7 +86,7 @@ class Installation:
             shell=True, check=False, stdout=subprocess.PIPE).stdout
         check_cuda = check_cuda_conda or check_cuda_pip
         check_cuda = check_cuda.decode("utf-8").replace('\n', '').replace("*", "")
-        command = f'"$({condabin_path} shell.bash hook)"'
+        command = f'"$({condabin_path} shell.bash hook)" && '
         if check_cuda != cuda_version:
             if env_installed:
                 command += "conda env remove -n flexutils-tensorflow && "
