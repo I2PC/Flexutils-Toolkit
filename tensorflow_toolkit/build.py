@@ -72,6 +72,7 @@ class Installation:
             condabin_path = subprocess.run(r"which conda | sed 's: ::g'", shell=True, check=False,
                                            stdout=subprocess.PIPE).stdout
             condabin_path = condabin_path.decode("utf-8").replace('\n', '').replace("*", "")
+        command = f'eval "$({condabin_path} shell.bash hook)" && '
 
         # Check if conda env is installed
         env_installed = subprocess.run(
@@ -86,7 +87,7 @@ class Installation:
             shell=True, check=False, stdout=subprocess.PIPE).stdout
         check_cuda = check_cuda_conda or check_cuda_pip
         check_cuda = check_cuda.decode("utf-8").replace('\n', '').replace("*", "")
-        command = f'eval "$({condabin_path} shell.bash hook)" && '
+
         if check_cuda != cuda_version:
             if env_installed:
                 command += "conda env remove -n flexutils-tensorflow && "
