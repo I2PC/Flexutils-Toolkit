@@ -127,7 +127,7 @@ fi
 
 # Clone Open3D
 colored_echo "green" "##### Cloning Open3D... #####"
-CURRENT_DIR = $(pwd)
+CURRENT_DIR=$(pwd)
 cd ..
 git clone https://github.com/isl-org/Open3D
 colored_echo "green" "##### Done! #####"
