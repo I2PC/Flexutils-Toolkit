@@ -44,18 +44,30 @@ colored_echo() {
     printf "%b%s%b\n" "$color_code" "$text" "$reset"
 }
 
+# Read input parameters
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --condaBin) CONDABIN="$2"; shift ;; # Capture the first argument
+        -h|--help) echo "Usage: $0 [--condaBin VALUE]"; exit 0 ;;
+        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+    esac
+    shift
+done
+
 colored_echo "green" "-------------- Installing Flexutils-toolkit --------------"
 
 # Name of the Python package to check
 python_package="open3d"
 
 # Activate conda in shell
-if which conda | sed 's: ::g' &> /dev/null ; then
-  CONDABIN=$(which conda | sed 's: ::g')
-  eval "$($CONDABIN shell.bash hook)"
-else
-  colored_echo "red" "Conda not found in path - Exiting"
-  exit 1
+if [[ ! -v CONDABIN ]]; then
+  if which conda | sed 's: ::g' &> /dev/null ; then
+    CONDABIN=$(which conda | sed 's: ::g')
+    eval "$($CONDABIN shell.bash hook)"
+  else
+    colored_echo "red" "Conda not found in path - Exiting"
+    exit 1
+  fi
 fi
 
 # Install pynvml package in current env (installation dependency)
