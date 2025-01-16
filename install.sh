@@ -117,6 +117,6 @@ if is_python_package_installed $python_package; then
   colored_echo "green" "Open3D package is already installed. Skipping..."
 else
   colored_echo "green" "Installing Open3D..."
-  bash ./install_open3d.sh
+  bash ./install_open3d.sh --condaBin CONDABIN
   colored_echo "green" "Done..."
 fi
