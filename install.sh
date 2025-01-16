@@ -44,6 +44,14 @@ colored_echo() {
     printf "%b%s%b\n" "$color_code" "$text" "$reset"
 }
 
+# Check exit status
+check_exit_status() {
+  if [ $? -ne 0 ]; then
+    echo "An error occurred. Exiting."
+    exit 1
+  fi
+}
+
 # Read input parameters
 while [[ "$#" -gt 0 ]]; do
     case $1 in
@@ -75,7 +83,9 @@ fi
 # Install pynvml package in current env (installation dependency)
 export LD_LIBRARY_PATH=""
 conda create -y -n install-temp python=3.9
+check_exit_status
 conda activate install-temp
+check_exit_status
 colored_echo "green" "Adding installation dependencies to current env..."
 pip install pynvml packaging
 colored_echo "green" "...Done"
