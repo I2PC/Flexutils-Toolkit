@@ -81,7 +81,7 @@ pip install pynvml packaging
 colored_echo "green" "...Done"
 
 # Run Conda installation
-if python tensorflow_toolkit/build.py ; then
+if python tensorflow_toolkit/build.py --condaBin $CONDABIN ; then
   colored_echo "green" "Environment: flexutils-tensorflow built succesfully"
 else
   colored_echo "red" "Error when building flexutils-tensorflow - Exiting"
