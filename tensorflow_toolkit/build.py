@@ -28,6 +28,7 @@
 import os
 import sys
 import subprocess
+import argparse
 from pynvml import nvmlDeviceGetName, nvmlDeviceGetHandleByIndex, \
     nvmlDeviceGetCount, nvmlInit, nvmlShutdown, nvmlSystemGetDriverVersion
 from packaging import version
@@ -39,7 +40,7 @@ class Installation:
         print(str)
         sys.stdout.flush()
 
-    def condaInstallationCommands(self):
+    def condaInstallationCommands(self, condabin_path=None):
         # Get all GPUs and models and drivers
         nvmlInit()
         number_devices = nvmlDeviceGetCount()
@@ -67,9 +68,10 @@ class Installation:
         self.print_flush("Cuda version to be installed: " + cuda_version)
 
         # Command: Get condabin/conda
-        condabin_path = subprocess.run(r"which conda | sed 's: ::g'", shell=True, check=False,
-                                       stdout=subprocess.PIPE).stdout
-        condabin_path = condabin_path.decode("utf-8").replace('\n', '').replace("*", "")
+        if condabin_path is None:
+            condabin_path = subprocess.run(r"which conda | sed 's: ::g'", shell=True, check=False,
+                                           stdout=subprocess.PIPE).stdout
+            condabin_path = condabin_path.decode("utf-8").replace('\n', '').replace("*", "")
 
         # Check if conda env is installed
         env_installed = subprocess.run(
@@ -84,7 +86,7 @@ class Installation:
             shell=True, check=False, stdout=subprocess.PIPE).stdout
         check_cuda = check_cuda_conda or check_cuda_pip
         check_cuda = check_cuda.decode("utf-8").replace('\n', '').replace("*", "")
-        command = ""
+        command = f'"$({condabin_path} shell.bash hook)"'
         if check_cuda != cuda_version:
             if env_installed:
                 command += "conda env remove -n flexutils-tensorflow && "
@@ -126,7 +128,7 @@ class Installation:
 
         return req_file, condabin_path, command, cuda_version, tensorflow
 
-    def runCondaInstallation(self):
+    def runCondaInstallation(self, condaBin=None):
         # Check conda is in PATH
         try:
             subprocess.check_call("conda", shell=True, stdout=subprocess.PIPE)
@@ -137,7 +139,7 @@ class Installation:
                             "Install Conda and/or add it to the PATH variable and try to install again "
                             "this package with 'pip install tensorflow-toolkit'")
 
-        req_file, condabin_path, install_conda_command, cuda_version, tensorflow = self.condaInstallationCommands()
+        req_file, condabin_path, install_conda_command, cuda_version, tensorflow = self.condaInstallationCommands(condabin_path=condaBin)
 
         # Install flexutils-tensorflow conda environment
         self.print_flush("Installing Tensorflow conda env...")
@@ -205,4 +207,10 @@ class Installation:
 
 
 if __name__ == '__main__':
-    Installation().runCondaInstallation()
+
+    # Input parameters
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--condaBin', type=str, required=False)
+    args = parser.parse_args()
+
+    Installation().runCondaInstallation(args.condaBin)
