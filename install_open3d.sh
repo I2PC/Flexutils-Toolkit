@@ -62,14 +62,6 @@ is_package_installed() {
     fi
 }
 
-# Check each package
-missing_packages=()
-for pkg in "${required_packages[@]}"; do
-    if ! is_package_installed "$pkg"; then
-        missing_packages+=("$pkg")
-    fi
-done
-
 # Compare versions
 compare_versions() {
     local IFS=.
@@ -191,6 +183,14 @@ colored_echo "green" "##### Getting Flexutils-Tensorflow python... #####"
 conda activate flexutils-tensorflow
 PYTHON_CONDA=$CONDA_PREFIX"/bin/python"
 colored_echo "green" "##### Done! #####"
+
+# Check each package
+missing_packages=()
+for pkg in "${required_packages[@]}"; do
+    if ! is_package_installed "$pkg"; then
+        missing_packages+=("$pkg")
+    fi
+done
 
 # CMake call (including Tensorflow)
 colored_echo "green" "##### Generating building files... #####"
