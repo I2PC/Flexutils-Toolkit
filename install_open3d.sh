@@ -110,13 +110,27 @@ compare_versions() {
 #    exit 0
 #fi
 
+# Read input parameters
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --condaBin) CONDABIN="$2"; shift ;; # Capture the first argument
+        -h|--help) echo "Usage: $0 [--condaBin VALUE]"; exit 0 ;;
+        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+    esac
+    shift
+done
+
 # Activate conda in shell
-if which conda | sed 's: ::g' &> /dev/null ; then
-  CONDABIN=$(which conda | sed 's: ::g')
-  eval "$($CONDABIN shell.bash hook)"
+if [[ ! -v CONDABIN ]]; then
+  if which conda | sed 's: ::g' &> /dev/null ; then
+    CONDABIN=$(which conda | sed 's: ::g')
+    eval "$($CONDABIN shell.bash hook)"
+  else
+    colored_echo "red" "Conda not found in path - Exiting"
+    exit 1
+  fi
 else
-  colored_echo "red" "Conda not found in path - Exiting"
-  exit 1
+  eval "$($CONDABIN shell.bash hook)"
 fi
 
 # Clone Open3D
