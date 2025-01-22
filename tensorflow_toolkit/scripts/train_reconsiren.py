@@ -62,7 +62,7 @@ def train(outPath, md_file, batch_size, shuffle, splitTrain, epochs, only_pose=F
                               step=1, splitTrain=splitTrain, cost="mse", pad_factor=pad, sr=sr,
                               applyCTF=0)
         generator_pred = Generator(md_file=md_file, shuffle=False, batch_size=batch_size,
-                                   step=1, splitTrain=splitTrain, cost="mse", pad_factor=pad, sr=sr,
+                                   step=1, splitTrain=1.0, cost="mse", pad_factor=pad, sr=sr,
                                    applyCTF=0)
 
         # Create validation generator
