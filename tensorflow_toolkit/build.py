@@ -48,6 +48,29 @@ def get_nvidia_driver_version_no_nvml():
         raise RuntimeError("Driver version not found in the file.")
 
 
+def get_gpu_info_no_nvml():
+    gpu_base = "/proc/driver/nvidia/gpus"
+    if not os.path.exists(gpu_base):
+        raise RuntimeError("NVIDIA GPU information not available. Is the proprietary driver installed?")
+    gpu_models = []
+    # Each subdirectory corresponds to a GPU
+    for gpu in os.listdir(gpu_base):
+        info_file = os.path.join(gpu_base, gpu, "information")
+        try:
+            with open(info_file, "r") as f:
+                content = f.read()
+            # Look for a line like "Model:           GeForce GTX 1080"
+            match = re.search(r"Model:\s*(.+)", content)
+            if match:
+                model = match.group(1).strip()
+            else:
+                model = "Unknown Model"
+            gpu_models.append(model)
+        except Exception as e:
+            gpu_models.append(f"Error reading GPU info: {e}")
+    return gpu_models
+
+
 class Installation:
     def print_flush(self, str):
         print(str)
@@ -67,6 +90,8 @@ class Installation:
             nvmlShutdown()
         except NVMLError:
             driver = get_nvidia_driver_version_no_nvml()
+            gpu_models = get_gpu_info_no_nvml()
+            number_devices = len(gpu_models)
 
         # Default values compatible with Series 2000 and below
         cuda_version = "10"
