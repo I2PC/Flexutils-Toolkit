@@ -29,10 +29,23 @@ import os
 import sys
 import subprocess
 import argparse
-from pynvml import nvmlDeviceGetName, nvmlDeviceGetHandleByIndex, \
-    nvmlDeviceGetCount, nvmlInit, nvmlShutdown, nvmlSystemGetDriverVersion
+from pynvml import NVMLError
 from packaging import version
 import re
+
+
+def get_nvidia_driver_version_no_nvml():
+    try:
+        with open("/proc/driver/nvidia/version", "r") as f:
+            content = f.read()
+    except IOError as e:
+        raise RuntimeError("Unable to read /proc/driver/nvidia/version") from e
+    # Search for a pattern like '535.183.01'
+    match = re.search(r'\b(\d+\.\d+\.\d+)\b', content)
+    if match:
+        return match.group(1)
+    else:
+        raise RuntimeError("Driver version not found in the file.")
 
 
 class Installation:
@@ -41,13 +54,19 @@ class Installation:
         sys.stdout.flush()
 
     def condaInstallationCommands(self, condabin_path=None):
-        # Get all GPUs and models and drivers
-        nvmlInit()
-        number_devices = nvmlDeviceGetCount()
-        gpu_models = [nvmlDeviceGetName(nvmlDeviceGetHandleByIndex(i)) for i in
-                      range(number_devices)]
-        driver = nvmlSystemGetDriverVersion()
-        nvmlShutdown()
+        try:
+            from pynvml import nvmlDeviceGetName, nvmlDeviceGetHandleByIndex, \
+                nvmlDeviceGetCount, nvmlInit, nvmlShutdown, nvmlSystemGetDriverVersion
+
+            # Get all GPUs and models and drivers
+            nvmlInit()
+            number_devices = nvmlDeviceGetCount()
+            gpu_models = [nvmlDeviceGetName(nvmlDeviceGetHandleByIndex(i)) for i in
+                          range(number_devices)]
+            driver = nvmlSystemGetDriverVersion()
+            nvmlShutdown()
+        except NVMLError:
+            driver = get_nvidia_driver_version_no_nvml()
 
         # Default values compatible with Series 2000 and below
         cuda_version = "10"
