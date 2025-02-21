@@ -29,6 +29,7 @@ import os
 import sys
 import subprocess
 import argparse
+import shutil
 from pynvml import NVMLError
 from packaging import version
 import re
@@ -95,18 +96,22 @@ class Installation:
 
         # Default values compatible with Series 2000 and below
         cuda_version = "10"
+        tensorflow = "2.3"
 
         # If at least one GPU is series 3000 and above, change installation requirements
         for gpu_model in gpu_models:
             if version.parse("535.54.03") <= version.parse(driver):
                 cuda_version = "12.2"
+                tensorflow = "2.17"
                 break
             elif re.findall(r"40[0-9]+", gpu_model) or re.findall(r"30[0-9]+", gpu_model) or \
                     version.parse("520.56.06") <= version.parse(driver):
                 cuda_version = "11.8"
+                tensorflow = "2.12"
                 break
             elif re.findall(r"30[0-9]+", gpu_model) or version.parse("450.80.02") <= version.parse(driver):
                 cuda_version = "11.2"
+                tensorflow = "2.11"
                 break
 
         self.print_flush("Cuda version to be installed: " + cuda_version)
@@ -131,8 +136,13 @@ class Installation:
             f'eval "$({condabin_path} shell.bash hook)" && '
             +  r"conda list -n flexutils-tensorflow | grep 'nvidia-cuda-nvcc*' | grep -Eo '[0-9]+\.[0-9]+'",
             shell=True, check=False, stdout=subprocess.PIPE).stdout
+        check_tf = subprocess.run(
+            f'eval "$({condabin_path} shell.bash hook)" && '
+            + r"conda list -n flexutils-tensorflow | grep 'tensorflow ' | grep -Eo '[0-9]+\.[0-9]+'",
+            shell=True, check=False, stdout=subprocess.PIPE).stdout
         check_cuda = check_cuda_conda or check_cuda_pip
         check_cuda = check_cuda.decode("utf-8").replace('\n', '').replace("*", "")
+        check_tf = check_tf.decode("utf-8").replace('\n', '').replace("*", "")
 
         if check_cuda != cuda_version:
             if env_installed:
@@ -142,7 +152,6 @@ class Installation:
         # Command: Get installation of new conda env with Cuda, Cudnn, and Tensorflow dependencies
         if not env_installed:
             if cuda_version == "12.2":
-                tensorflow = "2.17"
                 req_file = os.path.join("requirements", "tensorflow_2_17_requirements.txt")
                 command += ("conda create -y -n flexutils-tensorflow "
                             "-c nvidia/label/cuda-12.2.0 -c conda-forge -c anaconda python=3.9 pyyaml=6.0.1 cuda=12.2.0 "
@@ -154,17 +163,14 @@ class Installation:
                             "mesa-dri-drivers-cos6-x86_64=11.0.7 glfw=3.4 glew=2.1.0")
 
             elif cuda_version == "11.8":
-                tensorflow = "2.12"
                 req_file = os.path.join("requirements", "tensorflow_2_12_requirements.txt")
                 command += "conda create -y -n flexutils-tensorflow " \
                            "-c conda-forge python=3.9 cudatoolkit=11.8 cudatoolkit-dev pyyaml"
             elif cuda_version == "11.2":
-                tensorflow = "2.11"
                 req_file = os.path.join("requirements", "tensorflow_2_11_requirements.txt")
                 command += "conda create -y -n flexutils-tensorflow " \
                            "-c conda-forge python=3.8 cudatoolkit=11.2 cudnn=8.1.0 cudatoolkit-dev pyyaml"
             else:
-                tensorflow = "2.3"
                 req_file = os.path.join("requirements", "tensorflow_2_3_requirements.txt")
                 command += "conda create -y -n flexutils-tensorflow " \
                            "-c conda-forge python=3.8 cudatoolkit=10.1 cudnn=7 cudatoolkit-dev pyyaml"
@@ -173,7 +179,7 @@ class Installation:
             req_file = None
             command = None
 
-        return req_file, condabin_path, command, cuda_version, tensorflow
+        return req_file, condabin_path, command, cuda_version, tensorflow, check_tf
 
     def runCondaInstallation(self, condaBin=None):
         # Check conda is in PATH
@@ -189,7 +195,7 @@ class Installation:
         else:
             self.print_flush(f"Using provided Conda: {condaBin}")
 
-        req_file, condabin_path, install_conda_command, cuda_version, tensorflow = self.condaInstallationCommands(condabin_path=condaBin)
+        req_file, condabin_path, install_conda_command, cuda_version, tensorflow, check_tf = self.condaInstallationCommands(condabin_path=condaBin)
 
         # Install flexutils-tensorflow conda environment
         self.print_flush("Installing Tensorflow conda env...")
@@ -201,7 +207,10 @@ class Installation:
 
         # Get command to install envrionment and pip dependencies
         self.print_flush("Getting env pip...")
-        if install_conda_command is not None:
+        if install_conda_command is not None or check_tf != tensorflow:
+            if os.path.isdir(os.path.join("..", "Open3D")):
+                shutil.rmtree(os.path.join("..", "Open3D"))
+
             if tensorflow == "2.12":
                 install_toolkit_command = 'eval "$(%s shell.bash hook)" && conda activate flexutils-tensorflow && ' \
                                           'conda install -y -c nvidia cuda-nvcc=11.3.58 && ' \
