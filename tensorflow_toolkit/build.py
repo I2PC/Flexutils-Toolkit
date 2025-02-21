@@ -151,7 +151,7 @@ class Installation:
                             "sdl2=2.30.2 ninja=1.12.1 xorg-libxi=1.7.10 tbb-devel=2021.12.0 libudev=255 autoconf=2.71 "
                             "libtool=2.4.7 cxx-compiler=1.7.0 gcc=12.3.0 c-compiler=1.7.0 clang=18.1.5 "
                             "mesa-libgl-devel-cos6-x86_64=11.0.7  mesa-libgl-cos6-x86_64=11.0.7 "
-                            "mesa-dri-drivers-cos6-x86_64=11.0.7")
+                            "mesa-dri-drivers-cos6-x86_64=11.0.7 glfw=3.4 glew=2.1.0")
 
             elif cuda_version == "11.8":
                 tensorflow = "2.12"
