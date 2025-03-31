@@ -132,10 +132,42 @@ def trilinear_interpolation(input_volumes, query_points):
     return c
 
 
+def is_approximately_sphere(mask, tolerance=0.1):
+    M = mask.shape[0]
+    assert mask.shape == (M, M, M), "Mask must be a cubic volume"
+
+    # Ensure mask is boolean
+    mask = mask.astype(bool)
+
+    # Define the center and radius
+    center = np.array([M / 2, M / 2, M / 2])
+    radius = 0.5 * M
+
+    # Create a grid of coordinates
+    x, y, z = np.indices((M, M, M))
+    distances = np.sqrt((x - center[0])**2 + (y - center[1])**2 + (z - center[2])**2)
+
+    # Define the spherical shell
+    sphere = (distances >= (radius - tolerance)) & (distances <= (radius + tolerance))
+
+    # Compare the mask with the spherical shell
+    overlap = np.sum(mask & sphere)
+    total_sphere_voxels = np.sum(sphere)
+    total_mask_voxels = np.sum(mask)
+
+    # Measure similarity
+    overlap_fraction = overlap / total_sphere_voxels
+    mask_fraction = overlap / total_mask_voxels
+
+    # Check if mask is approximately a sphere
+    is_sphere = overlap_fraction > 0.9 and mask_fraction > 0.9
+
+    return is_sphere
+
+
 class Generator(DataGeneratorBase):
-    def __init__(self, isFocused=False, precision=tf.float32, **kwargs):
+    def __init__(self, precision=tf.float32, **kwargs):
         super().__init__(keepMap=True, **kwargs)
-        self.isFocused = isFocused
         self.precision = precision
 
         # Save mask map and indices
@@ -146,15 +178,16 @@ class Generator(DataGeneratorBase):
             coords = np.asarray(np.where(mrc.data == 1))
             self.indices = coords.T
 
-            if self.isFocused:
-                self.flat_indices = self.convert_indices_to_flat(self.indices)
-                coords = np.asarray(np.where(mrc.data >= 0))
-                self.full_indices = coords.T
-                coords = np.transpose(np.asarray([coords[2, :], coords[1, :], coords[0, :]]))
-                self.coords = coords - self.xmipp_origin
-                combined_masks = values_in_mask + mrc.data
+        self.isFocused = not np.all(self.values == 0.0) and not is_approximately_sphere(self.mask_map, tolerance=0.1)
 
         if self.isFocused:
+            self.flat_indices = self.convert_indices_to_flat(self.indices)
+            coords = np.asarray(np.where(self.mask_map >= 0))
+            self.full_indices = coords.T
+            coords = np.transpose(np.asarray([coords[2, :], coords[1, :], coords[0, :]]))
+            self.coords = coords - self.xmipp_origin
+            combined_masks = values_in_mask + self.mask_map
+
             inverted_mask = 1. - self.mask_map
             vol = self.vol * inverted_mask
             r = np.linalg.norm(self.coords, axis=1)
@@ -327,6 +360,44 @@ class Generator(DataGeneratorBase):
         # # self.mask_imgs = self.mask_imgs ** 2.0
         # # self.mask_imgs = tf.math.divide_no_nan(self.mask_imgs, self.mask_imgs)
         # imgs = tf.math.divide_no_nan(imgs, self.mask_imgs)
+
+        return imgs
+
+    def scatterImgByPassPos(self, c):
+        # Get current batch size (function scope)
+        batch_size_scope = tf.shape(c[0][0])[0]
+
+        # Apply shifts
+        c_x_2d = self.applyShifts(self.scale_factor * c[0][0], c[1], 0)
+        c_y_2d = self.applyShifts(self.scale_factor * c[0][1], c[1], 1)
+
+        c_x_2d = c_x_2d[:, :, None]
+        c_y_2d = c_y_2d[:, :, None]
+        c_sampling = tf.concat([c_y_2d, c_x_2d], axis=2)
+
+        imgs = tf.zeros((batch_size_scope, self.xsize, self.xsize), dtype=tf.float32)
+
+        # Update values within mask
+        if self.isFocused:
+            flat_indices = tf.constant(self.flat_indices, dtype=tf.int32)[:, None]
+            fn = lambda inp: tf.scatter_nd(flat_indices, inp, [self.cube])
+            updates = tf.map_fn(fn, c[2], fn_output_signature=self.precision)
+            updates = tf.gather(updates, self.mask, axis=1)
+        else:
+            updates = c[2]
+        bamp = tf.nn.relu(tf.tile(self.values[None, :], [batch_size_scope, 1]) + updates)
+
+        bposf = tf.round(c_sampling)
+        bposi = tf.cast(bposf, tf.int32)
+
+        num = tf.reduce_sum(((bposf - c_sampling) ** 2.), axis=-1)
+        sigma = 1.
+        bamp = bamp * tf.exp(-num / (2. * sigma ** 2.))
+
+        fn = lambda inp: tf.cast(tf.tensor_scatter_nd_add(inp[0], inp[1], inp[2]), self.precision)
+        imgs = tf.map_fn(fn, [imgs, bposi, tf.cast(bamp, tf.float32)], fn_output_signature=self.precision)
+
+        imgs = tf.reshape(imgs, [-1, self.xsize, self.xsize, 1])
 
         return imgs
 

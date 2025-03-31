@@ -62,14 +62,6 @@ is_package_installed() {
     fi
 }
 
-# Check each package
-missing_packages=()
-for pkg in "${required_packages[@]}"; do
-    if ! is_package_installed "$pkg"; then
-        missing_packages+=("$pkg")
-    fi
-done
-
 # Compare versions
 compare_versions() {
     local IFS=.
@@ -110,18 +102,32 @@ compare_versions() {
 #    exit 0
 #fi
 
+# Read input parameters
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --condaBin) CONDABIN="$2"; shift ;; # Capture the first argument
+        -h|--help) echo "Usage: $0 [--condaBin VALUE]"; exit 0 ;;
+        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+    esac
+    shift
+done
+
 # Activate conda in shell
-if which conda | sed 's: ::g' &> /dev/null ; then
-  CONDABIN=$(which conda | sed 's: ::g')
-  eval "$($CONDABIN shell.bash hook)"
+if [[ ! -v CONDABIN ]]; then
+  if which conda | sed 's: ::g' &> /dev/null ; then
+    CONDABIN=$(which conda | sed 's: ::g')
+    eval "$($CONDABIN shell.bash hook)"
+  else
+    colored_echo "red" "Conda not found in path - Exiting"
+    exit 1
+  fi
 else
-  colored_echo "red" "Conda not found in path - Exiting"
-  exit 1
+  eval "$($CONDABIN shell.bash hook)"
 fi
 
 # Clone Open3D
 colored_echo "green" "##### Cloning Open3D... #####"
-CURRENT_DIR = $(pwd)
+CURRENT_DIR=$(pwd)
 cd ..
 git clone https://github.com/isl-org/Open3D
 colored_echo "green" "##### Done! #####"
@@ -178,11 +184,19 @@ conda activate flexutils-tensorflow
 PYTHON_CONDA=$CONDA_PREFIX"/bin/python"
 colored_echo "green" "##### Done! #####"
 
+# Check each package
+missing_packages=()
+for pkg in "${required_packages[@]}"; do
+    if ! is_package_installed "$pkg"; then
+        missing_packages+=("$pkg")
+    fi
+done
+
 # CMake call (including Tensorflow)
 colored_echo "green" "##### Generating building files... #####"
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib/
+export LD_LIBRARY_PATH=$CONDA_PREFIX/lib/:$LD_LIBRARY_PATH
 #cmake -DCMAKE_CXX_FLAGS="-Wno-error=unused-result" -DBUILD_CUDA_MODULE=ON -DGLIBCXX_USE_CXX11_ABI=ON -DBUILD_TENSORFLOW_OPS=ON -DBUNDLE_OPEN3D_ML=ON -DBUILD_GUI=ON -DBUILD_WEBRTC=ON -DBUILD_EXAMPLES=OFF -DOPEN3D_ML_ROOT=./Open3D-ML -DCMAKE_INSTALL_PREFIX=../open3d_install -DPython3_ROOT=$PYTHON_CONDA ..
-cmake -DBUILD_CUDA_MODULE=ON -DGLIBCXX_USE_CXX11_ABI=ON -DBUILD_TENSORFLOW_OPS=ON -DBUNDLE_OPEN3D_ML=ON -DBUILD_GUI=ON -DBUILD_WEBRTC=ON -DBUILD_EXAMPLES=OFF -DOPEN3D_ML_ROOT=./Open3D-ML -DCMAKE_INSTALL_PREFIX=../open3d_install -DPython3_ROOT=$PYTHON_CONDA ..
+cmake -DBUILD_CUDA_MODULE=ON -DGLIBCXX_USE_CXX11_ABI=ON -DBUILD_TENSORFLOW_OPS=ON -DBUNDLE_OPEN3D_ML=ON -DBUILD_GUI=OFF -DBUILD_WEBRTC=OFF -DBUILD_EXAMPLES=OFF -DCMAKE_PREFIX_PATH=${CONDA_PREFIX} -DUSE_SYSTEM_GLFW=ON -DUSE_SYSTEM_GLEW=ON -DOPEN3D_ML_ROOT=./Open3D-ML -DCMAKE_INSTALL_PREFIX=../open3d_install -DPython3_ROOT=$PYTHON_CONDA ..
 colored_echo "green" "##### Done! #####"
 
 # Build and install Python package in environment (needs Flexutils-Tensorflow environment)

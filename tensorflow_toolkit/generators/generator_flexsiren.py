@@ -111,9 +111,7 @@ class Generator(DataGeneratorBase):
             self.bond0 = 0.0
 
         # Zernike3D basis (to convert free form to Zernike3D)
-        zernike_size = basisDegreeVectors(7, 7)
-        Z = computeBasis(self.coords, L1=7, L2=7, r=0.5 * self.xsize,
-                              groups=groups, centers=centers)
+        Z = computeBasis(self.coords, L1=7, L2=7, r=0.5 * self.xsize, groups=groups, centers=centers)
         self.Z_solver = computeInverse(Z.T @ Z) @ Z.T
 
         # Train coords
