@@ -41,7 +41,7 @@ from tensorflow_toolkit.utils import getXmippOrigin, fft_pad, ifft_pad, full_fft
 
 
 class DataGeneratorBase:
-    def __init__(self, md_file, batch_size=32, shuffle=True, step=1, splitTrain=None,
+    def __init__(self, md_file, batch_size=32, shuffle=True, step=1, splitTrain=None, first_randomize=False,
                  radius_mask=2, smooth_mask=True, cost="corr", keepMap=False, pad_factor=2,
                  sr=1., applyCTF=1, xsize=128, mode=None):
         # Attributes
@@ -77,7 +77,7 @@ class DataGeneratorBase:
 
         # Get train dataset
         if splitTrain is not None:
-            self.getTrainDataset(splitTrain)
+            self.getTrainDataset(splitTrain, first_randomize)
 
         # Prepare CTF
         self.ctf = np.zeros([self.batch_size, self.pad_factor * self.xsize,
@@ -222,8 +222,10 @@ class DataGeneratorBase:
         # Flag (reference is map)
         self.ref_is_struct = False
 
-    def getTrainDataset(self, splitTrain):
+    def getTrainDataset(self, splitTrain, first_randomize=False):
         indexes = np.arange(self.file_idx.size)
+        if first_randomize:
+            np.random.shuffle(indexes)
         if splitTrain > 0:
             self.file_idx = self.file_idx[indexes[:int(splitTrain * indexes.size)]]
         elif splitTrain < 0:

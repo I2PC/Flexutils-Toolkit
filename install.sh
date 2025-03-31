@@ -44,30 +44,54 @@ colored_echo() {
     printf "%b%s%b\n" "$color_code" "$text" "$reset"
 }
 
+# Check exit status
+check_exit_status() {
+  if [ $? -ne 0 ]; then
+    echo "An error occurred. Exiting."
+    exit 1
+  fi
+}
+
+# Read input parameters
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --condaBin) CONDABIN="$2"; shift ;; # Capture the first argument
+        -h|--help) echo "Usage: $0 [--condaBin VALUE]"; exit 0 ;;
+        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+    esac
+    shift
+done
+
 colored_echo "green" "-------------- Installing Flexutils-toolkit --------------"
 
 # Name of the Python package to check
 python_package="open3d"
 
 # Activate conda in shell
-if which conda | sed 's: ::g' &> /dev/null ; then
-  CONDABIN=$(which conda | sed 's: ::g')
-  eval "$($CONDABIN shell.bash hook)"
+if [[ ! -v CONDABIN ]]; then
+  if which conda | sed 's: ::g' &> /dev/null ; then
+    CONDABIN=$(which conda | sed 's: ::g')
+    eval "$($CONDABIN shell.bash hook)"
+  else
+    colored_echo "red" "Conda not found in path - Exiting"
+    exit 1
+  fi
 else
-  colored_echo "red" "Conda not found in path - Exiting"
-  exit 1
+  eval "$($CONDABIN shell.bash hook)"
 fi
 
 # Install pynvml package in current env (installation dependency)
 export LD_LIBRARY_PATH=""
 conda create -y -n install-temp python=3.9
+check_exit_status
 conda activate install-temp
+check_exit_status
 colored_echo "green" "Adding installation dependencies to current env..."
 pip install pynvml packaging
 colored_echo "green" "...Done"
 
 # Run Conda installation
-if python tensorflow_toolkit/build.py ; then
+if python tensorflow_toolkit/build.py --condaBin "$CONDABIN" ; then
   colored_echo "green" "Environment: flexutils-tensorflow built succesfully"
 else
   colored_echo "red" "Error when building flexutils-tensorflow - Exiting"
@@ -93,6 +117,6 @@ if is_python_package_installed $python_package; then
   colored_echo "green" "Open3D package is already installed. Skipping..."
 else
   colored_echo "green" "Installing Open3D..."
-  bash ./install_open3d.sh
+  bash ./install_open3d.sh --condaBin "$CONDABIN"
   colored_echo "green" "Done..."
 fi

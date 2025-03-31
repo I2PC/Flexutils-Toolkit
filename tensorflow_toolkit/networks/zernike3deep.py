@@ -330,9 +330,17 @@ class AutoEncoder(tf.keras.Model):
             self.encoder_ctf = Encoder(generator.zernike_size.shape[0], generator.xsize, architecture=architecture,
                                        mode=self.mode, jit_compile=jit_compile)
         self.decoder = Decoder(generator, CTF=self.CTF, jit_compile=jit_compile)
-        self.z_space_x = layers.Dense(generator.zernike_size.shape[0], activation="linear", name="z_space_x", kernel_initializer=RandomUniform(-0.001, 0.001))
-        self.z_space_y = layers.Dense(generator.zernike_size.shape[0], activation="linear", name="z_space_y", kernel_initializer=RandomUniform(-0.001, 0.001))
-        self.z_space_z = layers.Dense(generator.zernike_size.shape[0], activation="linear", name="z_space_z", kernel_initializer=RandomUniform(-0.001, 0.001))
+        if generator.hasZernikeCoefficients:
+            self.z_space_x = layers.Dense(generator.zernike_size.shape[0], activation="linear", name="z_space_x",
+                                          kernel_initializer=RandomUniform(-0.001, 0.001))
+            self.z_space_y = layers.Dense(generator.zernike_size.shape[0], activation="linear", name="z_space_y",
+                                          kernel_initializer=RandomUniform(-0.001, 0.001))
+            self.z_space_z = layers.Dense(generator.zernike_size.shape[0], activation="linear", name="z_space_z",
+                                          kernel_initializer=RandomUniform(-0.001, 0.001))
+        else:
+            self.z_space_x = layers.Dense(generator.zernike_size.shape[0], activation="linear", name="z_space_x")
+            self.z_space_y = layers.Dense(generator.zernike_size.shape[0], activation="linear", name="z_space_y")
+            self.z_space_z = layers.Dense(generator.zernike_size.shape[0], activation="linear", name="z_space_z")
         self.delta_euler = layers.Dense(3, activation="linear", name="delta_euler", trainable=generator.refinePose)
         self.delta_shifts = layers.Dense(2, activation="linear", name="delta_shifts", trainable=generator.refinePose)
         self.total_loss_tracker = tf.keras.metrics.Mean(name="total_loss")
