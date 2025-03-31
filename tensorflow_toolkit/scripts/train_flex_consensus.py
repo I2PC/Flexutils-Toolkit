@@ -35,6 +35,7 @@ from scipy.stats import entropy
 from scipy.interpolate import NearestNDInterpolator
 import numpy as np
 
+os.environ["TF_USE_LEGACY_KERAS"] = "0"
 if version("tensorflow") >= "2.16.0":
     os.environ["TF_USE_LEGACY_KERAS"] = "1"
 import tensorflow as tf
