@@ -397,7 +397,7 @@ class PhysDecoder:
 class AutoEncoder(tf.keras.Model):
     def __init__(self, generator, architecture="convnn", CTF="apply", mode=None, l_bond=0.01, l_angle=0.01,
                  l_clashes=None, jit_compile=True, latDim=8, precision=tf.float32, precision_scaled=tf.float32,
-                 compute_delta=True, l_dfm=0.0, poseReg=0.0, ctfReg=0.0, **kwargs):
+                 compute_delta=False, l_dfm=0.0, poseReg=0.0, ctfReg=0.0, fieldReg=0.0001, **kwargs):
         super(AutoEncoder, self).__init__(**kwargs)
         generator.mode = "spa"
         self.generator = generator
@@ -408,6 +408,7 @@ class AutoEncoder(tf.keras.Model):
         self.l_angle = l_angle
         self.l_clashes = l_clashes if l_clashes is not None else 0.0
         self.l_dfm = l_dfm
+        self.fieldReg = fieldReg  # 0.00001
         self.poseReg = poseReg
         self.ctfReg = ctfReg
         self.filters = create_blur_filters(5, 10, 30)
@@ -657,7 +658,7 @@ class AutoEncoder(tf.keras.Model):
                           + self.l_angle * angle_loss + self.l_clashes * clashes
                           + self.poseReg * loss_disantagled_pose +
                           self.ctfReg * loss_disantagled_ctf)  # 0.001 works on HetSIREN
-            decoder_losses = 0.00001 * loss + self.l_dfm * loss_dfm
+            decoder_losses = self.fieldReg * loss + self.l_dfm * loss_dfm
 
         if self.l_dfm > 0.0:
             decoder_weights = (self.field_delta_decoder.trainable_weights
@@ -666,7 +667,8 @@ class AutoEncoder(tf.keras.Model):
             decoder_weights = self.field_delta_decoder.trainable_weights
         grads, grads_d = tape.gradient([total_loss, decoder_losses], [self.trainable_weights, decoder_weights])
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
-        self.optimizer.apply_gradients(zip(grads_d, decoder_weights))
+        if self.fieldReg:
+            self.optimizer.apply_gradients(zip(grads_d, decoder_weights))
 
         self.total_loss_tracker.update_state(total_loss)
         self.img_loss_tracker.update_state(img_loss)
