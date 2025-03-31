@@ -899,9 +899,10 @@ class AutoEncoder(Model):
 
             # Negative loss
             mask = tf.less(delta_het, 0.0)
+            mask_has_values = tf.cast(tf.reduce_any(mask, axis=-1), self.precision)
             delta_neg = tf.boolean_mask(delta_het, mask)
             delta_neg = tf.reduce_mean(tf.abs(tf.cast(delta_neg, self.precision_scaled)))
-            neg_loss_het = tf.cast(self.l1_lambda * delta_neg, self.precision)
+            neg_loss_het = mask_has_values * tf.cast(self.l1_lambda * delta_neg, self.precision)
 
             # # Positive loss
             # mask = tf.greater(delta_het, 0.0)
@@ -1133,9 +1134,10 @@ class AutoEncoder(Model):
 
         # Negative loss
         mask = tf.less(delta_het, 0.0)
+        mask_has_values = tf.cast(tf.reduce_any(mask, axis=-1), self.precision)
         delta_neg = tf.boolean_mask(delta_het, mask)
         delta_neg = tf.reduce_mean(tf.abs(tf.cast(delta_neg, self.precision_scaled)))
-        neg_loss_het = tf.cast(self.l1_lambda * delta_neg, self.precision)
+        neg_loss_het = mask_has_values * tf.cast(self.l1_lambda * delta_neg, self.precision)
 
         # # Positive loss
         # mask = tf.greater(delta_het, 0.0)
