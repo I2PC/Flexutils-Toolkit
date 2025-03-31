@@ -36,6 +36,7 @@ from importlib.metadata import version
 from xmipp_metadata.image_handler import ImageHandler
 from xmipp_metadata.metadata import XmippMetaData
 
+os.environ["TF_USE_LEGACY_KERAS"] = "0"
 if version("tensorflow") >= "2.16.0":
     os.environ["TF_USE_LEGACY_KERAS"] = "1"
 import tensorflow as tf
@@ -132,6 +133,7 @@ def main():
     parser.add_argument('--trainSize', type=int, required=True)
     parser.add_argument('--outSize', type=int, required=True)
     parser.add_argument('--addCTF', action='store_true')
+    parser.add_argument('--use_hyper_network', action='store_true')
     parser.add_argument('--pose_reg', type=float, required=False, default=0.0)
     parser.add_argument('--ctf_reg', type=float, required=False, default=0.0)
     parser.add_argument('--gpu', type=str)
@@ -149,7 +151,8 @@ def main():
               "ctfType": args.ctf_type, "pad": args.pad, "sr": args.sr,
               "applyCTF": args.apply_ctf, "hetDim": args.het_dim,
               "trainSize": args.trainSize, "outSize": args.outSize,
-              "addCTF": args.addCTF, "poseReg": args.pose_reg, "ctfReg": args.ctf_reg}
+              "addCTF": args.addCTF, "poseReg": args.pose_reg, "ctfReg": args.ctf_reg,
+              "use_hyper_network": args.use_hyper_network}
 
     # Initialize volume slicer
     predict(**inputs)
