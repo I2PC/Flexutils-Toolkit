@@ -55,7 +55,7 @@ from xmipp_metadata.metadata import XmippMetaData
 
 def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=1.0,
             applyCTF=1, filter=False, only_pos=False, hetDim=10, numVol=20, trainSize=None, outSize=None,
-            poseReg=0.0, ctfReg=0.0, use_hyper_network=True, projectionType="experimental"):
+            poseReg=0.0, ctfReg=0.0, use_hyper_network=True):
     # Create data generator
     generator = Generator(md_file=md_file, shuffle=False, batch_size=16,
                           step=1, splitTrain=1.0, pad_factor=pad, sr=sr,
@@ -78,11 +78,9 @@ def predict(md_file, weigths_file, refinePose, architecture, ctfType, pad=2, sr=
     # Get poses
     print("------------------ Predicting particles... ------------------")
     if generator.mode == "spa":
-        alignment, shifts, het = autoencoder.predict(generator.return_tf_dataset(), predict_mode="het",
-                                                     projection_type=projectionType)
+        alignment, shifts, het = autoencoder.predict(generator.return_tf_dataset(), predict_mode="het")
     elif generator.mode == "tomo":
-        alignment, shifts, _, het = autoencoder.predict(generator.return_tf_dataset(), predict_mode="het",
-                                                        projection_type=projectionType)
+        alignment, shifts, _, het = autoencoder.predict(generator.return_tf_dataset(), predict_mode="het")
 
     # Get map
     pool_info = threadpool_info()
@@ -136,7 +134,6 @@ def main():
     parser.add_argument('--architecture', type=str, required=True)
     parser.add_argument('--het_dim', type=int, required=True)
     parser.add_argument('--ctf_type', type=str, required=True)
-    parser.add_argument('--projection_type', type=str, required=False, default="experimental")
     parser.add_argument('--pad', type=int, required=False, default=2)
     parser.add_argument('--sr', type=float, required=True)
     parser.add_argument('--pose_reg', type=float, required=False, default=0.0)
@@ -164,7 +161,7 @@ def main():
               "applyCTF": args.apply_ctf, "filter": args.apply_filter,
               "only_pos": args.only_pos, "hetDim": args.het_dim, "numVol": args.num_vol,
               "trainSize": args.trainSize, "outSize": args.outSize, "poseReg": args.pose_reg, "ctfReg": args.ctf_reg,
-              "use_hyper_network": args.use_hyper_network, "projectionType": args.projection_type}
+              "use_hyper_network": args.use_hyper_network}
 
     # Initialize volume slicer
     predict(**inputs)
