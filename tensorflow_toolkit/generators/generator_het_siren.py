@@ -148,7 +148,7 @@ def is_approximately_sphere(mask, tolerance=0.1):
     distances = np.sqrt((x - center[0])**2 + (y - center[1])**2 + (z - center[2])**2)
 
     # Define the spherical shell
-    sphere = (distances >= (radius - tolerance)) & (distances <= (radius + tolerance))
+    sphere = (distances <= (radius + tolerance))
 
     # Compare the mask with the spherical shell
     overlap = np.sum(mask & sphere)
