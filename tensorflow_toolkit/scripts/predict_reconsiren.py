@@ -65,7 +65,7 @@ def predict(md_file, weigths_file, architecture, ctfType, pad=2, sr=1.0, n_candi
 
     # Get poses
     print("------------------ Predicting angles and shifts... ------------------")
-    r, shifts, imgs, het, loss, loss_cons = autoencoder.predict(predict_dataset)
+    r, shifts, het, loss, loss_cons = autoencoder.predict(predict_dataset)
 
     # Rotation matrix to euler angles
     euler_angles = np.zeros((r.shape[0], 3))

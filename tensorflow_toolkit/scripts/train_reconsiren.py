@@ -42,6 +42,7 @@ os.environ["TF_USE_LEGACY_KERAS"] = "0"
 # if version("tensorflow") >= "2.16.0":
 #     os.environ["TF_USE_LEGACY_KERAS"] = "1"
 import tensorflow as tf
+import tensorflow_addons as tfa
 # from tensorflow.keras import mixed_precision
 
 from tensorflow_toolkit.utils import epochs_from_iterations, xmippEulerFromMatrix
@@ -60,7 +61,7 @@ def train(outPath, md_file, batch_size, shuffle, splitTrain, epochs, only_pose=F
         # Create data generator
         generator = Generator(md_file=md_file, shuffle=shuffle, batch_size=batch_size,
                               step=1, splitTrain=splitTrain, cost="mse", pad_factor=pad, sr=sr,
-                              applyCTF=0)
+                              applyCTF=0, first_randomize=True)
         generator_pred = Generator(md_file=md_file, shuffle=False, batch_size=batch_size,
                                    step=1, splitTrain=1.0, cost="mse", pad_factor=pad, sr=sr,
                                    applyCTF=0)
@@ -68,8 +69,8 @@ def train(outPath, md_file, batch_size, shuffle, splitTrain, epochs, only_pose=F
         # Create validation generator
         if splitTrain < 1.0:
             generator_val = Generator(md_file=md_file, shuffle=shuffle, batch_size=batch_size,
-                                      step=1, splitTrain=splitTrain, cost="mse", pad_factor=pad, sr=sr,
-                                      applyCTF=applyCTF)
+                                      step=1, splitTrain=(splitTrain - 1.0), cost="mse", pad_factor=pad, sr=sr,
+                                      applyCTF=applyCTF, first_randomize=True)
         else:
             generator_val = None
 
@@ -88,7 +89,8 @@ def train(outPath, md_file, batch_size, shuffle, splitTrain, epochs, only_pose=F
                 autoencoder.load_weights(weigths_file)
 
             if only_pose:
-                optimizer_encoder = [tf.keras.optimizers.RMSprop(learning_rate=1e-5),
+                optimizer_encoder = [tf.keras.optimizers.RMSprop(learning_rate=1e-4),
+                                     tf.keras.optimizers.RMSprop(learning_rate=1e-4),
                                      tf.keras.optimizers.Adam(learning_rate=1e-5)]
                 optimizer_decoder = tf.keras.optimizers.Adam(learning_rate=1e-5)
                 optimizer_het = [tf.keras.optimizers.RMSprop(learning_rate=1e-4),
@@ -96,14 +98,16 @@ def train(outPath, md_file, batch_size, shuffle, splitTrain, epochs, only_pose=F
             else:
                 if only_pos:
                     optimizer_encoder = [tf.keras.optimizers.RMSprop(learning_rate=1e-3),
+                                         tf.keras.optimizers.RMSprop(learning_rate=1e-3),
                                          tf.keras.optimizers.Adam(learning_rate=1e-5)]
                     optimizer_het = [tf.keras.optimizers.Adam(learning_rate=1e-4),
                                      tf.keras.optimizers.Adam(learning_rate=1e-4)]
                     optimizer_decoder = tf.keras.optimizers.Adam(learning_rate=1e-3)  # Classes
                 else:
-                    optimizer_encoder = [tf.keras.optimizers.RMSprop(learning_rate=1e-3),
+                    optimizer_encoder = [tf.keras.optimizers.RMSprop(learning_rate=1e-4),
+                                         tf.keras.optimizers.RMSprop(learning_rate=1e-4),
                                          tf.keras.optimizers.Adam(learning_rate=1e-5)]
-                    optimizer_het = [tf.keras.optimizers.Adam(learning_rate=1e-4),
+                    optimizer_het = [tf.keras.optimizers.RMSprop(learning_rate=1e-4),
                                      tf.keras.optimizers.Adam(learning_rate=1e-4)]
                     optimizer_decoder = tf.keras.optimizers.Adam(learning_rate=1e-4)  # Particles
 
@@ -140,7 +144,7 @@ def train(outPath, md_file, batch_size, shuffle, splitTrain, epochs, only_pose=F
                 if len(files) > 1:
                     files.sort()
                     latest = files[-2]
-                    autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
+                    _ = autoencoder(next(iter(generator.return_tf_dataset()))[0])
                     autoencoder.load_weights(latest)
                     latest = os.path.basename(latest)
                     initial_epoch = int(re.findall(r'\d+', latest)[0]) - 1
@@ -159,12 +163,12 @@ def train(outPath, md_file, batch_size, shuffle, splitTrain, epochs, only_pose=F
             for idx in range(steps):
                 if generator_val is not None:
                     autoencoder.fit(train_dataset, validation_data=validation_dataset, epochs=5, validation_freq=2,
-                                    callbacks=callbacks, initial_epoch=initial_epoch)
+                                    initial_epoch=initial_epoch)
                 else:
                     autoencoder.fit(train_dataset, epochs=5,
                                     initial_epoch=initial_epoch)  # Adding callback (checkpoint) fail?
 
-                r, shifts, imgs, het, loss, loss_cons = autoencoder.predict(predict_dataset)
+                r, shifts, het, loss, loss_cons = autoencoder.predict(predict_dataset)
 
                 # Rotation matrix to euler angles
                 euler_angles = np.zeros((r.shape[0], 3))
@@ -189,7 +193,7 @@ def train(outPath, md_file, batch_size, shuffle, splitTrain, epochs, only_pose=F
                     ImageHandler().write(decoded_map, decoded_path, overwrite=True)
 
                 if useHet:
-                    kmeans = KMeans(n_clusters=20).fit(het)
+                    kmeans = KMeans(n_clusters=50).fit(het)
                     labels = kmeans.predict(het)
                     unique_labels = np.unique(labels)
                     centers = kmeans.cluster_centers_
@@ -212,6 +216,7 @@ def train(outPath, md_file, batch_size, shuffle, splitTrain, epochs, only_pose=F
         raise error
 
     # Save model
+    autoencoder.build(input_shape=(None, generator.xsize, generator.xsize, 1))
     if tf.__version__ < "2.16.0" or os.environ["TF_USE_LEGACY_KERAS"] == "1":
         autoencoder.save_weights(os.path.join(outPath, "reconsiren_model.h5"))
     else:
