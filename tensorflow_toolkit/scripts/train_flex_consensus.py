@@ -162,31 +162,25 @@ def train(outPath, dataPath, latDim, batch_size, shuffle, splitTrain, epochs, lr
     shutil.rmtree(checkpoint)
 
     # Get templates for future matching
-    best_mean = [None, None]
-    best_entropy = [None, None]
-    error_interpolators = {}
+    consensus_error = 0.0
+    representation_error = 0.0
+    mean_std_consensus_error = np.zeros(2)
+    mean_std_representation_error = np.zeros((len(spaces), 2))
     for idx in range(len(spaces)):
-        data = spaces[idx]
+        encoded_1 = autoencoder.encode_space(spaces[idx], idx)
         for idy in range(len(spaces)):
-            if idx != idy:
-                decoded = autoencoder.predict(data, encoder_idx=idx, decoder_idx=idy)
-                error = generator.rmse(spaces[idy], decoded)
-                error_interpolators[f"{idx}_{idy}"] = NearestNDInterpolator([*decoded], error)
-                mean_error = np.mean(error)
-                entropy_error = entropy(error)
-                if best_mean[0] is None or mean_error < best_mean[0]:
-                    best_mean[0] = mean_error
-                    best_mean[1] = error
-                if best_entropy[0] is None or entropy_error > best_entropy[0]:
-                    best_entropy[0] = entropy_error
-                    best_entropy[1] = error
+            encoded_2 = autoencoder.encode_space(spaces[idy], idy)
+            consensus_error += generator.rmse(encoded_1, encoded_2)
+            representation_error += generator.rmse(spaces[idx], autoencoder.decode_space(encoded_2, idx))
+        representation_error = representation_error / len(spaces)
+        mean_std_representation_error[idx] = np.array([np.mean(representation_error), np.std(representation_error)])
+        representation_error = 0.0
+    consensus_error = consensus_error / (len(spaces) * len(spaces))
+    mean_std_consensus_error[0], mean_std_consensus_error[1] = np.mean(consensus_error), np.std(consensus_error)
 
-    # Save best templates
-    np.savetxt(os.path.join(outPath, "template_mean_error.txt"), best_mean[1])
-    np.savetxt(os.path.join(outPath, "template_entropy_error.txt"), best_entropy[1])
-
-    # Save interpolators
-    np.save(os.path.join(outPath, "error_interpolators.npy"), error_interpolators)
+    # Save means and stds of computed errors
+    np.save(os.path.join(outPath, "mean_std_consensus_error.npy"), mean_std_consensus_error)
+    np.save(os.path.join(outPath, "mean_std_representation_error.npy"), mean_std_representation_error)
 
 
 def main():
