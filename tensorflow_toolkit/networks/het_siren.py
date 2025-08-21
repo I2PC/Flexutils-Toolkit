@@ -468,7 +468,7 @@ def compute_histogram(tensor, bins=10, minval=None, maxval=None):
 
 class Encoder(Model):
     def __init__(self, latent_dim, input_dim, architecture="convnn", refPose=True,
-                 mode="spa"):
+                 mode="spa", downsample=False):
         super(Encoder, self).__init__()
         self.mode = mode
         filters = create_blur_filters(5, 5, 15)
@@ -477,9 +477,15 @@ class Encoder(Model):
         subtomo_pe = Input(shape=(100,))
 
         if architecture == "convnn":
-            x = tf.keras.layers.Flatten()(images)
-            x = tf.keras.layers.Dense(64 * 64)(x)
-            x = tf.keras.layers.Reshape((64, 64, 1))(x)
+            if downsample:
+                x = resizeImageFourier(images, 64)
+                x = tf.keras.layers.Reshape((64, 64, 1))(x)
+                x = layers.ReLU()(x)
+                # x = apply_blur_filters_to_batch(x, filters)
+            else:
+                x = tf.keras.layers.Flatten()(images)
+                x = tf.keras.layers.Dense(64 * 64)(x)
+                x = tf.keras.layers.Reshape((64, 64, 1))(x)
 
             x = tf.keras.layers.Conv2D(4, 5, activation="relu", strides=(2, 2), padding="same")(x)
             b1_out = tf.keras.layers.Conv2D(8, 5, activation="relu", strides=(2, 2), padding="same")(x)
@@ -715,13 +721,13 @@ class AutoEncoder(Model):
         metadata = XmippMetaData(str(generator.filename))
         self.xsize = metadata.getMetaDataImage(0).shape[1] if metadata.binaries else generator.xsize
         self.encoder_exp = Encoder(het_dim, self.xsize, architecture=architecture,
-                                   refPose=refPose, mode=self.mode)
+                                   refPose=refPose, mode=self.mode, downsample=False)
         if poseReg > 0.0:
             self.encoder_clean = Encoder(het_dim, self.xsize, architecture=architecture,
-                                         refPose=refPose, mode=self.mode)
+                                         refPose=refPose, mode=self.mode, downsample=True)
         if ctfReg > 0.0:
             self.encoder_ctf = Encoder(het_dim, self.xsize, architecture=architecture,
-                                       refPose=refPose, mode=self.mode)
+                                       refPose=refPose, mode=self.mode, downsample=True)
         self.latent = layers.Dense(het_dim, activation="linear")
         self.rows = layers.Dense(3, activation="linear", trainable=refPose)
         self.shifts = layers.Dense(2, activation="linear", trainable=refPose)

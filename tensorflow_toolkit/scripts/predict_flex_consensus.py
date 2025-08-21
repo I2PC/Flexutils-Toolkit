@@ -74,16 +74,15 @@ def predict(outPath, dataPath, weigths_file, latDim):
 
     # Load template histograms
     templates_data_path = Path(weigths_file).parent.parent
-    template_mean_error = np.loadtxt(os.path.join(templates_data_path, "template_mean_error.txt"))
-    template_entropy_error = np.loadtxt(os.path.join(templates_data_path, "template_entropy_error.txt"))
 
     # Load data for generator (needed to create the network properly)
     data_files = glob(os.path.join(templates_data_path, "data", "*.txt"))
     sort_nicely(data_files)
     spaces_network = [np.loadtxt(file) for file in data_files]
 
-    # Load interpolators
-    error_interpolators = np.load(os.path.join(templates_data_path, "error_interpolators.npy"), allow_pickle=True)[()]
+    # Load mean and std
+    mean_std_cons = np.load(os.path.join(templates_data_path, "mean_std_consensus_error.npy"))
+    mean_std_rep = np.load(os.path.join(templates_data_path, "mean_std_representation_error.npy"))
 
     # Create data generator
     generator = Generator(spaces_network, latent_dim=latDim, batch_size=64,
@@ -101,21 +100,26 @@ def predict(outPath, dataPath, weigths_file, latDim):
     data = spaces[0]
     print("Finding best encoder...")
     idx = autoencoder.find_encoder(data)
+    encoded = autoencoder.encode_space(data, input_encoder_idx=idx, batch_size=1024)
     print("Best encoder is %d" % idx)
-    error_matched_mean, error_matched_entropy = np.zeros(data.shape[0]), np.zeros(data.shape[0])
+    representation_error = np.zeros(data.shape[0])
+    consensus_error = np.zeros(data.shape[0])
     num_decoders = len(autoencoder.space_decoders)
     for idy in range(num_decoders):
-        if idx != idy:
-            decoded = autoencoder.predict(data, encoder_idx=idx, decoder_idx=idy)
-            error = error_interpolators[f"{idx}_{idy}"](decoded)
-            error_matched_mean += generator.hist_match(error, template_mean_error)
-            error_matched_entropy += generator.hist_match(error, template_entropy_error)
-    error_matched_mean = error_matched_mean / (num_decoders - 1)
-    error_matched_entropy = error_matched_entropy / (num_decoders - 1)
+        # if idx != idy:
+        decoded = autoencoder.decode_space(encoded, output_decoder_idx=idy, batch_size=1024)
+        encoded_aux = autoencoder.encode_space(decoded, input_encoder_idx=idy, batch_size=1024)
+        consensus_error += generator.rmse(encoded, encoded_aux)
+    consensus_error = consensus_error / num_decoders
+    decoded = autoencoder.predict(data, encoder_idx=idx, decoder_idx=idx)
+    representation_error += generator.rmse(data, decoded)
+    consensus_error = generator.logistic_transform_std_shift(consensus_error, mean_std_cons[0], mean_std_cons[1])
+    representation_error = generator.logistic_transform_std_shift(representation_error, mean_std_rep[idx, 0], mean_std_rep[idx, 1])
 
     # Save matched error distributions
-    np.savetxt(os.path.join(outPath, "error_matched_mean.txt"), error_matched_mean)
-    np.savetxt(os.path.join(outPath, "error_matched_entropy.txt"), error_matched_entropy)
+    np.save(os.path.join(outPath, "consensus_latents.npy"), encoded)
+    np.save(os.path.join(outPath, "representation_error.npy"), representation_error)
+    np.save(os.path.join(outPath, "consensus_error.npy"), consensus_error)
 
 
 def main():

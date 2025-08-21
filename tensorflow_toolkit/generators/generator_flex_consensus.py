@@ -291,4 +291,35 @@ class Generator(tf.keras.utils.Sequence):
         loss /= len(predictions)
         return loss
 
+    def logistic_transform_std_shift(self, errors, mu=None, sigma=None):
+        """
+        Transforms a 1D array of errors to a 0-1 scale using a logistic function,
+        such that a value of 0.5 corresponds to errors that are +1 standard deviation away from the mean.
+
+        The transformation is defined as:
+            f(x) = 1 / (1 + exp(-k*(x - (mu+sigma))))
+        with k chosen so that:
+            f(mu)   ~ 0.25  and  f(mu+2*sigma) ~ 0.75.
+
+        Parameters:
+            errors (np.array): 1D array of error values.
+
+        Returns:
+            np.array: Transformed error values in the interval (0, 1).
+        """
+        # Compute the mean and standard deviation
+        mu = np.mean(errors) if mu is None else mu
+        sigma = np.std(errors) if sigma is None else sigma
+
+        # Prevent division by zero in case sigma is zero
+        if sigma == 0:
+            return np.full_like(errors, 0.5)
+
+        # Choose k such that one std below and above the center give 0.25 and 0.75 respectively.
+        k = np.log(3) / sigma
+
+        # Shift the logistic function center to mu + sigma so that f(mu+sigma) = 0.5
+        transformed = 1 / (1 + np.exp(-k * (errors - (mu + sigma))))
+        return transformed
+
     # ----- -------- -----#
